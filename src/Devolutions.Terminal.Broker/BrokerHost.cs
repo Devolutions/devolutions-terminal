@@ -58,7 +58,7 @@ public sealed class BrokerHost : IAsyncDisposable
         var store = new BrokerEndpointStore(endpointDirectory, instanceKey);
         var endpoint = new BrokerEndpoint(
             BrokerProtocol.Version,
-            $"Devolutions.Terminal.DotNet.v{BrokerProtocol.Version}.{RandomNumberGenerator.GetHexString(16)}",
+            $"dt.v{BrokerProtocol.Version}.{RandomNumberGenerator.GetHexString(16)}",
             RandomNumberGenerator.GetHexString(32),
             Environment.ProcessId);
         return new BrokerHost(store, handler, election, endpoint);

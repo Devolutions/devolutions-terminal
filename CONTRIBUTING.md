@@ -45,7 +45,7 @@ Do not point that tool at this repository.
 
 ## Native helpers
 
-- Linux/macOS PTY host: `native/linux-pty` (`dt-pty-host.c`, Zig `cc`)
+- Linux/macOS PTY host: `native/linux-pty` (`dt-pty-host.c`; Zig `cc` on Linux, Apple clang on macOS)
 - Ghostty VT library: `native/ghostty` (Zig build of pinned Ghostty)
 - Windows Explorer/toast helpers: `native/windows-shell` (MSVC, gitignored `bin/`)
 
@@ -56,6 +56,13 @@ downloaded into `artifacts/tools` on first use). See
 
 ## macOS
 
-macOS is partial. See [docs/macos.md](docs/macos.md). The Unix PTY host source
-cross-targets `osx-arm64` / `osx-x64`; Ghostty dylibs and app-bundle packaging
-are not in this tree yet.
+See [docs/macos.md](docs/macos.md). On a Mac:
+
+```bash
+dotnet test Devolutions.Terminal.slnx
+scripts/Build-MacOsPackage.sh osx-arm64 0.1.0 artifacts/packages
+```
+
+`dotnet build` restores Ghostty and `dt-pty-host` for `osx-arm64` / `osx-x64`.
+The PTY host is compiled with Apple clang against the macOS 13 SDK. App-bundle
+packaging is Darwin-only; notarization, DMG, and Homebrew are not included.

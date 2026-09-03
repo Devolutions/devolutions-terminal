@@ -144,7 +144,7 @@ public sealed class PlatformLauncher : IPlatformLauncher
                 "System notifications: available through osascript display notification\n" +
                 "Global summon hotkeys: unsupported; use the broker or dt -w\n" +
                 "Unix PTY: dt-pty-host (forkpty)\n" +
-                "Ghostty engine: not bundled yet",
+                GetMacOsGhosttyCapability(),
             _ => "Desktop platform: unsupported\nOpen and notification integrations are unavailable.",
         };
     }
@@ -159,6 +159,14 @@ public sealed class PlatformLauncher : IPlatformLauncher
             $"Profile jump lists: {Availability(capability, ShellIntegrationCapability.JumpList)}\n" +
             $"System notifications: {Availability(capability, ShellIntegrationCapability.SystemToast)}\n" +
             $"Default terminal: {defaultTerminal.Status} ({defaultTerminal.Diagnostic})";
+    }
+
+    private static string GetMacOsGhosttyCapability()
+    {
+        var library = Path.Combine(AppContext.BaseDirectory, "libghostty-vt.dylib");
+        return File.Exists(library)
+            ? "Ghostty engine: available (libghostty-vt.dylib)"
+            : "Ghostty engine: not restored for this build";
     }
 
     private static string Availability(

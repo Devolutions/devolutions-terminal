@@ -1,5 +1,6 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:chrome="using:Avalonia.Controls.Chrome"
         x:Class="Devolutions.Terminal.App.Views.MainWindow"
         x:CompileBindings="True"
         Title=""
@@ -18,25 +19,36 @@
             DockPanel.Dock="Top"
             Height="40"
             Background="#202020"
+            chrome:WindowDecorationProperties.ElementRole="TitleBar"
             PointerPressed="TitleBar_OnPointerPressed">
       <Grid x:Name="TitleBarLayout"
-            ColumnDefinitions="Auto,*"
-            Margin="8,0,138,0">
-        <StackPanel Grid.Column="0" Orientation="Horizontal">
-          <ScrollViewer x:Name="TabScrollViewer"
-                       MaxWidth="720"
-                       HorizontalScrollBarVisibility="Hidden"
-                       VerticalScrollBarVisibility="Disabled">
-            <StackPanel x:Name="TabStrip"
-                       Orientation="Horizontal"
-                       Spacing="0" />
-          </ScrollViewer>
+            ColumnDefinitions="Auto,Auto,*"
+            Margin="8,0,8,0">
+        <ScrollViewer x:Name="TabScrollViewer"
+                     Grid.Column="0"
+                     chrome:WindowDecorationProperties.ElementRole="User"
+                     MaxWidth="720"
+                     HorizontalScrollBarVisibility="Hidden"
+                     VerticalScrollBarVisibility="Disabled">
+          <StackPanel x:Name="TabStrip"
+                     Orientation="Horizontal"
+                     Spacing="0" />
+        </ScrollViewer>
+        <StackPanel x:Name="NewTabCluster"
+                    Grid.Column="1"
+                    Orientation="Horizontal"
+                    VerticalAlignment="Center"
+                    chrome:WindowDecorationProperties.ElementRole="User">
           <Button x:Name="NewTabButton"
                  Classes="icon"
-                 Width="31"
-                 Height="24"
-                 Margin="0,4"
+                 Width="32"
+                 Height="32"
+                 Margin="4,0"
+                 Padding="0"
+                 HorizontalContentAlignment="Center"
+                 VerticalContentAlignment="Center"
                  VerticalAlignment="Center"
+                 chrome:WindowDecorationProperties.ElementRole="User"
                  Click="NewTab_OnClick"
                  AutomationProperties.Name="New tab"
                  ToolTip.Tip="New tab (Ctrl+Shift+T)">
@@ -49,10 +61,14 @@
           </Button>
           <Button x:Name="MenuButton"
                  Classes="icon"
-                 Width="31"
-                 Height="24"
-                 Margin="0,4"
+                 Width="32"
+                 Height="32"
+                 Margin="0,0,4,0"
+                 Padding="0"
+                 HorizontalContentAlignment="Center"
+                 VerticalContentAlignment="Center"
                  VerticalAlignment="Center"
+                 chrome:WindowDecorationProperties.ElementRole="User"
                  Click="Menu_OnClick"
                  AutomationProperties.Name="New tab menu"
                  ToolTip.Tip="New tab menu">
@@ -63,25 +79,23 @@
                   Stroke="#F2F2F2"
                   StrokeThickness="1" />
           </Button>
+          <Button x:Name="ExitFullscreenButton"
+                  Classes="icon"
+                  Width="45"
+                  Height="30"
+                  IsVisible="False"
+                  VerticalAlignment="Center"
+                  Click="ExitFullscreen_OnClick"
+                  AutomationProperties.Name="Exit full screen"
+                  ToolTip.Tip="Exit full screen (F11)">
+            <Path Data="M 0,0 L 4,4 M 4,0 L 4,4 L 0,4 M 10,10 L 6,6 M 6,10 L 6,6 L 10,6"
+                  Width="10"
+                  Height="10"
+                  Stretch="Uniform"
+                  Stroke="#F2F2F2"
+                  StrokeThickness="1" />
+          </Button>
         </StackPanel>
-        <Button x:Name="ExitFullscreenButton"
-                Grid.Column="1"
-                Classes="icon"
-                Width="45"
-                Height="30"
-                IsVisible="False"
-                HorizontalAlignment="Right"
-                VerticalAlignment="Top"
-                Click="ExitFullscreen_OnClick"
-                AutomationProperties.Name="Exit full screen"
-                ToolTip.Tip="Exit full screen (F11)">
-          <Path Data="M 0,0 L 4,4 M 4,0 L 4,4 L 0,4 M 10,10 L 6,6 M 6,10 L 6,6 L 10,6"
-                Width="10"
-                Height="10"
-                Stretch="Uniform"
-                Stroke="#F2F2F2"
-                StrokeThickness="1" />
-        </Button>
       </Grid>
     </Border>
     <Grid>

@@ -36,8 +36,6 @@ public sealed class TermControl : Avalonia.Controls.Control
         DataFormat.CreateBytesPlatformFormat("Rich Text Format");
     private readonly DispatcherTimer _blinkTimer;
     private readonly object _outputLock = new();
-    private readonly MemoryStream _pendingOutput = new();
-    private bool _outputDrainScheduled;
     private bool _acceptOutput;
     private readonly SkiaTerminalRenderer _renderer = new();
     private readonly TerminalSearchSession _search;
@@ -99,20 +97,24 @@ public sealed class TermControl : Avalonia.Controls.Control
 
         Engine.Invalidated += (_, _) =>
         {
-            if (_selection is not null &&
-                (_selectionCoordinateVersion != Engine.Buffer.CoordinateVersion ||
-                 _selectionAlternateBuffer != Engine.AlternateBufferActive))
+            Dispatcher.UIThread.Post(() =>
             {
-                SetSelection(null);
-            }
+                if (_selection is not null &&
+                    (_selectionCoordinateVersion != Engine.Buffer.CoordinateVersion ||
+                     _selectionAlternateBuffer != Engine.AlternateBufferActive))
+                {
+                    SetSelection(null);
+                }
 
-            _textInputMethodClient.NotifyCursorChanged();
-            AccessibilityTextChanged?.Invoke(this, EventArgs.Empty);
-            ScrollMarksChanged?.Invoke(this, EventArgs.Empty);
-            ViewportChanged?.Invoke(this, EventArgs.Empty);
-            Dispatcher.UIThread.Post(InvalidateVisual, DispatcherPriority.Render);
+                _textInputMethodClient.NotifyCursorChanged();
+                AccessibilityTextChanged?.Invoke(this, EventArgs.Empty);
+                ScrollMarksChanged?.Invoke(this, EventArgs.Empty);
+                ViewportChanged?.Invoke(this, EventArgs.Empty);
+                InvalidateVisual();
+            }, DispatcherPriority.Render);
         };
-        Engine.TitleChanged += (_, title) => TitleChanged?.Invoke(this, title);
+        Engine.TitleChanged += (_, title) =>
+            Dispatcher.UIThread.Post(() => TitleChanged?.Invoke(this, title));
         Engine.ResponseReady += (_, data) => _connection?.Write(data);
         Engine.ClipboardWriteRequested += (_, text) =>
             Dispatcher.UIThread.Post(() => SetClipboardFromTerminalObservedAsync(text));
@@ -241,8 +243,6 @@ public sealed class TermControl : Avalonia.Controls.Control
             lock (_outputLock)
             {
                 _acceptOutput = false;
-                _pendingOutput.SetLength(0);
-                _outputDrainScheduled = false;
             }
             await connection.DisposeAsync().ConfigureAwait(false);
             throw;
@@ -296,8 +296,6 @@ public sealed class TermControl : Avalonia.Controls.Control
             lock (_outputLock)
             {
                 _acceptOutput = false;
-                _pendingOutput.SetLength(0);
-                _outputDrainScheduled = false;
             }
 
             await connection.DisposeAsync().ConfigureAwait(false);
@@ -798,12 +796,6 @@ public sealed class TermControl : Avalonia.Controls.Control
 
     public void ResetTerminal()
     {
-        lock (_outputLock)
-        {
-            _pendingOutput.SetLength(0);
-            _outputDrainScheduled = false;
-        }
-
         Engine.Reset();
         SetSelection(null);
         _isMarkMode = false;
@@ -875,13 +867,18 @@ public sealed class TermControl : Avalonia.Controls.Control
             return;
         }
 
-        var scale = TopLevel.GetTopLevel(this)?.RenderScaling ?? 1;
-        _renderer.Resize(new RenderViewport(Engine.Columns, Engine.Rows, scale));
-        MeasureGlyph();
-        ResizeEngine(Engine.Columns, Engine.Rows);
+        TerminalSnapshot snapshot;
+        lock (_outputLock)
+        {
+            var scale = TopLevel.GetTopLevel(this)?.RenderScaling ?? 1;
+            _renderer.Resize(new RenderViewport(Engine.Columns, Engine.Rows, scale));
+            MeasureGlyph();
+            ResizeEngine(Engine.Columns, Engine.Rows);
+            snapshot = Engine.CreateSnapshot();
+        }
         var profile = Profile;
         var frame = TerminalRenderPlanner.Create(
-            Engine.CreateSnapshot(),
+            snapshot,
             Engine.Scheme,
             new TerminalRenderOptions
             {
@@ -1232,7 +1229,6 @@ public sealed class TermControl : Avalonia.Controls.Control
 
     private void OnOutput(object? sender, ReadOnlyMemory<byte> data)
     {
-        var scheduleDrain = false;
         lock (_outputLock)
         {
             if (!_acceptOutput)
@@ -1240,17 +1236,9 @@ public sealed class TermControl : Avalonia.Controls.Control
                 return;
             }
 
-            _pendingOutput.Write(data.Span);
-            if (!_outputDrainScheduled)
-            {
-                _outputDrainScheduled = true;
-                scheduleDrain = true;
-            }
-        }
-
-        if (scheduleDrain)
-        {
-            Dispatcher.UIThread.Post(DrainOutput, DispatcherPriority.Render);
+            // Feed on the PTY thread so cursor-position reports (CSI 6n) go
+            // back to zsh before PROMPT_SP prints a spurious '%'.
+            Engine.Feed(data.Span);
         }
     }
 
@@ -1269,25 +1257,6 @@ public sealed class TermControl : Avalonia.Controls.Control
                 CloseRequested?.Invoke(this, EventArgs.Empty);
             }
         });
-    }
-
-    private void DrainOutput()
-    {
-        byte[] chunk;
-        lock (_outputLock)
-        {
-            if (_pendingOutput.Length == 0)
-            {
-                _outputDrainScheduled = false;
-                return;
-            }
-
-            chunk = _pendingOutput.ToArray();
-            _pendingOutput.SetLength(0);
-            _outputDrainScheduled = false;
-        }
-
-        Engine.Feed(chunk);
     }
 
     private (int X, int Y) HitTest(Point point)

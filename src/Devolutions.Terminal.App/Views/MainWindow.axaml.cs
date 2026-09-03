@@ -23,6 +23,7 @@ using Devolutions.Terminal.App.Panes;
 using Devolutions.Terminal.App.Platform;
 using Devolutions.Terminal.App.Routing;
 using Devolutions.Terminal.Settings.Editor;
+using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
@@ -149,7 +150,10 @@ public partial class MainWindow :
             Dispatcher.UIThread.Post(CaptureNormalWindowBounds, DispatcherPriority.Background);
         PropertyChanged += (_, args) =>
         {
-            if (args.Property == WindowStateProperty)
+            if (args.Property == WindowStateProperty ||
+                args.Property == OffScreenMarginProperty ||
+                args.Property == WindowDecorationMarginProperty ||
+                args.Property == FlowDirectionProperty)
             {
                 UpdateFullscreenChrome();
             }
@@ -954,6 +958,9 @@ public partial class MainWindow :
                 ContextMenu = CreateTabContextMenu(tab),
                 Width = tabWidth,
             };
+            Avalonia.Controls.Chrome.WindowDecorationProperties.SetElementRole(
+                button,
+                Avalonia.Input.WindowDecorationsElementRole.User);
             if (TryParseColor(tab.Color ?? presentation.Color, out var tabColor))
             {
                 button.Background = new SolidColorBrush(tabColor);
@@ -1209,11 +1216,24 @@ public partial class MainWindow :
         var close = new Button
         {
             Classes = { "icon" },
-            Content = "×",
             Width = 22,
             Height = 22,
-            FontSize = 14,
+            Padding = new Thickness(0),
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Content = new Avalonia.Controls.Shapes.Path
+            {
+                Data = Geometry.Parse("M 0,0 L 8,8 M 8,0 L 0,8"),
+                Stroke = Brushes.White,
+                StrokeThickness = 1.2,
+                Width = 8,
+                Height = 8,
+                Stretch = Stretch.Uniform,
+            },
         };
+        Avalonia.Controls.Chrome.WindowDecorationProperties.SetElementRole(
+            close,
+            Avalonia.Input.WindowDecorationsElementRole.User);
         close.Click += async (_, e) =>
         {
             e.Handled = true;
@@ -2644,11 +2664,25 @@ public partial class MainWindow :
     {
         var isFullscreen = WindowState == WindowState.FullScreen;
         ExitFullscreenButton.IsVisible = isFullscreen && !Win32ParentWindow.IsRequested;
-        TitleBarLayout.Margin = isFullscreen
-            ? new Thickness(8, 0, 8, 0)
-            : new Thickness(8, 0, 138, 0);
+        ApplyTitleBarMargin();
         ApplyWindowChrome();
     }
+
+    private void ApplyTitleBarMargin() =>
+        TitleBarLayout.Margin = WindowChrome.TitleBarContentMargin(
+            fullscreen: WindowState == WindowState.FullScreen,
+            macOS: OperatingSystem.IsMacOS(),
+            windows: OperatingSystem.IsWindows(),
+            offScreenMargin: MacOsDecorationMargin(),
+            rightToLeft: FlowDirection == FlowDirection.RightToLeft ||
+                         CultureInfo.CurrentUICulture.TextInfo.IsRightToLeft);
+
+    private Thickness MacOsDecorationMargin() =>
+        new(
+            Math.Max(OffScreenMargin.Left, WindowDecorationMargin.Left),
+            0,
+            Math.Max(OffScreenMargin.Right, WindowDecorationMargin.Right),
+            0);
 
     private void ApplyWindowChrome()
     {
@@ -2659,6 +2693,7 @@ public partial class MainWindow :
         TabScrollViewer.IsVisible = showTabs;
         NewTabButton.IsVisible = showTabs;
         MenuButton.IsVisible = showTabs;
+        ApplyTitleBarMargin();
 
         if (embedded)
         {
@@ -2671,6 +2706,11 @@ public partial class MainWindow :
         var customTitlebar = WindowChrome.ShouldUseCustomTitlebar(_settings, embedded: false);
         ExtendClientAreaToDecorationsHint = customTitlebar && !_focusMode;
         TitleBar.IsVisible = !_focusMode && (showTabs || customTitlebar);
+        TitleBarLayout.ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*");
+        TabScrollViewer.HorizontalAlignment = HorizontalAlignment.Left;
+        NewTabCluster.HorizontalAlignment = HorizontalAlignment.Left;
+        TitleBar.Height = 40;
+        NewTabCluster.Height = double.NaN;
     }
 
     private async Task SummonAsync(GlobalSummonArgs args, bool quake)
@@ -2842,7 +2882,14 @@ public partial class MainWindow :
     {
         Dispatcher.UIThread.Post(CaptureNormalWindowBounds, DispatcherPriority.Background);
 
-        TabScrollViewer.MaxWidth = Math.Max(120, e.NewSize.Width - 253);
+        var reserved = WindowChrome.TabStripTrailingReserve(
+            OperatingSystem.IsMacOS(),
+            OperatingSystem.IsWindows(),
+            WindowChrome.MacOsWindowControlsOnRight(
+                MacOsDecorationMargin(),
+                FlowDirection == FlowDirection.RightToLeft ||
+                CultureInfo.CurrentUICulture.TextInfo.IsRightToLeft));
+        TabScrollViewer.MaxWidth = Math.Max(120, e.NewSize.Width - reserved);
         RebuildTabs();
     }
 

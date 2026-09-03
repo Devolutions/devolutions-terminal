@@ -38,6 +38,22 @@
       <Setter Property="Background" Value="#0C0C0C" />
       <Setter Property="Foreground" Value="#FFFFFF" />
     </Style>
+    <Style Selector="Button.tab.macos">
+      <Setter Property="Margin" Value="4,6,0,6" />
+      <Setter Property="Height" Value="24" />
+      <Setter Property="MinHeight" Value="24" />
+      <Setter Property="Padding" Value="10,0" />
+      <Setter Property="CornerRadius" Value="6" />
+      <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="Background" Value="#3A3A3C" />
+    </Style>
+    <Style Selector="Button.tab.macos:pointerover">
+      <Setter Property="Background" Value="#48484A" />
+    </Style>
+    <Style Selector="Button.tab.macos.active">
+      <Setter Property="Background" Value="#636366" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+    </Style>
     <Style Selector="Button.icon">
       <Setter Property="Background" Value="Transparent" />
       <Setter Property="Foreground" Value="#F2F2F2" />
@@ -45,6 +61,8 @@
       <Setter Property="Height" Value="32" />
       <Setter Property="Padding" Value="0" />
       <Setter Property="BorderThickness" Value="0" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
     <Style Selector="Button.icon:pointerover">
       <Setter Property="Background" Value="#3A3A3A" />

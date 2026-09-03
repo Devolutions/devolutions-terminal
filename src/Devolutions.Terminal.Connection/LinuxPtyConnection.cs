@@ -599,9 +599,9 @@ public sealed class LinuxPtyConnection : IRestartableTerminalConnection
         ArgumentNullException.ThrowIfNull(options);
         ArgumentException.ThrowIfNullOrWhiteSpace(options.CommandLine);
         cancellationToken.ThrowIfCancellationRequested();
-        if (!OperatingSystem.IsLinux())
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())
         {
-            throw new PlatformNotSupportedException("Linux PTY requires Linux.");
+            throw new PlatformNotSupportedException("Unix PTY requires Linux or macOS.");
         }
 
         if (options.Columns is < 1 or > ushort.MaxValue)
