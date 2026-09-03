@@ -214,7 +214,19 @@ foreach ($currentRid in $selected) {
         }
     }
 
-    $hash = (Get-FileHash -LiteralPath $built -Algorithm SHA256).Hash
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $stream = [IO.File]::OpenRead($built)
+        try {
+            $hash = [BitConverter]::ToString($sha.ComputeHash($stream)).Replace("-", "")
+        }
+        finally {
+            $stream.Dispose()
+        }
+    }
+    finally {
+        $sha.Dispose()
+    }
     $expected = $null
     if (@($target.PSObject.Properties.Name) -contains "sha256") {
         $expected = [string]$target.sha256
