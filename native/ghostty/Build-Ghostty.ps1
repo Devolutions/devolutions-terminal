@@ -184,6 +184,18 @@ foreach ($currentRid in $selected) {
     $linux = $currentRid.StartsWith("linux-", [StringComparison]::Ordinal)
     if ($linux -and $manifest.strip) {
         $stripTool = Resolve-LlvmStrip -Explicit $LlvmStripPath
+        if ($currentRid -eq "linux-arm64" -and
+            [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne "Arm64") {
+            $crossStrip = Get-Command aarch64-linux-gnu-strip -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+            if ($null -ne $crossStrip) {
+                $stripTool = $crossStrip.Source
+            }
+            elseif ($stripTool -and
+                    [IO.Path]::GetFileNameWithoutExtension($stripTool) -eq "strip") {
+                $stripTool = $null
+            }
+        }
         if ([string]::IsNullOrWhiteSpace($stripTool)) {
             $requiresHash = @($target.PSObject.Properties.Name) -contains "sha256" -and
                 -not [string]::IsNullOrWhiteSpace([string]$target.sha256)
