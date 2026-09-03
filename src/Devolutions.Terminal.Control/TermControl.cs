@@ -97,24 +97,41 @@ public sealed class TermControl : Avalonia.Controls.Control
 
         Engine.Invalidated += (_, _) =>
         {
-            Dispatcher.UIThread.Post(() =>
+            if (_selection is not null &&
+                (_selectionCoordinateVersion != Engine.Buffer.CoordinateVersion ||
+                 _selectionAlternateBuffer != Engine.AlternateBufferActive))
             {
-                if (_selection is not null &&
-                    (_selectionCoordinateVersion != Engine.Buffer.CoordinateVersion ||
-                     _selectionAlternateBuffer != Engine.AlternateBufferActive))
-                {
-                    SetSelection(null);
-                }
+                SetSelection(null);
+            }
 
+            AccessibilityTextChanged?.Invoke(this, EventArgs.Empty);
+            ScrollMarksChanged?.Invoke(this, EventArgs.Empty);
+            ViewportChanged?.Invoke(this, EventArgs.Empty);
+            if (Dispatcher.UIThread.CheckAccess())
+            {
                 _textInputMethodClient.NotifyCursorChanged();
-                AccessibilityTextChanged?.Invoke(this, EventArgs.Empty);
-                ScrollMarksChanged?.Invoke(this, EventArgs.Empty);
-                ViewportChanged?.Invoke(this, EventArgs.Empty);
                 InvalidateVisual();
-            }, DispatcherPriority.Render);
+            }
+            else
+            {
+                Dispatcher.UIThread.Post(() =>
+                {
+                    _textInputMethodClient.NotifyCursorChanged();
+                    InvalidateVisual();
+                }, DispatcherPriority.Render);
+            }
         };
         Engine.TitleChanged += (_, title) =>
-            Dispatcher.UIThread.Post(() => TitleChanged?.Invoke(this, title));
+        {
+            if (Dispatcher.UIThread.CheckAccess())
+            {
+                TitleChanged?.Invoke(this, title);
+            }
+            else
+            {
+                Dispatcher.UIThread.Post(() => TitleChanged?.Invoke(this, title));
+            }
+        };
         Engine.ResponseReady += (_, data) => _connection?.Write(data);
         Engine.ClipboardWriteRequested += (_, text) =>
             Dispatcher.UIThread.Post(() => SetClipboardFromTerminalObservedAsync(text));
