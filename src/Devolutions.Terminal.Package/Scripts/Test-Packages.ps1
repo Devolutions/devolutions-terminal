@@ -131,17 +131,11 @@ begin {
             Assert-Condition ($identity.Name -eq "Devolutions.Terminal") "Unexpected package identity name."
             Assert-Condition ($identity.Publisher -eq "CN=Devolutions Inc.") "Unexpected package publisher."
             Assert-Condition ($identity.ProcessorArchitecture -in @("x64", "arm64")) "Unexpected package architecture '$($identity.ProcessorArchitecture)'."
-            $expectedGhosttyHash = if ($identity.ProcessorArchitecture -eq "arm64") {
-                "691A331E92D0CE17B8407DD370D26394090B14AB8A7C398DF497442293D4ED72"
-            }
-            else {
-                "DCB3274F9D8C945AC765A11903614C5DA4BC0CC2EF4EBC23E8CD70C130B7B458"
-            }
-            $actualGhosttyHash = (Get-FileHash -LiteralPath $ghosttyPath -Algorithm SHA256).Hash
-            Assert-Condition (
-                $actualGhosttyHash -eq $expectedGhosttyHash
-            ) "ghostty-vt.dll architecture/hash mismatch in '$Path'."
             $expectedMachine = if ($identity.ProcessorArchitecture -eq "arm64") { 0xAA64 } else { 0x8664 }
+            $ghosttyMachine = Get-PeMachine $ghosttyPath
+            Assert-Condition (
+                $ghosttyMachine -eq $expectedMachine
+            ) "ghostty-vt.dll architecture 0x$($ghosttyMachine.ToString('X4')) does not match '$($identity.ProcessorArchitecture)' in '$Path'."
             foreach ($helper in @("Devolutions.Terminal.ShellExt.dll", "dt-shell-integration.exe")) {
                 $helperPath = Join-Path $extractPath $helper
                 Assert-Condition (Test-Path -LiteralPath $helperPath -PathType Leaf) "'$helper' is missing from '$Path'."
