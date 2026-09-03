@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <NativeRestore>ghostty</NativeRestore>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Devolutions.Terminal.App\Devolutions.Terminal.App.csproj" />
+  </ItemGroup>
+  <Import Project="..\..\native\NativeLibraries.targets" />
+  <ItemGroup>
+    <None Include="..\..\linux\**\*"
+          Link="linux\%(RecursiveDir)%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

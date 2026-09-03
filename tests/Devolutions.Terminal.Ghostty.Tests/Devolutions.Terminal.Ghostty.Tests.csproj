@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <NativeRestore>ghostty</NativeRestore>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Devolutions.Terminal.Ghostty\Devolutions.Terminal.Ghostty.csproj" />
+    <ProjectReference Include="..\..\src\Devolutions.Terminal.Control\Devolutions.Terminal.Control.csproj" />
+  </ItemGroup>
+  <Import Project="..\..\native\NativeLibraries.targets" />
+</Project>

@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsTestProject>true</IsTestProject>
+    <NativeRestore>pty</NativeRestore>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Devolutions.Terminal.Connection\Devolutions.Terminal.Connection.csproj" />
+  </ItemGroup>
+  <Import Project="..\..\native\NativeLibraries.targets" />
+</Project>

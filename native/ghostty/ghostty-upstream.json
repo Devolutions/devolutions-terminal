@@ -1,0 +1,34 @@
+{
+  "repository": "https://github.com/ghostty-org/ghostty.git",
+  "commit": "3c1ef5b32fc5ea6b93d28493fabf193f595139cf",
+  "zig": "0.16.0",
+  "optimize": "ReleaseFast",
+  "simd": true,
+  "strip": true,
+  "targets": {
+    "win-x64": {
+      "zigTarget": "x86_64-windows-msvc",
+      "file": "ghostty-vt.dll"
+    },
+    "win-arm64": {
+      "zigTarget": "aarch64-windows-msvc",
+      "file": "ghostty-vt.dll"
+    },
+    "linux-x64": {
+      "zigTarget": "x86_64-linux-gnu.2.31",
+      "file": "libghostty-vt.so"
+    },
+    "linux-arm64": {
+      "zigTarget": "aarch64-linux-gnu.2.31",
+      "file": "libghostty-vt.so"
+    },
+    "osx-arm64": {
+      "zigTarget": "aarch64-macos.13.0",
+      "file": "libghostty-vt.dylib"
+    },
+    "osx-x64": {
+      "zigTarget": "x86_64-macos.13.0",
+      "file": "libghostty-vt.dylib"
+    }
+  }
+}

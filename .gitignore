@@ -1,0 +1,35 @@
+## Build outputs
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+artifacts/
+TestResults/
+*.binlog
+*.user
+*.suo
+*.userosscache
+.vs/
+.vscode/
+
+## Generated packages
+*.msix
+*.msixbundle
+*.appx
+*.appxbundle
+
+## Local secrets / certs
+*.pfx
+!**/devcert.pfx
+
+## OS
+Thumbs.db
+.DS_Store
+
+## Native libraries built from source (see native/Restore-NativeLibraries.ps1)
+native/ghostty/**/*.dll
+native/ghostty/**/*.so
+native/ghostty/**/*.dylib
+native/ghostty/**/*.sha256
+native/linux-pty/**/dt-pty-host
+native/linux-pty/**/dt-pty-host.exe
+native/noto-emoji/NotoColorEmoji.ttf
