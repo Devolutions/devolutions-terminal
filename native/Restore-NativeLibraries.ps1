@@ -63,7 +63,7 @@ try {
                 $ghosttyArgs.Force = $true
             }
 
-            & (Join-Path $nativeRoot "ghostty" "Build-Ghostty.ps1") @ghosttyArgs
+            & (Join-Path (Join-Path $nativeRoot "ghostty") "Build-Ghostty.ps1") @ghosttyArgs
             if ($LASTEXITCODE -ne 0) {
                 throw "Build-Ghostty.ps1 failed for $Rid."
             }
@@ -84,7 +84,7 @@ try {
                 $ptyArgs.Force = $true
             }
 
-            & (Join-Path $nativeRoot "linux-pty" "Build-LinuxPtyHost.ps1") @ptyArgs
+            & (Join-Path (Join-Path $nativeRoot "linux-pty") "Build-LinuxPtyHost.ps1") @ptyArgs
             if ($LASTEXITCODE -ne 0) {
                 throw "Build-LinuxPtyHost.ps1 failed for $Rid."
             }

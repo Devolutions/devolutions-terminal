@@ -256,7 +256,8 @@ jobs:
         if: matrix.rid == 'linux-arm64'
         run: |
           sudo apt-get install --no-install-recommends \
-            binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu
+            binutils-aarch64-linux-gnu gcc-aarch64-linux-gnu \
+            libc6-dev-arm64-cross
 
       - name: Fetch pinned AppImage runtime
         env:
