@@ -562,8 +562,21 @@ public sealed class AzureCloudShellConnection : IRestartableTerminalConnection
         }
         finally
         {
-            await session.Lifetime.CancelAsync().ConfigureAwait(false);
-            session.Socket.Abort();
+            try
+            {
+                await session.Lifetime.CancelAsync().ConfigureAwait(false);
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+
+            try
+            {
+                session.Socket.Abort();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
         }
 
         if (session.ReceiveTask is not null)

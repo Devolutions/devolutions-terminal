@@ -19,7 +19,7 @@
           Condition="'$(SkipNativeRestore)' != 'true' and '$(DesignTimeBuild)' != 'true' and '$(NativeRestore)' != 'none'">
     <Exec
       Command="$(NativeRestoreShell) -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;$(NativeRoot)Restore-NativeLibraries.ps1&quot; -Rid $(GhosttyRid) -Component $(NativeRestore)"
-      LogStandardErrorAsError="true" />
+      LogStandardErrorAsError="false" />
   </Target>
 
   <Target Name="CopyRestoredNativeLibraries"
