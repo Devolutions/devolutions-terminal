@@ -203,31 +203,7 @@ begin {
 process {
     foreach ($path in $PackagePath) {
         $resolvedPath = [IO.Path]::GetFullPath($path)
-        if ([IO.Path]::GetExtension($resolvedPath) -eq ".msixbundle") {
-            if ($RequireSignature) {
-                Test-Signature $resolvedPath
-            }
-
-            $bundlePath = Join-Path ([IO.Path]::GetTempPath()) ("wt-msixbundle-" + [guid]::NewGuid())
-            New-Item -ItemType Directory -Path $bundlePath | Out-Null
-            try {
-                Invoke-MakeAppx -Arguments @("unbundle", "/p", $resolvedPath, "/d", $bundlePath, "/o")
-                $bundledPackages = @(Get-ChildItem -LiteralPath $bundlePath -Filter "*.msix" -File)
-                Assert-Condition ($bundledPackages.Count -eq 2) "The bundle must contain exactly x64 and arm64 packages."
-                $results = @($bundledPackages | ForEach-Object { Test-Msix $_.FullName })
-                $architectures = @($results.Architecture | Sort-Object -Unique)
-                Assert-Condition (
-                    $architectures.Count -eq 2 -and
-                    $architectures -contains "x64" -and
-                    $architectures -contains "arm64"
-                ) "The bundle does not contain both x64 and arm64 packages."
-                $results
-            }
-            finally {
-                Remove-Item -Recurse -Force -LiteralPath $bundlePath
-            }
-        }
-        elseif ([IO.Path]::GetExtension($resolvedPath) -eq ".msix") {
+        if ([IO.Path]::GetExtension($resolvedPath) -eq ".msix") {
             Test-Msix $resolvedPath
         }
         else {

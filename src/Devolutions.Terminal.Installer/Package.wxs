@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+      Name="Devolutions Terminal"
+      Manufacturer="Devolutions Inc."
+      Version="$(var.ProductVersion)"
+      UpgradeCode="{1B5D5A55-1C5A-48AA-ACD2-B1FEC7950FF8}"
+      Scope="perMachine"
+      Language="1033">
+    <MediaTemplate CompressionLevel="high" EmbedCab="yes" />
+
+    <Feature Id="MainFeature" Title="Devolutions Terminal" Level="1">
+      <ComponentGroupRef Id="ProductComponents" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLLOCATION" Name="Devolutions Terminal" />
+    </StandardDirectory>
+  </Fragment>
+</Wix>

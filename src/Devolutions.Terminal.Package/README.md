@@ -1,7 +1,7 @@
 # Devolutions Terminal MSIX packaging
 
 This project owns the development package identity and the scripts that turn the
-`win-x64` and `win-arm64` NativeAOT publishes into MSIX packages and a bundle.
+`win-x64` and `win-arm64` NativeAOT publishes into per-architecture MSIX packages.
 Direct `dotnet run` and `dotnet publish` remain unpackaged and do not require
 registration.
 
@@ -36,8 +36,7 @@ Install [winapp CLI](https://learn.microsoft.com/windows/apps/dev-tools/winapp-c
 ```powershell
 .\src\Devolutions.Terminal.Package\Scripts\Build-Packages.ps1
 .\src\Devolutions.Terminal.Package\Scripts\Test-Packages.ps1 `
-  -PackagePath .\artifacts\msix\packages\*.msix, `
-               .\artifacts\msix\packages\*.msixbundle
+  -PackagePath .\artifacts\msix\packages\*.msix
 ```
 
 Unsigned packages are the default so CI can publish artifacts for a trusted
@@ -60,7 +59,6 @@ $password = Read-Host "Certificate password" -AsSecureString
 .\src\Devolutions.Terminal.Package\Scripts\New-DevelopmentCertificate.ps1 `
   -Password $password
 
-# Rebuild the bundle from the newly signed architecture packages, then sign it.
 .\src\Devolutions.Terminal.Package\Scripts\Sign-Packages.ps1 `
   -PackageDirectory .\artifacts\msix\packages `
   -CertificatePath .\artifacts\msix\certificates\Devolutions.Terminal.pfx `
@@ -79,9 +77,9 @@ terminal:
 Install, launch, validate, and uninstall:
 
 ```powershell
-$bundle = ".\artifacts\msix\packages\Devolutions.Terminal_0.1.0.0_x64_arm64.msixbundle"
-.\src\Devolutions.Terminal.Package\Scripts\Test-Packages.ps1 -PackagePath $bundle -RequireSignature
-.\src\Devolutions.Terminal.Package\Scripts\Install-Package.ps1 -PackagePath $bundle -Launch
+$package = ".\artifacts\msix\packages\Devolutions.Terminal_0.1.0.0_x64.msix"
+.\src\Devolutions.Terminal.Package\Scripts\Test-Packages.ps1 -PackagePath $package -RequireSignature
+.\src\Devolutions.Terminal.Package\Scripts\Install-Package.ps1 -PackagePath $package -Launch
 dt.exe
 Start-Process "dterm:"
 .\src\Devolutions.Terminal.Package\Scripts\Uninstall-Package.ps1

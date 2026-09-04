@@ -163,12 +163,11 @@ whitespace while retaining unknown/local-layer data. Runtime state is stored in
 
 ## MSIX
 
-Create unsigned x64/ARM64 packages and a bundle:
+Create unsigned x64 and ARM64 packages:
 
 ```powershell
 .\src\Devolutions.Terminal.Package\Scripts\Build-Packages.ps1 -Version 0.1.0.0
-$packages = Get-ChildItem .\artifacts\msix\packages\*.msix,
-  .\artifacts\msix\packages\*.msixbundle
+$packages = Get-ChildItem .\artifacts\msix\packages\*.msix
 .\src\Devolutions.Terminal.Package\Scripts\Test-Packages.ps1 `
   -PackagePath $packages.FullName
 ```
@@ -178,16 +177,58 @@ Development signing:
 ```powershell
 $password = Read-Host "Certificate password" -AsSecureString
 .\src\Devolutions.Terminal.Package\Scripts\New-DevelopmentCertificate.ps1 `
-  -OutputDirectory .\artifacts\msix\certificates -Password $password
+  -OutputDirectory .\artifacts\msix\certificates
 .\src\Devolutions.Terminal.Package\Scripts\Sign-Packages.ps1 `
   -PackageDirectory .\artifacts\msix\packages `
   -CertificatePath .\artifacts\msix\certificates\Devolutions.Terminal.pfx `
-  -Password $password -Version 0.1.0.0
+  -Version 0.1.0.0
 ```
+
+## MSI
+
+Build a WiX-based MSI package for the same published Windows outputs:
+
+```powershell
+.\src\Devolutions.Terminal.Package\Scripts\Build-Msi.ps1 `
+  -Architectures x64,arm64 `
+  -Version 0.1.0.0 `
+  -OutputDirectory .\artifacts\msi
+```
+
+The MSI project is in `src/Devolutions.Terminal.Installer` and uses a fixed
+`UpgradeCode` with per-machine install scope under `ProgramFiles6432Folder`.
 
 Never commit PFX files, passwords, certificate private keys, or signed internal
 artifacts. CI produces unsigned packages unless a protected release environment
 injects signing credentials.
+
+## GitHub Release automation
+
+The release workflow in `.github/workflows/build-terminal.yml` publishes signed
+Windows packages and the corresponding platform archives directly to GitHub
+Releases without staging them in OneDrive. It builds unsigned per-architecture
+MSIX and MSI packages for Windows x64 and ARM64, then signs them on the Linux
+release runner with Devolutions `psign-tool` and Azure Artifact Signing
+(Trusted Signing). The private key never lands on the runner. Signed Windows
+packages are uploaded alongside Linux and macOS archives. The workflow is
+intended for tag-based releases and for manual dispatch.
+
+Required secrets:
+
+- `ARTIFACT_SIGNING_ENDPOINT`
+- `ARTIFACT_SIGNING_ACCOUNT_NAME`
+- `ARTIFACT_SIGNING_PROFILE_NAME`
+- `AZURE_TENANT_ID`
+- `CODE_SIGNING_CLIENT_ID`
+- `CODE_SIGNING_CLIENT_SECRET`
+
+Optional repository variable:
+
+- `CODE_SIGNING_TIMESTAMP_SERVER` (defaults to `http://timestamp.acs.microsoft.com/`)
+
+`psign-tool` portable Artifact Signing signs the per-architecture `.msix` and
+`.msi` files. The MSIX `Publisher` identity in `Package.appxmanifest` must
+match the Artifact Signing certificate subject.
 
 ## Release gates
 
@@ -195,9 +236,8 @@ injects signing credentials.
 2. Run the full Release solution tests with no failures or unconditional skips.
 3. Publish and launch-smoke NativeAOT x64.
 4. Cross-publish NativeAOT ARM64.
-5. Build and structurally validate both MSIX packages and the bundle, including
-   shell-helper PE architecture, SHA-256 manifests, COM/Explorer extensions,
-   and notices.
+5. Build and structurally validate both MSIX packages, including shell-helper
+   PE architecture, SHA-256 manifests, COM/Explorer extensions, and notices.
 6. Sign and verify package publisher/identity/version in a protected environment.
 7. Install, launch `Devolutions.Terminal.exe`, invoke `dt.exe`, upgrade, and uninstall
    on clean x64 and ARM64 Windows VMs.

@@ -4,11 +4,14 @@ on:
   push:
     branches:
       - "**"
+    tags:
+      - "v*"
     paths-ignore:
       - ".github/workflows/build-ghostty.yml"
   pull_request:
     paths-ignore:
       - ".github/workflows/build-ghostty.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -385,7 +388,7 @@ jobs:
           name: DevolutionsTerminal-win-arm64
           path: artifacts/msix/layout/win-arm64
 
-      - name: Build unsigned MSIX packages and bundle
+      - name: Build unsigned MSIX packages
         shell: pwsh
         run: >
           ./src/Devolutions.Terminal.Package/Scripts/Build-Packages.ps1
@@ -398,7 +401,7 @@ jobs:
         run: >
           ./src/Devolutions.Terminal.Package/Scripts/Test-Packages.ps1
           -PackagePath (Get-ChildItem ./artifacts/msix/packages -File |
-          Where-Object Extension -In ".msix", ".msixbundle" |
+          Where-Object Extension -eq ".msix" |
           ForEach-Object FullName)
 
       - name: Upload unsigned MSIX artifacts
@@ -407,3 +410,197 @@ jobs:
           name: DevolutionsTerminal-MSIX-unsigned
           path: artifacts/msix/packages
           if-no-files-found: error
+
+  msi:
+    name: MSI packages
+    needs: native-aot
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Download x64 publish
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: DevolutionsTerminal-win-x64
+          path: artifacts/msi/layout/win-x64
+
+      - name: Download arm64 publish
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: DevolutionsTerminal-win-arm64
+          path: artifacts/msi/layout/win-arm64
+
+      - name: Build MSI packages
+        shell: pwsh
+        run: >
+          ./src/Devolutions.Terminal.Package/Scripts/Build-Msi.ps1
+          -SkipPublish
+          -OutputDirectory ./artifacts/msi
+          -Version "0.1.${{ github.run_number }}.0"
+
+      - name: Upload unsigned MSI artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: DevolutionsTerminal-MSI-unsigned
+          path: artifacts/msi/packages
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
+    needs:
+      - build
+      - native-aot
+      - linux-managed
+      - macos-managed
+      - macos-native-aot
+      - linux-packages
+      - linux-arm64-hardware
+      - msix
+      - msi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      RELEASE_VERSION: 0.1.${{ github.run_number }}
+      MSIX_VERSION: 0.1.${{ github.run_number }}.0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Download Windows unsigned MSIX
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: DevolutionsTerminal-MSIX-unsigned
+          path: artifacts/msix-packages
+
+      - name: Download Windows unsigned MSI
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: DevolutionsTerminal-MSI-unsigned
+          path: artifacts/msi-packages
+
+      - name: Download Linux x64 packages
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: DevolutionsTerminal-linux-x64-packages
+          path: artifacts/linux-x64
+
+      - name: Download Linux arm64 packages
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: DevolutionsTerminal-linux-arm64-packages
+          path: artifacts/linux-arm64
+
+      - name: Download macOS package artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: DevolutionsTerminal-osx-arm64-packages
+          path: artifacts/macos-packages
+
+      - name: Install Linux psign-tool
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $toolRoot = Join-Path $env:RUNNER_TEMP "psign-tool"
+          $extractRoot = Join-Path $toolRoot "expanded"
+          if (Test-Path -LiteralPath $toolRoot) {
+            Remove-Item -LiteralPath $toolRoot -Recurse -Force
+          }
+
+          New-Item -Path $extractRoot -ItemType Directory -Force | Out-Null
+          gh release download --repo Devolutions/psign --pattern "psign-tool-linux-x64.zip" --dir $toolRoot --clobber
+
+          $toolArchivePath = Join-Path $toolRoot "psign-tool-linux-x64.zip"
+          if (-not (Test-Path -LiteralPath $toolArchivePath -PathType Leaf)) {
+            throw "psign-tool archive was not found at $toolArchivePath"
+          }
+
+          Expand-Archive -Path $toolArchivePath -DestinationPath $extractRoot -Force
+          $toolPath = Join-Path $extractRoot "psign-tool"
+          if (-not (Test-Path -LiteralPath $toolPath -PathType Leaf)) {
+            throw "psign-tool executable was not found at $toolPath"
+          }
+
+          chmod +x $toolPath
+          $extractRoot | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          & $toolPath --version
+
+      - name: Sign Windows packages with Azure Artifact Signing
+        shell: pwsh
+        env:
+          ARTIFACT_SIGNING_ENDPOINT: ${{ secrets.ARTIFACT_SIGNING_ENDPOINT }}
+          ARTIFACT_SIGNING_ACCOUNT_NAME: ${{ secrets.ARTIFACT_SIGNING_ACCOUNT_NAME }}
+          ARTIFACT_SIGNING_PROFILE_NAME: ${{ secrets.ARTIFACT_SIGNING_PROFILE_NAME }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          CODE_SIGNING_CLIENT_ID: ${{ secrets.CODE_SIGNING_CLIENT_ID }}
+          CODE_SIGNING_CLIENT_SECRET: ${{ secrets.CODE_SIGNING_CLIENT_SECRET }}
+          CODE_SIGNING_TIMESTAMP_SERVER: ${{ vars.CODE_SIGNING_TIMESTAMP_SERVER }}
+        run: |
+          $required = @(
+            "ARTIFACT_SIGNING_ENDPOINT",
+            "ARTIFACT_SIGNING_ACCOUNT_NAME",
+            "ARTIFACT_SIGNING_PROFILE_NAME",
+            "AZURE_TENANT_ID",
+            "CODE_SIGNING_CLIENT_ID",
+            "CODE_SIGNING_CLIENT_SECRET"
+          )
+          $missing = @($required | Where-Object { [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_)) })
+          if ($missing.Count -gt 0) {
+            throw "Missing Azure Artifact Signing secrets: $($missing -join ', ')"
+          }
+
+          $timestampServer = $env:CODE_SIGNING_TIMESTAMP_SERVER
+          if ([string]::IsNullOrWhiteSpace($timestampServer)) {
+            $timestampServer = "http://timestamp.acs.microsoft.com/"
+          }
+
+          ./src/Devolutions.Terminal.Package/Scripts/Sign-Packages.ps1 `
+            -PackageDirectory ./artifacts/msix-packages `
+            -Version $env:MSIX_VERSION `
+            -ArtifactSigningEndpoint $env:ARTIFACT_SIGNING_ENDPOINT `
+            -ArtifactSigningAccountName $env:ARTIFACT_SIGNING_ACCOUNT_NAME `
+            -ArtifactSigningProfileName $env:ARTIFACT_SIGNING_PROFILE_NAME `
+            -AzureTenantId $env:AZURE_TENANT_ID `
+            -ClientId $env:CODE_SIGNING_CLIENT_ID `
+            -ClientSecret $env:CODE_SIGNING_CLIENT_SECRET `
+            -TimestampServer $timestampServer
+
+          ./src/Devolutions.Terminal.Package/Scripts/Sign-Packages.ps1 `
+            -PackageDirectory ./artifacts/msi-packages `
+            -Version $env:MSIX_VERSION `
+            -ArtifactSigningEndpoint $env:ARTIFACT_SIGNING_ENDPOINT `
+            -ArtifactSigningAccountName $env:ARTIFACT_SIGNING_ACCOUNT_NAME `
+            -ArtifactSigningProfileName $env:ARTIFACT_SIGNING_PROFILE_NAME `
+            -AzureTenantId $env:AZURE_TENANT_ID `
+            -ClientId $env:CODE_SIGNING_CLIENT_ID `
+            -ClientSecret $env:CODE_SIGNING_CLIENT_SECRET `
+            -TimestampServer $timestampServer
+
+      - name: Stage release assets
+        shell: bash
+        run: |
+          mkdir -p artifacts/release
+          cp -f artifacts/msix-packages/* artifacts/release/
+          cp -f artifacts/msi-packages/* artifacts/release/
+          cp -f artifacts/linux-x64/* artifacts/release/
+          cp -f artifacts/linux-arm64/* artifacts/release/
+          cp -f artifacts/macos-packages/* artifacts/release/
+          ls -1 artifacts/release
+
+      - name: Publish release to GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release view "v${RELEASE_VERSION}" >/dev/null 2>&1 || \
+            gh release create "v${RELEASE_VERSION}" \
+              --title "Devolutions Terminal ${RELEASE_VERSION}" \
+              --generate-notes \
+              --target "${{ github.sha }}"
+          gh release upload "v${RELEASE_VERSION}" artifacts/release/* --clobber
+
+
+
