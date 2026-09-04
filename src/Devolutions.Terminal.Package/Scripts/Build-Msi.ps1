@@ -73,9 +73,6 @@ foreach ($architecture in $Architectures) {
 
     $generatedComponents = Join-Path $dotnetRoot "src\Devolutions.Terminal.Installer\GeneratedProductComponents.wxs"
     & (Join-Path $PSScriptRoot "Write-MsiComponents.ps1") -PublishDir $layout -OutputFile $generatedComponents
-    if ($LASTEXITCODE -ne 0) {
-        throw "Generating MSI component list failed with exit code $LASTEXITCODE."
-    }
     if (-not (Test-Path -LiteralPath $generatedComponents -PathType Leaf)) {
         throw "MSI component list was not written to '$generatedComponents'."
     }
