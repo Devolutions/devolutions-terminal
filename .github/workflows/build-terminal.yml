@@ -4,11 +4,14 @@ on:
   push:
     branches:
       - "**"
+    tags:
+      - "v*"
     paths-ignore:
       - ".github/workflows/build-ghostty.yml"
   pull_request:
     paths-ignore:
       - ".github/workflows/build-ghostty.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -407,3 +410,98 @@ jobs:
           name: DevolutionsTerminal-MSIX-unsigned
           path: artifacts/msix/packages
           if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
+    needs:
+      - build
+      - native-aot
+      - linux-managed
+      - macos-managed
+      - macos-native-aot
+      - linux-packages
+      - linux-arm64-hardware
+      - msix
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      RELEASE_VERSION: 0.1.${{ github.run_number }}
+      MSIX_VERSION: 0.1.${{ github.run_number }}.0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Download Windows unsigned MSIX
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: DevolutionsTerminal-MSIX-unsigned
+          path: artifacts/msix-packages
+
+      - name: Download Linux x64 packages
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: DevolutionsTerminal-linux-x64-packages
+          path: artifacts/linux-x64
+
+      - name: Download Linux arm64 packages
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: DevolutionsTerminal-linux-arm64-packages
+          path: artifacts/linux-arm64
+
+      - name: Download macOS package artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: DevolutionsTerminal-osx-arm64-packages
+          path: artifacts/macos-packages
+
+      - name: Decode Windows signing certificate
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_BASE64 }}
+          WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERTIFICATE_BASE64)) {
+            throw "WINDOWS_SIGNING_CERTIFICATE_BASE64 is required for release signing."
+          }
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD)) {
+            throw "WINDOWS_SIGNING_CERTIFICATE_PASSWORD is required for release signing."
+          }
+
+          $path = Join-Path $env:RUNNER_TEMP "Devolutions.Terminal.Signing.pfx"
+          [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:WINDOWS_SIGNING_CERTIFICATE_BASE64))
+          "CERT_PATH=$path" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Sign Windows MSIX packages
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE_PASSWORD }}
+        run: |
+          ./src/Devolutions.Terminal.Package/Scripts/Sign-Packages.ps1 ./artifacts/msix-packages $env:CERT_PATH $env:MSIX_VERSION (ConvertTo-SecureString $env:WINDOWS_SIGNING_CERTIFICATE_PASSWORD -AsPlainText -Force)
+
+      - name: Stage release assets
+        shell: bash
+        run: |
+          mkdir -p artifacts/release
+          cp -f artifacts/msix-packages/* artifacts/release/
+          cp -f artifacts/linux-x64/* artifacts/release/
+          cp -f artifacts/linux-arm64/* artifacts/release/
+          cp -f artifacts/macos-packages/* artifacts/release/
+          ls -1 artifacts/release
+
+      - name: Publish release to GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release view "v${RELEASE_VERSION}" >/dev/null 2>&1 || \
+            gh release create "v${RELEASE_VERSION}" \
+              --title "Devolutions Terminal ${RELEASE_VERSION}" \
+              --generate-notes \
+              --target "${{ github.sha }}"
+          gh release upload "v${RELEASE_VERSION}" artifacts/release/* --clobber
+
+
+

@@ -189,6 +189,20 @@ Never commit PFX files, passwords, certificate private keys, or signed internal
 artifacts. CI produces unsigned packages unless a protected release environment
 injects signing credentials.
 
+## GitHub Release automation
+
+The release workflow in `.github/workflows/build-terminal.yml` publishes signed
+Windows packages and the corresponding platform bundles directly to GitHub
+Releases without staging them in OneDrive. The workflow is intended for tag-based
+releases and for manual dispatch. It expects these repository secrets:
+
+- `WINDOWS_SIGNING_CERTIFICATE_BASE64`
+- `WINDOWS_SIGNING_CERTIFICATE_PASSWORD`
+
+The certificate is decoded to a temporary `.pfx`, passed to
+`src/Devolutions.Terminal.Package/Scripts/Sign-Packages.ps1`, and then the
+signed MSIX and platform archives are uploaded via `gh release upload`.
+
 ## Release gates
 
 1. Regenerate `compat/windows-terminal.json` and review inventory changes.
