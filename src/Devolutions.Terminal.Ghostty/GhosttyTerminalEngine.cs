@@ -55,6 +55,14 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
     private readonly List<byte> _imageProbe = new(16);
     private ImageProbeState _imageProbeState;
     private bool _dcsImageCandidate;
+    private bool _ansiMode = true;
+    private int _modifyOtherKeys;
+    private KeyboardModeScanState _keyboardModeScan;
+    private byte _keyboardCsiPrivate;
+    private int _keyboardCsiValue;
+    private bool _keyboardCsiHasValue;
+    private readonly int[] _keyboardCsiParams = new int[8];
+    private int _keyboardCsiCount;
 
     private enum ImageProbeState : byte
     {
@@ -67,6 +75,13 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
         OscEscape,
         OscIgnored,
         OscIgnoredEscape,
+    }
+
+    private enum KeyboardModeScanState : byte
+    {
+        Ground,
+        Escape,
+        Csi,
     }
 
     public GhosttyTerminalEngine(int columns = 120, int rows = 30, int historySize = 9001)
@@ -162,7 +177,7 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
                 SynchronizeProjection();
             }
 
-            Invalidated?.Invoke(this, EventArgs.Empty);
+            RaiseInvalidated();
         }
     }
 
@@ -187,11 +202,11 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
     public bool InsertMode => QueryMode(4, ansi: true);
     public bool ReverseVideo => QueryMode(5);
     public TerminalInputMode InputMode => new(
-        AnsiMode: QueryMode(2),
+        AnsiMode: _ansiMode,
         ApplicationCursorKeys,
         ApplicationKeypad: QueryMode(66),
         KittyFlags: KittyKeyboardFlags.None,
-        ModifyOtherKeys: 0,
+        ModifyOtherKeys: _modifyOtherKeys,
         Win32InputMode: false);
     public int Columns => Buffer.Columns;
     public int Rows => Buffer.Rows;
@@ -218,6 +233,7 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             ProbeUnsupportedImages(data);
+            TrackHostKeyboardModes(data);
             var trackedHistory = _historyAnchor is { IsInvalid: false, IsClosed: false };
             var historyBefore = ReadScrollbarCore().HistoryCount;
             fixed (byte* bytes = data)
@@ -252,7 +268,7 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
             }
         }
 
-        Invalidated?.Invoke(this, EventArgs.Empty);
+        RaiseInvalidated();
     }
 
     public void Feed(string text)
@@ -282,7 +298,7 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
             SynchronizeProjection();
         }
 
-        Invalidated?.Invoke(this, EventArgs.Empty);
+        RaiseInvalidated();
     }
 
     public void Reset()
@@ -291,11 +307,12 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             GhosttyNative.TerminalReset(_terminal.DangerousGetHandle());
+            ResetHostKeyboardModes();
             SynchronizeProjection();
             ResetHistoryAnchor();
         }
 
-        Invalidated?.Invoke(this, EventArgs.Empty);
+        RaiseInvalidated();
     }
 
     public void SetScrollOffset(int offset)
@@ -315,7 +332,7 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
             SynchronizeProjection();
         }
 
-        Invalidated?.Invoke(this, EventArgs.Empty);
+        RaiseInvalidated();
     }
 
     public void ConfigureOptionalFeatures(
@@ -356,6 +373,117 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
         return BracketedPaste
             ? "\u001b[200~" + text.Replace("\u001b", string.Empty, StringComparison.Ordinal) + "\u001b[201~"
             : text;
+    }
+
+    private void ResetHostKeyboardModes()
+    {
+        _ansiMode = true;
+        _modifyOtherKeys = 0;
+        _keyboardModeScan = KeyboardModeScanState.Ground;
+        ResetKeyboardCsi();
+    }
+
+    private void ResetKeyboardCsi()
+    {
+        _keyboardCsiPrivate = 0;
+        _keyboardCsiValue = 0;
+        _keyboardCsiHasValue = false;
+        _keyboardCsiCount = 0;
+    }
+
+    private void TrackHostKeyboardModes(ReadOnlySpan<byte> data)
+    {
+        foreach (var value in data)
+        {
+            switch (_keyboardModeScan)
+            {
+                case KeyboardModeScanState.Ground:
+                    if (value == 0x1B)
+                    {
+                        _keyboardModeScan = KeyboardModeScanState.Escape;
+                    }
+                    break;
+                case KeyboardModeScanState.Escape:
+                    if (value == (byte)'[')
+                    {
+                        _keyboardModeScan = KeyboardModeScanState.Csi;
+                        ResetKeyboardCsi();
+                    }
+                    else
+                    {
+                        _keyboardModeScan = KeyboardModeScanState.Ground;
+                    }
+                    break;
+                case KeyboardModeScanState.Csi:
+                    if (value is 0x18 or 0x1A)
+                    {
+                        _keyboardModeScan = KeyboardModeScanState.Ground;
+                    }
+                    else if (_keyboardCsiPrivate == 0 &&
+                             !_keyboardCsiHasValue &&
+                             _keyboardCsiCount == 0 &&
+                             value is (byte)'?' or (byte)'>')
+                    {
+                        _keyboardCsiPrivate = value;
+                    }
+                    else if (value is >= (byte)'0' and <= (byte)'9')
+                    {
+                        _keyboardCsiHasValue = true;
+                        _keyboardCsiValue = _keyboardCsiValue > 100_000
+                            ? _keyboardCsiValue
+                            : (_keyboardCsiValue * 10) + (value - (byte)'0');
+                    }
+                    else if (value == (byte)';')
+                    {
+                        PushKeyboardCsiParam();
+                    }
+                    else if (value is >= 0x40 and <= 0x7E)
+                    {
+                        PushKeyboardCsiParam();
+                        ApplyKeyboardCsi(value);
+                        _keyboardModeScan = KeyboardModeScanState.Ground;
+                    }
+                    break;
+            }
+        }
+    }
+
+    private void PushKeyboardCsiParam()
+    {
+        if (_keyboardCsiCount >= _keyboardCsiParams.Length)
+        {
+            _keyboardCsiHasValue = false;
+            _keyboardCsiValue = 0;
+            return;
+        }
+
+        _keyboardCsiParams[_keyboardCsiCount++] = _keyboardCsiHasValue ? _keyboardCsiValue : 0;
+        _keyboardCsiHasValue = false;
+        _keyboardCsiValue = 0;
+    }
+
+    private void ApplyKeyboardCsi(byte final)
+    {
+        if (_keyboardCsiPrivate == (byte)'?' && final is (byte)'h' or (byte)'l')
+        {
+            var enable = final == (byte)'h';
+            for (var index = 0; index < _keyboardCsiCount; index++)
+            {
+                switch (_keyboardCsiParams[index])
+                {
+                    case 2:
+                        _ansiMode = enable;
+                        break;
+                }
+            }
+        }
+        else if (_keyboardCsiPrivate == (byte)'>' && final == (byte)'m' &&
+                 _keyboardCsiCount > 0 && _keyboardCsiParams[0] == 4)
+        {
+            _modifyOtherKeys = _keyboardCsiCount > 1
+                ? Math.Clamp(_keyboardCsiParams[1], 0, 2)
+                : 0;
+        }
     }
 
     private void ProbeUnsupportedImages(ReadOnlySpan<byte> data)
@@ -1081,6 +1209,18 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
         G = (byte)(color >> 8),
         B = (byte)color,
     };
+
+    private void RaiseInvalidated()
+    {
+        try
+        {
+            Invalidated?.Invoke(this, EventArgs.Empty);
+        }
+        catch (Exception)
+        {
+            // Subscribers (scrollbar, UIA) must not fail the PTY output pump.
+        }
+    }
 
     private static void ThrowIfFailed(GhosttyResult result, string operation)
     {

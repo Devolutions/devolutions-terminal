@@ -265,4 +265,20 @@ public sealed class KeyMapperTests
         Assert.Equal("\u001b[27;5;97~", modified);
         Assert.Equal("\u001b[65;0;97;0;8;2_", win32Release);
     }
+
+    [Fact]
+    public void Win32ShiftLetterUsesShiftVkThenCharacter()
+    {
+        var win32 = new TerminalInputMode(true, false, false, KittyKeyboardFlags.None, 0, true);
+
+        Assert.Equal(
+            "\u001b[16;0;0;1;16;1_",
+            KeyMapper.ToVt(Key.LeftShift, KeyModifiers.Shift, PhysicalKey.ShiftLeft, null, win32));
+        Assert.Equal(
+            "\u001b[68;0;68;1;16;1_",
+            KeyMapper.ToVt(Key.D, KeyModifiers.Shift, PhysicalKey.D, "D", win32));
+        Assert.Equal(
+            "\u001b[186;0;58;1;16;1_",
+            KeyMapper.ToVt(Key.OemSemicolon, KeyModifiers.Shift, PhysicalKey.Semicolon, ":", win32));
+    }
 }

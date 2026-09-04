@@ -4057,8 +4057,8 @@ public partial class MainWindow :
                         pane.Control.Engine.HistoryCount - (int)Math.Round(_scrollBar.Value));
                 }
             };
-            pane.Control.ViewportChanged += (_, _) => Update();
-            pane.Control.ScrollMarksChanged += (_, _) => Update();
+            pane.Control.ViewportChanged += (_, _) => PostUpdate();
+            pane.Control.ScrollMarksChanged += (_, _) => PostUpdate();
             PropertyChanged += (_, args) =>
             {
                 if (args.Property == BoundsProperty)
@@ -4067,6 +4067,17 @@ public partial class MainWindow :
                 }
             };
             Update();
+        }
+
+        private void PostUpdate()
+        {
+            if (Dispatcher.UIThread.CheckAccess())
+            {
+                Update();
+                return;
+            }
+
+            Dispatcher.UIThread.Post(Update);
         }
 
         private void Update()

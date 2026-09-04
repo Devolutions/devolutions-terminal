@@ -334,7 +334,7 @@ public static class KeyMapper
         _ => 0,
     };
 
-    private static string EncodeWin32(
+    private static string? EncodeWin32(
         Key key,
         KeyModifiers modifiers,
         string? keySymbol,
@@ -343,6 +343,11 @@ public static class KeyMapper
     {
         var virtualKey = VirtualKey(key);
         var unicode = TrySingleRune(keySymbol, out var rune) ? rune.Value : 0;
+        if (virtualKey == 0 && unicode == 0)
+        {
+            return null;
+        }
+
         var keyDown = eventType == TerminalKeyEventType.Release ? 0 : 1;
         var controlState =
             (modifiers.HasFlag(KeyModifiers.Shift) ? 0x10 : 0) |
@@ -373,6 +378,23 @@ public static class KeyMapper
         Key.PageUp => 0x21,
         Key.PageDown => 0x22,
         >= Key.F1 and <= Key.F12 => 0x70 + key - Key.F1,
+        Key.LeftShift or Key.RightShift => 0x10,
+        Key.LeftCtrl or Key.RightCtrl => 0x11,
+        Key.LeftAlt or Key.RightAlt => 0x12,
+        Key.LWin or Key.RWin => 0x5B,
+        Key.Space => 0x20,
+        Key.OemSemicolon => 0xBA,
+        Key.OemPlus => 0xBB,
+        Key.OemComma => 0xBC,
+        Key.OemMinus => 0xBD,
+        Key.OemPeriod => 0xBE,
+        Key.OemQuestion => 0xBF,
+        Key.OemTilde => 0xC0,
+        Key.OemOpenBrackets => 0xDB,
+        Key.OemPipe => 0xDC,
+        Key.OemCloseBrackets => 0xDD,
+        Key.OemQuotes => 0xDE,
+        Key.OemBackslash => 0xE2,
         _ => 0,
     };
 

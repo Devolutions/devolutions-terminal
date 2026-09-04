@@ -5,6 +5,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Devolutions.Terminal.Ghostty\Devolutions.Terminal.Ghostty.csproj" />
     <ProjectReference Include="..\..\src\Devolutions.Terminal.Control\Devolutions.Terminal.Control.csproj" />
+    <ProjectReference Include="..\..\src\Devolutions.Terminal.Connection\Devolutions.Terminal.Connection.csproj" />
   </ItemGroup>
   <Import Project="..\..\native\NativeLibraries.targets" />
 </Project>
