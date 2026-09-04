@@ -10,8 +10,21 @@ public static class SettingsService
     public static string SettingsDirectory => ResolveSettingsDirectory();
     public static string StateDirectory => ResolveStateDirectory();
 
-    public static string SettingsPath =>
-        SettingsPathOverride ?? Path.Combine(SettingsDirectory, "settings.json");
+    public static string SettingsPath
+    {
+        get
+        {
+            var overridePath = SettingsPathOverride;
+            if (string.IsNullOrWhiteSpace(overridePath))
+            {
+                return Path.Combine(SettingsDirectory, "settings.json");
+            }
+
+            return Directory.Exists(overridePath)
+                ? Path.Combine(overridePath, "settings.json")
+                : overridePath;
+        }
+    }
 
     public static string StatePath =>
         SettingsPathOverride is { Length: > 0 }

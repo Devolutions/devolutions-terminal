@@ -133,6 +133,55 @@ public sealed class GhosttyTerminalEngineTests
     }
 
     [Fact]
+    public void HistorySnapshotFromInvalidatedDoesNotClearViewport()
+    {
+        using var engine = new GhosttyTerminalEngine(120, 30);
+        engine.Invalidated += (_, _) => engine.CreateSnapshot(includeHistory: true);
+
+        engine.Feed("hello Ghostty");
+
+        Assert.Equal("hello Ghostty", LineText(engine.CreateSnapshot().Buffer, 0));
+    }
+
+    [Fact]
+    public void InvalidatedSubscriberExceptionDoesNotFailFeed()
+    {
+        using var engine = new GhosttyTerminalEngine(20, 3);
+        engine.Invalidated += (_, _) => throw new InvalidOperationException("scrollbar");
+
+        engine.Feed("still projected");
+
+        Assert.Equal("still projected", LineText(engine.CreateSnapshot().Buffer, 0));
+    }
+
+    [Fact]
+    public void DefaultKeyboardModeIsAnsiNotVt52()
+    {
+        using var engine = new GhosttyTerminalEngine();
+
+        Assert.True(engine.InputMode.AnsiMode);
+        Assert.False(engine.InputMode.Win32InputMode);
+        Assert.Equal(0, engine.InputMode.ModifyOtherKeys);
+    }
+
+    [Fact]
+    public void ConPtyWin32InputRequestDoesNotSwitchGhosttyToWin32Encoding()
+    {
+        using var builtIn = new TerminalEngine(80, 24);
+        using var ghostty = new GhosttyTerminalEngine(80, 24);
+        const string conptyKeyboardModes = "\u001b[?9001h\u001b[?1004h\u001b[?25l";
+
+        builtIn.Feed(conptyKeyboardModes);
+        ghostty.Feed(conptyKeyboardModes);
+
+        Assert.True(builtIn.InputMode.Win32InputMode);
+        Assert.True(ghostty.InputMode.AnsiMode);
+        Assert.False(ghostty.InputMode.Win32InputMode);
+        Assert.Null(
+            KeyMapper.ToVt(Key.D, KeyModifiers.Shift, PhysicalKey.D, "D", ghostty.InputMode));
+    }
+
+    [Fact]
     public void FeedProjectsGhosttyGridIntoSharedBuffer()
     {
         using var engine = new GhosttyTerminalEngine(20, 3);

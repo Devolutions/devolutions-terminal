@@ -97,28 +97,17 @@ public sealed class TermControl : Avalonia.Controls.Control
 
         Engine.Invalidated += (_, _) =>
         {
-            if (_selection is not null &&
-                (_selectionCoordinateVersion != Engine.Buffer.CoordinateVersion ||
-                 _selectionAlternateBuffer != Engine.AlternateBufferActive))
-            {
-                SetSelection(null);
-            }
-
-            AccessibilityTextChanged?.Invoke(this, EventArgs.Empty);
-            ScrollMarksChanged?.Invoke(this, EventArgs.Empty);
-            ViewportChanged?.Invoke(this, EventArgs.Empty);
+            // Viewport/UIA listeners (scrollbar marks, automation peers) touch
+            // Avalonia controls and may snapshot history. That work must not
+            // run on the PTY thread or throw back into Engine.Feed — either
+            // kills ConPTY ReadLoop and leaves the constructor-sized blank grid.
             if (Dispatcher.UIThread.CheckAccess())
             {
-                _textInputMethodClient.NotifyCursorChanged();
-                InvalidateVisual();
+                HandleEngineInvalidated();
             }
             else
             {
-                Dispatcher.UIThread.Post(() =>
-                {
-                    _textInputMethodClient.NotifyCursorChanged();
-                    InvalidateVisual();
-                }, DispatcherPriority.Render);
+                Dispatcher.UIThread.Post(HandleEngineInvalidated, DispatcherPriority.Render);
             }
         };
         Engine.TitleChanged += (_, title) =>
@@ -233,6 +222,7 @@ public sealed class TermControl : Avalonia.Controls.Control
             CreateDefaultConnection();
         connection.OutputReceived += OnOutput;
         connection.SessionExited += OnSessionExited;
+        connection.Faulted += OnConnectionFaulted;
         _connection = connection;
         lock (_outputLock)
         {
@@ -256,6 +246,7 @@ public sealed class TermControl : Avalonia.Controls.Control
         {
             connection.OutputReceived -= OnOutput;
             connection.SessionExited -= OnSessionExited;
+            connection.Faulted -= OnConnectionFaulted;
             _connection = null;
             lock (_outputLock)
             {
@@ -310,6 +301,7 @@ public sealed class TermControl : Avalonia.Controls.Control
             _connection = null;
             connection.OutputReceived -= OnOutput;
             connection.SessionExited -= OnSessionExited;
+            connection.Faulted -= OnConnectionFaulted;
             lock (_outputLock)
             {
                 _acceptOutput = false;
@@ -919,7 +911,7 @@ public sealed class TermControl : Avalonia.Controls.Control
             frame,
             overlays,
             padding: 8,
-            drawCursor: _cursorOn && IsFocused));
+            drawCursor: Engine.CursorVisible && (_cursorOn || !IsFocused)));
     }
 
     public void SetSearchHighlights(IReadOnlyList<TerminalCellRange> highlights)
@@ -1253,11 +1245,44 @@ public sealed class TermControl : Avalonia.Controls.Control
                 return;
             }
 
-            // Feed on the PTY thread so cursor-position reports (CSI 6n) go
-            // back to zsh before PROMPT_SP prints a spurious '%'.
-            Engine.Feed(data.Span);
+            try
+            {
+                // Feed on the PTY thread so cursor-position reports (CSI 6n) go
+                // back to zsh before PROMPT_SP prints a spurious '%'.
+                Engine.Feed(data.Span);
+            }
+            catch (Exception exception)
+            {
+                ReportInteractionError("Terminal output", exception);
+            }
         }
     }
+
+    private void HandleEngineInvalidated()
+    {
+        try
+        {
+            if (_selection is not null &&
+                (_selectionCoordinateVersion != Engine.Buffer.CoordinateVersion ||
+                 _selectionAlternateBuffer != Engine.AlternateBufferActive))
+            {
+                SetSelection(null);
+            }
+
+            AccessibilityTextChanged?.Invoke(this, EventArgs.Empty);
+            ScrollMarksChanged?.Invoke(this, EventArgs.Empty);
+            ViewportChanged?.Invoke(this, EventArgs.Empty);
+            _textInputMethodClient.NotifyCursorChanged();
+            InvalidateVisual();
+        }
+        catch (Exception exception)
+        {
+            ReportInteractionError("Terminal output", exception);
+        }
+    }
+
+    private void OnConnectionFaulted(object? sender, Exception exception) =>
+        Dispatcher.UIThread.Post(() => ReportInteractionError("Terminal connection", exception));
 
     private void OnSessionExited(object? sender, TerminalExitInfo exit)
     {
@@ -1661,9 +1686,7 @@ public sealed class TermControl : Avalonia.Controls.Control
         }
         catch (Exception exception)
         {
-            InteractionError?.Invoke(
-                this,
-                new TerminalInteractionErrorEventArgs("OSC 52 clipboard write", exception));
+            ReportInteractionError("OSC 52 clipboard write", exception);
         }
     }
 
@@ -1948,9 +1971,13 @@ public sealed class TermControl : Avalonia.Controls.Control
         }
         catch (Exception exception)
         {
-            InteractionError?.Invoke(this, new TerminalInteractionErrorEventArgs(operation, exception));
+            ReportInteractionError(operation, exception);
         }
     }
+
+    private void ReportInteractionError(string operation, Exception exception) =>
+        InteractionError?.Invoke(this, new TerminalInteractionErrorEventArgs(operation, exception));
+
 
     internal static TerminalCursorStyle ParseCursorStyle(string? value) =>
         value is not null && value.Equals("underscore", StringComparison.OrdinalIgnoreCase)
