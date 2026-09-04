@@ -178,12 +178,26 @@ Development signing:
 ```powershell
 $password = Read-Host "Certificate password" -AsSecureString
 .\src\Devolutions.Terminal.Package\Scripts\New-DevelopmentCertificate.ps1 `
-  -OutputDirectory .\artifacts\msix\certificates -Password $password
+  -OutputDirectory .\artifacts\msix\certificates
 .\src\Devolutions.Terminal.Package\Scripts\Sign-Packages.ps1 `
   -PackageDirectory .\artifacts\msix\packages `
   -CertificatePath .\artifacts\msix\certificates\Devolutions.Terminal.pfx `
-  -Password $password -Version 0.1.0.0
+  -Version 0.1.0.0
 ```
+
+## MSI
+
+Build a WiX-based MSI package for the same published Windows outputs:
+
+```powershell
+.\src\Devolutions.Terminal.Package\Scripts\Build-Msi.ps1 `
+  -Architectures x64,arm64 `
+  -Version 0.1.0.0 `
+  -OutputDirectory .\artifacts\msi
+```
+
+The MSI project is in `src/Devolutions.Terminal.Installer` and uses a fixed
+`UpgradeCode` with per-machine install scope under `ProgramFiles6432Folder`.
 
 Never commit PFX files, passwords, certificate private keys, or signed internal
 artifacts. CI produces unsigned packages unless a protected release environment
@@ -193,15 +207,31 @@ injects signing credentials.
 
 The release workflow in `.github/workflows/build-terminal.yml` publishes signed
 Windows packages and the corresponding platform bundles directly to GitHub
-Releases without staging them in OneDrive. The workflow is intended for tag-based
-releases and for manual dispatch. It expects these repository secrets:
+Releases without staging them in OneDrive. It builds unsigned MSIX and MSI
+packages for Windows x64 and ARM64, then signs them on the Linux release runner
+with Devolutions `psign-tool` and Azure Artifact Signing (Trusted Signing). The
+private key never lands on the runner. Signed Windows packages are uploaded
+alongside Linux and macOS archives. The workflow is intended for tag-based
+releases and for manual dispatch.
 
-- `WINDOWS_SIGNING_CERTIFICATE_BASE64`
-- `WINDOWS_SIGNING_CERTIFICATE_PASSWORD`
+Required secrets:
 
-The certificate is decoded to a temporary `.pfx`, passed to
-`src/Devolutions.Terminal.Package/Scripts/Sign-Packages.ps1`, and then the
-signed MSIX and platform archives are uploaded via `gh release upload`.
+- `ARTIFACT_SIGNING_ENDPOINT`
+- `ARTIFACT_SIGNING_ACCOUNT_NAME`
+- `ARTIFACT_SIGNING_PROFILE_NAME`
+- `AZURE_TENANT_ID`
+- `CODE_SIGNING_CLIENT_ID`
+- `CODE_SIGNING_CLIENT_SECRET`
+
+Optional repository variable:
+
+- `CODE_SIGNING_TIMESTAMP_SERVER` (defaults to `http://timestamp.acs.microsoft.com/`)
+
+`psign-tool` portable Artifact Signing can sign PE, MSI, and flat MSIX packages.
+It cannot sign `.msixbundle` containers, so GitHub Releases publish the signed
+per-architecture `.msix` files rather than a re-signed bundle. The MSIX
+`Publisher` identity in `Package.appxmanifest` must match the Artifact Signing
+certificate subject.
 
 ## Release gates
 

@@ -1,0 +1,16 @@
+<Project Sdk="WixToolset.Sdk/4.0.2">
+  <PropertyGroup>
+    <OutputType>Package</OutputType>
+    <Name>Devolutions.Terminal</Name>
+    <Platform Condition="'$(Platform)' == ''">x64</Platform>
+    <ProductVersion Condition="'$(ProductVersion)' == ''">0.1.0.0</ProductVersion>
+    <DefineConstants>ProductVersion=$(ProductVersion)</DefineConstants>
+    <OutputName>Devolutions.Terminal_$(ProductVersion)_$(Platform)</OutputName>
+    <OutputPath>bin\$(Platform)\$(Configuration)\</OutputPath>
+    <IntermediateOutputPath>obj\$(Platform)\$(Configuration)\</IntermediateOutputPath>
+  </PropertyGroup>
+
+  <Target Name="GenerateProductComponents" BeforeTargets="Compile" Condition="'$(PublishDir)' != '' and Exists('$(PublishDir)')">
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)..\Devolutions.Terminal.Package\Scripts\Write-MsiComponents.ps1&quot; -PublishDir &quot;$(PublishDir)&quot; -OutputFile &quot;$(MSBuildThisFileDirectory)GeneratedProductComponents.wxs&quot;" />
+  </Target>
+</Project>
