@@ -16,6 +16,7 @@ TestResults/
 *.msixbundle
 *.appx
 *.appxbundle
+src/Devolutions.Terminal.Installer/GeneratedProductComponents.wxs
 
 ## Local secrets / certs
 *.pfx

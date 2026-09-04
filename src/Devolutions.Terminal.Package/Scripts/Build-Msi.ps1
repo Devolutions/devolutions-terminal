@@ -71,13 +71,22 @@ foreach ($architecture in $Architectures) {
     $buildDirectory = [IO.Path]::GetFullPath((Join-Path $packageOutput $architecture))
     New-Item -ItemType Directory -Force -Path $buildDirectory | Out-Null
 
+    $generatedComponents = Join-Path $dotnetRoot "src\Devolutions.Terminal.Installer\GeneratedProductComponents.wxs"
+    & (Join-Path $PSScriptRoot "Write-MsiComponents.ps1") -PublishDir $layout -OutputFile $generatedComponents
+    if ($LASTEXITCODE -ne 0) {
+        throw "Generating MSI component list failed with exit code $LASTEXITCODE."
+    }
+    if (-not (Test-Path -LiteralPath $generatedComponents -PathType Leaf)) {
+        throw "MSI component list was not written to '$generatedComponents'."
+    }
+
+    $platform = if ($architecture -eq "arm64") { "ARM64" } else { "x64" }
     Invoke-Checked -FilePath dotnet -ArgumentList @(
         "build",
         $installerProject,
         "-c", $Configuration,
-        "-p:Platform=$architecture",
+        "-p:Platform=$platform",
         "-p:ProductVersion=$Version",
-        "-p:PublishDir=$layout",
         "-p:OutputPath=$buildDirectory\\",
         "-p:OutputName=Devolutions.Terminal_${Version}_${architecture}"
     )

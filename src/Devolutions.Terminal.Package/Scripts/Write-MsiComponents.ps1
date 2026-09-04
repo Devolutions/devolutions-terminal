@@ -49,7 +49,7 @@ function Get-RelativePath {
     $targetFull = [IO.Path]::GetFullPath($TargetPath)
 
     if ($targetFull.StartsWith($baseFull, [System.StringComparison]::OrdinalIgnoreCase)) {
-        $relative = $targetFull.Substring($baseFull.Length).TrimStart('\\', '/')
+        $relative = $targetFull.Substring($baseFull.Length).TrimStart('\', '/')
         if ([string]::IsNullOrWhiteSpace($relative)) {
             return '.'
         }

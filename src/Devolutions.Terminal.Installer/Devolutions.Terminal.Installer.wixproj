@@ -9,8 +9,4 @@
     <OutputPath>bin\$(Platform)\$(Configuration)\</OutputPath>
     <IntermediateOutputPath>obj\$(Platform)\$(Configuration)\</IntermediateOutputPath>
   </PropertyGroup>
-
-  <Target Name="GenerateProductComponents" BeforeTargets="Compile" Condition="'$(PublishDir)' != '' and Exists('$(PublishDir)')">
-    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)..\Devolutions.Terminal.Package\Scripts\Write-MsiComponents.ps1&quot; -PublishDir &quot;$(PublishDir)&quot; -OutputFile &quot;$(MSBuildThisFileDirectory)GeneratedProductComponents.wxs&quot;" />
-  </Target>
 </Project>
