@@ -64,4 +64,24 @@ public sealed class LinuxRuntimeEnvironmentTests
             Assert.True(File.Exists(profile.Commandline), profile.Commandline);
         });
     }
+
+    [Fact]
+    public async Task NativeMacOsProfileDiscoveryFindsExecutableShells()
+    {
+        if (!OperatingSystem.IsMacOS())
+        {
+            return;
+        }
+
+        var result = await DynamicProfileManager.CreateDefault().GenerateAsync(
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.NotEmpty(result.Profiles);
+        Assert.Contains(result.Profiles, profile => profile.Name == "Zsh");
+        Assert.All(result.Profiles, profile =>
+        {
+            Assert.Equal(DynamicProfileSource.MacOS, profile.Source);
+            Assert.True(File.Exists(profile.Commandline), profile.Commandline);
+        });
+    }
 }

@@ -28,6 +28,13 @@ dotnet publish src/Devolutions.Terminal -c Release -r win-x64 --self-contained
 The native executable is written to
 `src/Devolutions.Terminal/bin/Release/net10.0/win-x64/publish/Devolutions.Terminal.exe`.
 
+macOS NativeAOT app bundles (Darwin only):
+
+```bash
+scripts/Build-MacOsPackage.sh osx-arm64 0.1.0 artifacts/packages
+bash scripts/Test-MacOsPackage.sh osx-arm64 artifacts/packages/*.zip
+```
+
 Linux x64 and ARM64 NativeAOT packages are built on Linux with:
 
 ```bash
@@ -61,8 +68,9 @@ Development signing, trust, install, validation, and uninstall commands are in
 ## Settings and engines
 
 Settings are stored at `%LOCALAPPDATA%\Devolutions\Terminal\settings.json` on
-Windows and under `$XDG_CONFIG_HOME/devolutions-terminal` on Linux, with the
-usual `~/.config` fallback.
+Windows, under `$XDG_CONFIG_HOME/devolutions-terminal` on Linux (usual
+`~/.config` fallback), and at
+`~/Library/Application Support/Devolutions/Terminal/` on macOS.
 Set `WT_BASE_SETTINGS_PATH` to use a directory for `settings.json` and
 `state.json` (same contract as Devolutions' Windows Terminal distribution).
 Set `DTERM_SETTINGS_PATH` (or `WT_DOTNET_SETTINGS_PATH`) to load a specific

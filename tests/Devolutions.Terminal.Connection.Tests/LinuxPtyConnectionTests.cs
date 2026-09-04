@@ -41,7 +41,12 @@ public sealed class LinuxPtyConnectionTests
 
         connection.Write("printf 'LINUX_PTY_OK:%s\\n' \"$PWD\"\r");
         await WaitForAsync(
-            () => Snapshot().Contains("LINUX_PTY_OK:/tmp", StringComparison.Ordinal),
+            () =>
+            {
+                var snapshot = Snapshot();
+                return snapshot.Contains("LINUX_PTY_OK:/tmp", StringComparison.Ordinal) ||
+                       snapshot.Contains("LINUX_PTY_OK:/private/tmp", StringComparison.Ordinal);
+            },
             changed,
             TestContext.Current.CancellationToken);
 

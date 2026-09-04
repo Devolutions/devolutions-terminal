@@ -55,15 +55,15 @@ try {
         $fileName = [string]$manifest.targets.$Rid.file
         $output = Join-Path $nativeRoot "ghostty\$Rid\$fileName"
         if ($Force -or -not (Test-Path -LiteralPath $output)) {
-            $ghosttyArgs = @(
-                "-Rid", $Rid,
-                "-ZigPath", $ZigPath
-            )
+            $ghosttyArgs = @{
+                Rid = $Rid
+                ZigPath = $ZigPath
+            }
             if ($Force) {
-                $ghosttyArgs += "-Force"
+                $ghosttyArgs.Force = $true
             }
 
-            & (Join-Path $nativeRoot "ghostty\Build-Ghostty.ps1") @ghosttyArgs
+            & (Join-Path (Join-Path $nativeRoot "ghostty") "Build-Ghostty.ps1") @ghosttyArgs
             if ($LASTEXITCODE -ne 0) {
                 throw "Build-Ghostty.ps1 failed for $Rid."
             }
@@ -76,15 +76,15 @@ try {
     if ($buildPty) {
         $output = Join-Path $nativeRoot "linux-pty\$Rid\dt-pty-host"
         if ($Force -or -not (Test-Path -LiteralPath $output)) {
-            $ptyArgs = @(
-                "-Rid", $Rid,
-                "-ZigPath", $ZigPath
-            )
+            $ptyArgs = @{
+                Rid = $Rid
+                ZigPath = $ZigPath
+            }
             if ($Force) {
-                $ptyArgs += "-Force"
+                $ptyArgs.Force = $true
             }
 
-            & (Join-Path $nativeRoot "linux-pty\Build-LinuxPtyHost.ps1") @ptyArgs
+            & (Join-Path (Join-Path $nativeRoot "linux-pty") "Build-LinuxPtyHost.ps1") @ptyArgs
             if ($LASTEXITCODE -ne 0) {
                 throw "Build-LinuxPtyHost.ps1 failed for $Rid."
             }

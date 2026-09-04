@@ -280,6 +280,9 @@ public sealed class PlatformLauncherTests
         Assert.Equal("osascript", command.FileName);
         Assert.Equal(["-e", "display notification \"Complete\" with title \"Build\""], command.ArgumentList);
         Assert.Contains("osascript", launcher.GetCapabilityReport(), StringComparison.Ordinal);
+        Assert.Contains("dt-pty-host", launcher.GetCapabilityReport(), StringComparison.Ordinal);
+        Assert.Contains("Ghostty engine:", launcher.GetCapabilityReport(), StringComparison.Ordinal);
+        Assert.DoesNotContain("not bundled yet", launcher.GetCapabilityReport(), StringComparison.Ordinal);
     }
 
     private static LinuxDesktopCapabilities Capabilities(

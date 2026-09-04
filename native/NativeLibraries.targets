@@ -19,7 +19,7 @@
           Condition="'$(SkipNativeRestore)' != 'true' and '$(DesignTimeBuild)' != 'true' and '$(NativeRestore)' != 'none'">
     <Exec
       Command="$(NativeRestoreShell) -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;$(NativeRoot)Restore-NativeLibraries.ps1&quot; -Rid $(GhosttyRid) -Component $(NativeRestore)"
-      LogStandardErrorAsError="true" />
+      LogStandardErrorAsError="false" />
   </Target>
 
   <Target Name="CopyRestoredNativeLibraries"
@@ -35,6 +35,9 @@
       DestinationFiles="$(TargetDir)dt-pty-host"
       SkipUnchangedFiles="true"
       Condition="'$(NativeRestore)' != 'ghostty' and '$(UnixPtyRid)' != '' and Exists('$(NativeRoot)linux-pty\$(UnixPtyRid)\dt-pty-host')" />
+    <Exec
+      Command="chmod +x &quot;$(TargetDir)dt-pty-host&quot;"
+      Condition="'$(NativeRestore)' != 'ghostty' and '$(UnixPtyRid)' != '' and Exists('$(TargetDir)dt-pty-host') and !$([MSBuild]::IsOSPlatform('Windows'))" />
   </Target>
 
   <Target Name="PublishRestoredNativeLibraries"
@@ -50,5 +53,8 @@
       DestinationFiles="$(PublishDir)dt-pty-host"
       SkipUnchangedFiles="true"
       Condition="'$(NativeRestore)' != 'ghostty' and '$(UnixPtyRid)' != '' and Exists('$(NativeRoot)linux-pty\$(UnixPtyRid)\dt-pty-host')" />
+    <Exec
+      Command="chmod +x &quot;$(PublishDir)dt-pty-host&quot;"
+      Condition="'$(NativeRestore)' != 'ghostty' and '$(UnixPtyRid)' != '' and Exists('$(PublishDir)dt-pty-host') and !$([MSBuild]::IsOSPlatform('Windows'))" />
   </Target>
 </Project>

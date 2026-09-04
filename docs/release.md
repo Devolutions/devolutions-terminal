@@ -6,21 +6,22 @@ Commands are relative to the repository root.
 
 - Windows 10 version 2004 (build 19041) or later for Windows builds
 - glibc-based x64 or ARM64 Linux for Linux builds
+- macOS 13+ with Xcode CLT for macOS NativeAOT and `.app` packaging
 - .NET SDK selected by `global.json`
 - Visual Studio 2022/2026 Build Tools with Desktop C++ for NativeAOT linking
 - WinApp CLI 0.6.0 for MSIX creation and validation
 - A trusted code-signing certificate for distributable MSIX artifacts
 
-Windows local sessions use ConPTY. Linux local sessions use the bundled
-`forkpty` relay. The Avalonia shell, settings, renderer, and terminal engines
-are shared.
+Windows local sessions use ConPTY. Linux and macOS local sessions use the
+bundled `forkpty` relay. The Avalonia shell, settings, renderer, and terminal
+engines are shared.
 
 CI workflows:
 
 - `build-ghostty.yml` — compile `libghostty-vt` for every RID and upload
   artifacts (optional cache; not required to develop).
 - `build-terminal.yml` — restore natives from source, test, NativeAOT, Linux
-  packages, MSIX.
+  packages, macOS `.app`/zip, MSIX.
 
 ## Developer build
 
@@ -53,6 +54,21 @@ Each publish directory contains:
 MSIX staging additionally builds `dt-shell-integration.exe` and
 `Devolutions.Terminal.ShellExt.dll` for the package architecture with the installed
 MSVC/Windows SDK toolchain.
+
+macOS NativeAOT app bundles (Darwin only):
+
+```bash
+dotnet publish src/Devolutions.Terminal -c Release -r osx-arm64 --self-contained \
+  -o artifacts/native/osx-arm64
+MACOS_PUBLISH_DIR="$PWD/artifacts/native/osx-arm64" \
+  bash scripts/Build-MacOsPackage.sh osx-arm64 0.1.0 artifacts/packages
+bash scripts/Test-MacOsPackage.sh osx-arm64 artifacts/packages/*.zip
+bash scripts/Test-MacOsRuntime.sh artifacts/packages
+```
+
+The staged `Devolutions Terminal.app` contains `Devolutions.Terminal`, `dt`,
+`dt-pty-host`, `libghostty-vt.dylib`, Skia, HarfBuzz, `Info.plist`, and an
+ad-hoc signed icon. Notarization, DMG, and Homebrew are not part of this gate.
 
 Linux package formats:
 

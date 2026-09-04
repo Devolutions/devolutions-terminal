@@ -42,22 +42,30 @@ foreach ($currentRid in $selected) {
         continue
     }
 
-    if ($currentRid.StartsWith("osx-", [StringComparison]::Ordinal) -and (Test-HostMacOS)) {
-        $sdk = & xcrun --show-sdk-path
-        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($sdk)) {
-            throw "xcrun --show-sdk-path failed; Xcode CLT is required for macOS dt-pty-host."
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $output) | Out-Null
+    if ($currentRid.StartsWith("osx-", [StringComparison]::Ordinal)) {
+        if (-not (Test-HostMacOS)) {
+            throw "dt-pty-host for '$currentRid' must be built on macOS so clang can link libutil from the SDK."
         }
 
-        $env:SDKROOT = $sdk.Trim()
+        $arch = if ($currentRid -eq "osx-arm64") { "arm64" } else { "x86_64" }
+        & cc @(
+            "-arch", $arch,
+            "-mmacosx-version-min=13.0",
+            "-O2",
+            (Join-Path $nativeRoot "dt-pty-host.c"),
+            "-lutil",
+            "-o", $output
+        )
     }
-
-    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $output) | Out-Null
-    & $ZigPath cc `
-        "-target" $targets[$currentRid] `
-        -O2 `
-        (Join-Path $nativeRoot "dt-pty-host.c") `
-        -lutil `
-        -o $output
+    else {
+        & $ZigPath cc `
+            "-target" $targets[$currentRid] `
+            -O2 `
+            (Join-Path $nativeRoot "dt-pty-host.c") `
+            -lutil `
+            -o $output
+    }
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to build dt-pty-host for $currentRid."
     }

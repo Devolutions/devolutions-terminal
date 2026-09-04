@@ -49,7 +49,9 @@ public static class Program
 
     private static bool TryLaunchHost(IReadOnlyList<string> args)
     {
-        var hostPath = Path.Combine(AppContext.BaseDirectory, "Devolutions.Terminal.exe");
+        var hostPath = Path.Combine(
+            AppContext.BaseDirectory,
+            OperatingSystem.IsWindows() ? "Devolutions.Terminal.exe" : "Devolutions.Terminal");
         if (!File.Exists(hostPath))
         {
             return false;
