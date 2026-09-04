@@ -183,11 +183,6 @@ $pointer = $null
 $plainTextPassword = $null
 try {
     if ($useArtifactSigning) {
-        $unsignedBundle = Join-Path $PackageDirectory "Devolutions.Terminal_${Version}_x64_arm64.msixbundle"
-        if (Test-Path -LiteralPath $unsignedBundle -PathType Leaf) {
-            Remove-Item -LiteralPath $unsignedBundle -Force
-        }
-
         $filesToSign = @()
         if ($msixPackages.Count -gt 0) {
             $filesToSign += @($msixPackages.FullName)
@@ -205,30 +200,6 @@ try {
 
     foreach ($package in $msixPackages) {
         Invoke-LocalSign -Package $package -PlainTextPassword $plainTextPassword
-    }
-
-    if ($msixPackages.Count -gt 1) {
-        if (-not (Get-Command winapp -ErrorAction SilentlyContinue)) {
-            throw "WinApp CLI is required to rebuild the signed MSIX bundle."
-        }
-
-        $bundleInput = Join-Path $PackageDirectory (".bundle-input-" + [guid]::NewGuid())
-        New-Item -ItemType Directory -Path $bundleInput | Out-Null
-        try {
-            Copy-Item -LiteralPath $msixPackages.FullName -Destination $bundleInput
-            $bundlePath = Join-Path $PackageDirectory "Devolutions.Terminal_${Version}_x64_arm64.msixbundle"
-            & winapp tool makeappx bundle /d $bundleInput /p $bundlePath /bv $Version /o
-            if ($LASTEXITCODE -ne 0) {
-                throw "Rebuilding the signed MSIX bundle failed with exit code $LASTEXITCODE."
-            }
-
-            Invoke-LocalSign -Package (Get-Item -LiteralPath $bundlePath) -PlainTextPassword $plainTextPassword
-        }
-        finally {
-            if (Test-Path -LiteralPath $bundleInput) {
-                Remove-Item -Recurse -Force -LiteralPath $bundleInput
-            }
-        }
     }
 
     foreach ($package in $msiPackages) {

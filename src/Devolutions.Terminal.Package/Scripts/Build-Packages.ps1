@@ -15,8 +15,6 @@ param(
 
     [switch] $SkipNativeBuild,
 
-    [switch] $SkipBundle,
-
     [string] $CertificatePath,
 
     [securestring] $CertificatePassword
@@ -118,7 +116,6 @@ if (-not $SkipNativeBuild) {
 
 $plainTextPassword = Get-PlainText $CertificatePassword
 try {
-    $layouts = @()
     foreach ($architecture in $Architectures) {
         $runtimeIdentifier = "win-$architecture"
         $layout = Join-Path $layoutRoot $runtimeIdentifier
@@ -202,26 +199,6 @@ try {
         }
 
         Invoke-Checked -FilePath winapp -ArgumentList $arguments
-        $layouts += $layout
-    }
-
-    if (-not $SkipBundle -and $layouts.Count -gt 1) {
-        $architectureLabel = $Architectures -join "_"
-        $bundlePath = Join-Path $packageOutput "Devolutions.Terminal_${Version}_${architectureLabel}.msixbundle"
-        $arguments = @("package") + $layouts + @(
-            "--manifest", $versionedManifest,
-            "--output", $bundlePath,
-            "--skip-pri",
-            "--quiet"
-        )
-        if (-not [string]::IsNullOrWhiteSpace($CertificatePath)) {
-            $arguments += @("--cert", [IO.Path]::GetFullPath($CertificatePath))
-            if ($null -ne $plainTextPassword) {
-                $arguments += @("--cert-password", $plainTextPassword)
-            }
-        }
-
-        Invoke-Checked -FilePath winapp -ArgumentList $arguments
     }
 }
 finally {
@@ -229,5 +206,5 @@ finally {
 }
 
 Get-ChildItem -LiteralPath $packageOutput -File |
-    Where-Object Extension -In ".msix", ".msixbundle" |
+    Where-Object Extension -eq ".msix" |
     Sort-Object Name

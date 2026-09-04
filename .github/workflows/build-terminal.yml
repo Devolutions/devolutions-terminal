@@ -388,7 +388,7 @@ jobs:
           name: DevolutionsTerminal-win-arm64
           path: artifacts/msix/layout/win-arm64
 
-      - name: Build unsigned MSIX packages and bundle
+      - name: Build unsigned MSIX packages
         shell: pwsh
         run: >
           ./src/Devolutions.Terminal.Package/Scripts/Build-Packages.ps1
@@ -401,7 +401,7 @@ jobs:
         run: >
           ./src/Devolutions.Terminal.Package/Scripts/Test-Packages.ps1
           -PackagePath (Get-ChildItem ./artifacts/msix/packages -File |
-          Where-Object Extension -In ".msix", ".msixbundle" |
+          Where-Object Extension -eq ".msix" |
           ForEach-Object FullName)
 
       - name: Upload unsigned MSIX artifacts
