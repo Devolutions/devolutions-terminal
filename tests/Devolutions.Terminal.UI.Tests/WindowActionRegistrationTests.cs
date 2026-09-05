@@ -1,4 +1,5 @@
 using Avalonia.Headless.XUnit;
+using Avalonia.Threading;
 using Devolutions.Terminal.Settings;
 using Devolutions.Terminal.App.Routing;
 using Devolutions.Terminal.App.Views;
@@ -38,6 +39,134 @@ public sealed class WindowActionRegistrationTests
         };
 
         Assert.All(expected, action => Assert.Contains(action, window.RegisteredActions));
+    }
+
+    [AvaloniaFact]
+    public async Task OpenSettingsCreatesReusableSettingsTab()
+    {
+        var window = new MainWindow();
+
+        var first = await window.ActivateAsync(new TerminalWindowActivation(
+            null,
+            null,
+            null,
+            null,
+            TerminalWindowLaunchMode.Default,
+            [new ActionAndArgs(
+                ShortcutAction.OpenSettings,
+                new OpenSettingsArgs(SettingsTarget.SettingsUI))]));
+
+        Assert.True(first.Succeeded);
+        var settingsTab = Assert.Single(window.Tabs, static tab => tab.IsSettingsTab);
+        Assert.Equal("Settings", settingsTab.Title);
+
+        var second = await window.ActivateAsync(new TerminalWindowActivation(
+            null,
+            null,
+            null,
+            null,
+            TerminalWindowLaunchMode.Default,
+            [new ActionAndArgs(
+                ShortcutAction.OpenSettings,
+                new OpenSettingsArgs(SettingsTarget.SettingsUI))]));
+
+        Assert.True(second.Succeeded);
+        Assert.Same(settingsTab, Assert.Single(window.Tabs, static tab => tab.IsSettingsTab));
+        Assert.DoesNotContain(window.CaptureLayout().Tabs, tab => tab.Title == "Settings");
+    }
+
+    [AvaloniaFact]
+    public async Task ClosedSettingsTabIsNotRestoredAsATerminal()
+    {
+        var window = new MainWindow();
+
+        await window.ActivateAsync(new TerminalWindowActivation(
+            null,
+            null,
+            null,
+            null,
+            TerminalWindowLaunchMode.Default,
+            [new ActionAndArgs(
+                ShortcutAction.OpenSettings,
+                new OpenSettingsArgs(SettingsTarget.SettingsUI))]));
+        Assert.Contains(window.Tabs, static tab => tab.IsSettingsTab);
+        var settingsIndex = (uint)window.Tabs
+            .Select(static (tab, index) => (tab, index))
+            .First(static entry => entry.tab.IsSettingsTab)
+            .index;
+
+        var closeResult = await window.ActivateAsync(new TerminalWindowActivation(
+            null,
+            null,
+            null,
+            null,
+            TerminalWindowLaunchMode.Default,
+            [new ActionAndArgs(ShortcutAction.CloseTab, new CloseTabArgs(settingsIndex))]));
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(closeResult.Succeeded, closeResult.Message);
+        Assert.DoesNotContain(window.Tabs, static tab => tab.IsSettingsTab);
+
+        await window.ActivateAsync(new TerminalWindowActivation(
+            null,
+            null,
+            null,
+            null,
+            TerminalWindowLaunchMode.Default,
+            [new ActionAndArgs(ShortcutAction.RestoreLastClosed)]));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.DoesNotContain(window.Tabs, static tab => tab.IsSettingsTab);
+        Assert.DoesNotContain(window.Tabs, static tab => tab.Title == "Settings");
+    }
+
+    [AvaloniaFact]
+    public async Task TerminalOnlyActionsAreUnavailableOnTheSettingsTab()
+    {
+        var window = new MainWindow();
+
+        await window.ActivateAsync(new TerminalWindowActivation(
+            null,
+            null,
+            null,
+            null,
+            TerminalWindowLaunchMode.Default,
+            [new ActionAndArgs(
+                ShortcutAction.OpenSettings,
+                new OpenSettingsArgs(SettingsTarget.SettingsUI))]));
+        Dispatcher.UIThread.RunJobs();
+
+        var settingsIndex = (uint)window.Tabs
+            .Select(static (tab, index) => (tab, index))
+            .First(static entry => entry.tab.IsSettingsTab)
+            .index;
+        await window.ActivateAsync(new TerminalWindowActivation(
+            null,
+            null,
+            null,
+            null,
+            TerminalWindowLaunchMode.Default,
+            [new ActionAndArgs(ShortcutAction.SwitchToTab, new SwitchToTabArgs(settingsIndex))]));
+        Dispatcher.UIThread.RunJobs();
+
+        var paste = await window.ActivateAsync(new TerminalWindowActivation(
+            null,
+            null,
+            null,
+            null,
+            TerminalWindowLaunchMode.Default,
+            [new ActionAndArgs(ShortcutAction.PasteText)]));
+        var duplicate = await window.ActivateAsync(new TerminalWindowActivation(
+            null,
+            null,
+            null,
+            null,
+            TerminalWindowLaunchMode.Default,
+            [new ActionAndArgs(ShortcutAction.DuplicateTab)]));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(paste.Succeeded);
+        Assert.False(duplicate.Succeeded);
+        Assert.Single(window.Tabs, static tab => tab.IsSettingsTab);
     }
 
     [AvaloniaFact]

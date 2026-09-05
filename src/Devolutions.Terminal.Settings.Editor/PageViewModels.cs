@@ -54,7 +54,10 @@ public sealed class StartupSettingsViewModel(AppSettings settings, Action change
     public string CenterOnLaunchState => CenterOnLaunch ? "On" : "Off";
     public LaunchMode LaunchMode { get => settings.LaunchMode; set => Change(settings.LaunchMode, value, v => settings.LaunchMode = v); }
     public string FirstWindowPreference { get => settings.FirstWindowPreference; set => Change(settings.FirstWindowPreference, value, v => settings.FirstWindowPreference = v); }
+    public IReadOnlyList<string> FirstWindowPreferenceChoices { get; } =
+        ["defaultProfile", "persistedLayoutAndContent", "persistedWindowLayout"];
     public string WindowingBehavior { get => settings.WindowingBehavior; set => Change(settings.WindowingBehavior, value, v => settings.WindowingBehavior = v); }
+    public IReadOnlyList<string> WindowingBehaviorChoices { get; } = ["useNew", "useExisting"];
     public string StartupActions { get => settings.StartupActions; set => Change(settings.StartupActions, value, v => settings.StartupActions = v); }
     public bool AlwaysOnTop
     {
@@ -102,6 +105,7 @@ public sealed class InteractionSettingsViewModel(AppSettings settings, Action ch
     public bool DetectUrls { get => settings.DetectUrls; set => Change(settings.DetectUrls, value, v => settings.DetectUrls = v); }
     public bool WarnAboutLargePaste { get => settings.WarnAboutLargePaste; set => Change(settings.WarnAboutLargePaste, value, v => settings.WarnAboutLargePaste = v); }
     public string WarnAboutMultiLinePaste { get => settings.WarnAboutMultiLinePaste; set => Change(settings.WarnAboutMultiLinePaste, value, v => settings.WarnAboutMultiLinePaste = v); }
+    public IReadOnlyList<string> WarnAboutMultiLinePasteChoices { get; } = ["automatic", "always", "never"];
     public string WordDelimiters { get => settings.WordDelimiters; set => Change(settings.WordDelimiters, value, v => settings.WordDelimiters = v); }
 
     private void Change<T>(T oldValue, T newValue, Action<T> update)
@@ -139,6 +143,7 @@ public sealed class AppearanceSettingsViewModel(AppSettings settings, Action cha
     public bool UseAcrylicInTabRow { get => settings.UseAcrylicInTabRow; set => Change(settings.UseAcrylicInTabRow, value, v => settings.UseAcrylicInTabRow = v); }
     public bool DisableAnimations { get => settings.DisableAnimations; set => Change(settings.DisableAnimations, value, v => settings.DisableAnimations = v); }
     public string NewTabPosition { get => settings.NewTabPosition; set => Change(settings.NewTabPosition, value, v => settings.NewTabPosition = v); }
+    public IReadOnlyList<string> NewTabPositionChoices { get; } = ["afterLastTab", "atEnd"];
 
     private void Change<T>(T oldValue, T newValue, Action<T> update)
     {
@@ -397,6 +402,9 @@ public sealed class ProfileTerminalSettingsViewModel : SettingsPageViewModel
     }
 
     public IReadOnlyList<CloseOnExitMode> CloseOnExitModes { get; } = Enum.GetValues<CloseOnExitMode>();
+    public IReadOnlyList<string> CursorShapeChoices { get; } =
+        ["bar", "doubleUnderscore", "emptyBox", "filledBox", "underscore", "vintage"];
+    public IReadOnlyList<string> ScrollbarStateChoices { get; } = ["visible", "hidden"];
     public IReadOnlyList<ProfileItemViewModel> Profiles { get; }
     public ProfileItemViewModel? SelectedProfile { get => _selectedProfile; set => SetProperty(ref _selectedProfile, value); }
 }
@@ -789,6 +797,7 @@ public sealed class RenderingSettingsViewModel(AppSettings settings, Action chan
             v => settings.TerminalEngine = v);
     }
     public string GraphicsApi { get => settings.GraphicsApi; set => Change(settings.GraphicsApi, value, v => settings.GraphicsApi = v); }
+    public IReadOnlyList<string> GraphicsApiChoices { get; } = ["automatic", "direct3d11", "opengl", "software"];
     public bool DisablePartialInvalidation { get => settings.DisablePartialInvalidation; set => Change(settings.DisablePartialInvalidation, value, v => settings.DisablePartialInvalidation = v); }
     public bool SoftwareRendering { get => settings.SoftwareRendering; set => Change(settings.SoftwareRendering, value, v => settings.SoftwareRendering = v); }
     public bool UseBackgroundImageForWindow { get => settings.UseBackgroundImageForWindow; set => Change(settings.UseBackgroundImageForWindow, value, v => settings.UseBackgroundImageForWindow = v); }
@@ -807,8 +816,11 @@ public sealed class CompatibilitySettingsViewModel(AppSettings settings, Action 
     : SettingsPageViewModel("Compatibility", "Configure text measurement, character width, and compatibility switches.")
 {
     public string TextMeasurement { get => settings.TextMeasurement; set => Change(settings.TextMeasurement, value, v => settings.TextMeasurement = v); }
+    public IReadOnlyList<string> TextMeasurementChoices { get; } = ["graphemes", "cells"];
     public string AmbiguousWidth { get => settings.AmbiguousWidth; set => Change(settings.AmbiguousWidth, value, v => settings.AmbiguousWidth = v); }
+    public IReadOnlyList<string> AmbiguousWidthChoices { get; } = ["narrow", "wide"];
     public string DefaultInputScope { get => settings.DefaultInputScope; set => Change(settings.DefaultInputScope, value, v => settings.DefaultInputScope = v); }
+    public IReadOnlyList<string> DefaultInputScopeChoices { get; } = ["default", "keyboard", "touch"];
     public bool AllowHeadless { get => settings.AllowHeadless; set => Change(settings.AllowHeadless, value, v => settings.AllowHeadless = v); }
     public bool EnableUnfocusedAcrylic { get => settings.EnableUnfocusedAcrylic; set => Change(settings.EnableUnfocusedAcrylic, value, v => settings.EnableUnfocusedAcrylic = v); }
     public bool InputServiceWarning { get => settings.InputServiceWarning; set => Change(settings.InputServiceWarning, value, v => settings.InputServiceWarning = v); }

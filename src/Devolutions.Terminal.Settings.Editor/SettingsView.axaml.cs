@@ -3,18 +3,17 @@ using Avalonia.Markup.Xaml;
 
 namespace Devolutions.Terminal.Settings.Editor;
 
-public partial class SettingsWindow : Window
+public partial class SettingsView : UserControl
 {
-    public SettingsWindow()
+    public SettingsView()
         : this(new SettingsEditorViewModel())
     {
     }
 
-    public SettingsWindow(SettingsEditorViewModel viewModel)
+    public SettingsView(SettingsEditorViewModel viewModel)
     {
         ArgumentNullException.ThrowIfNull(viewModel);
         AvaloniaXamlLoader.Load(this);
         DataContext = viewModel;
-        Content = new SettingsView(viewModel);
     }
 }

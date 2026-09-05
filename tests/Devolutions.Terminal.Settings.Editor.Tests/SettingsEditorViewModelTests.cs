@@ -61,7 +61,49 @@ public sealed class SettingsEditorViewModelTests
         viewModel.IsSearchOpen = false;
 
         Assert.Empty(viewModel.SearchText);
-        Assert.Equal(13, viewModel.VisibleNavigationItems.Count);
+        Assert.Equal(14, viewModel.VisibleNavigationItems.Count);
+    }
+
+    [Fact]
+    public void AddProfilePreservesPendingJsonEditsAndRejectsInvalidJson()
+    {
+        var viewModel = CreateEditor();
+        viewModel.SelectPage(SettingsPage.Actions);
+        var actions = Assert.IsType<ActionsSettingsViewModel>(viewModel.CurrentPage);
+        var edited = actions.ActionsJson.Replace(
+            "]",
+            """{ "command": "closePane", "keys": "ctrl+shift+q" }]""",
+            StringComparison.Ordinal);
+        actions.ActionsJson = edited;
+
+        viewModel.AddProfile();
+
+        Assert.Contains(viewModel.VisibleNavigationItems, item => item.Title == "New profile");
+
+        viewModel.SelectPage(SettingsPage.Actions);
+        var rebuilt = Assert.IsType<ActionsSettingsViewModel>(viewModel.CurrentPage);
+        Assert.Contains("closePane", rebuilt.ActionsJson, StringComparison.Ordinal);
+
+        rebuilt.ActionsJson = "{ invalid";
+        var profilesBefore = viewModel.VisibleNavigationItems.Count;
+
+        viewModel.AddProfile();
+
+        Assert.Equal(profilesBefore, viewModel.VisibleNavigationItems.Count);
+        Assert.Contains("invalid JSON", viewModel.StatusMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void AddProfileAppendsUserProfileToNavigation()
+    {
+        var viewModel = CreateEditor();
+        var before = viewModel.VisibleNavigationItems.Count;
+
+        viewModel.AddProfile();
+
+        Assert.Equal(before + 1, viewModel.VisibleNavigationItems.Count);
+        Assert.Equal("New profile", viewModel.SelectedNavigationItem?.Title);
+        Assert.True(viewModel.IsDirty);
     }
 
     [Fact]
@@ -261,6 +303,28 @@ public sealed class SettingsEditorViewModelTests
         var window = new SettingsWindow(viewModel);
 
         Assert.Same(viewModel, window.DataContext);
+    }
+
+    [AvaloniaFact]
+    public void SettingsToggleShowsStateTextAndRoundTripsBinding()
+    {
+        var toggle = new SettingsToggle();
+        var panel = Assert.IsType<StackPanel>(toggle.Content);
+        var state = Assert.IsType<TextBlock>(panel.Children[0]);
+        var switchControl = Assert.IsType<ToggleSwitch>(panel.Children[1]);
+
+        Assert.Equal("Off", state.Text);
+        Assert.False(switchControl.IsChecked);
+
+        toggle.IsChecked = true;
+
+        Assert.Equal("On", state.Text);
+        Assert.True(switchControl.IsChecked);
+
+        switchControl.IsChecked = false;
+
+        Assert.False(toggle.IsChecked);
+        Assert.Equal("Off", state.Text);
     }
 
     [AvaloniaFact]

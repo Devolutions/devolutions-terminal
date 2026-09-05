@@ -608,7 +608,7 @@ public partial class MainWindow :
     {
         var tab = _activeTab;
         var activePane = tab?.Panes.ActiveContent;
-        if (tab is null || activePane is null || tab.IsClosing)
+        if (tab is null || tab.IsSettingsTab || activePane is null || tab.IsClosing)
         {
             return;
         }
@@ -656,6 +656,12 @@ public partial class MainWindow :
         SynchronizeTitle(tab);
         RebuildTabs();
         RebuildTerminalHost();
+        if (tab.IsSettingsTab)
+        {
+            tab.CustomContent?.Focus();
+            return;
+        }
+
         tab.Panes.ActiveContent?.Control.Focus();
     }
 
@@ -711,7 +717,7 @@ public partial class MainWindow :
         tab.IsClosing = true;
         var wasActive = ReferenceEquals(_activeTab, tab);
         DetachPaneControls(tab);
-        _tabCollection.Close(tab, CaptureTab, remember);
+        _tabCollection.Close(tab, CaptureTab, remember && !tab.IsSettingsTab);
         if (wasActive)
         {
             _activeTab = null;
@@ -755,6 +761,19 @@ public partial class MainWindow :
 
         TerminalHost.Children.Clear();
         var tab = _activeTab;
+        if (tab?.CustomContent is { } custom)
+        {
+            if (custom.Parent is Panel parent)
+            {
+                parent.Children.Remove(custom);
+            }
+
+            custom.HorizontalAlignment = HorizontalAlignment.Stretch;
+            custom.VerticalAlignment = VerticalAlignment.Stretch;
+            TerminalHost.Children.Add(custom);
+            return;
+        }
+
         if (tab?.Panes.Root is null)
         {
             return;
@@ -876,7 +895,17 @@ public partial class MainWindow :
                 ClipToBounds = true,
             };
             var prefix = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-            if (!string.IsNullOrWhiteSpace(presentation.Icon))
+            if (tab.IsSettingsTab)
+            {
+                prefix.Children.Add(new TextBlock
+                {
+                    Text = "\uE713",
+                    FontFamily = new FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"),
+                    FontSize = 14,
+                    VerticalAlignment = VerticalAlignment.Center,
+                });
+            }
+            else if (!string.IsNullOrWhiteSpace(presentation.Icon))
             {
                 prefix.Children.Add(CreateTabIcon(presentation.Icon));
             }
@@ -1103,7 +1132,14 @@ public partial class MainWindow :
                 new MenuItem
                 {
                     Header = "Duplicate",
-                    Command = new RelayCommand(() => _ = RestoreTabAsync(CaptureTab(tab), regenerateIdentities: true)),
+                    IsEnabled = !tab.IsSettingsTab,
+                    Command = new RelayCommand(() =>
+                    {
+                        if (!tab.IsSettingsTab)
+                        {
+                            _ = RestoreTabAsync(CaptureTab(tab), regenerateIdentities: true);
+                        }
+                    }),
                 },
                 new MenuItem
                 {
@@ -1174,7 +1210,8 @@ public partial class MainWindow :
             return;
         }
 
-        if (position.Y < -24 || position.Y > TabStrip.Bounds.Height + 24)
+        if (!tab.IsSettingsTab &&
+            (position.Y < -24 || position.Y > TabStrip.Bounds.Height + 24))
         {
             var local = e.GetPosition(this);
             var screen = new PixelPoint(Position.X + (int)local.X, Position.Y + (int)local.Y);
@@ -1242,7 +1279,9 @@ public partial class MainWindow :
         return close;
     }
 
-    private TermControl? ActiveControl => _activeTab?.Panes.ActiveContent?.Control;
+    private TermControl? ActiveControl => _activeTab is { IsSettingsTab: false } terminalTab
+        ? terminalTab.Panes.ActiveContent?.Control
+        : null;
 
     private void ConfigureActionDispatcher()
     {
@@ -1357,7 +1396,8 @@ public partial class MainWindow :
 
         Register(ShortcutAction.NewTab, ActionScope.Tab, _ => true,
             async action => await CreateTabAsync(ResolveProfile((action.Args as NewTabArgs)?.ContentArgs)).ConfigureAwait(true));
-        Register(ShortcutAction.DuplicateTab, ActionScope.Tab, _ => _activeTab?.Panes.ActiveContent is not null,
+        Register(ShortcutAction.DuplicateTab, ActionScope.Tab,
+            _ => _activeTab is { IsSettingsTab: false } && _activeTab.Panes.ActiveContent is not null,
             async _ => await RestoreTabAsync(CaptureTab(_activeTab!), regenerateIdentities: true).ConfigureAwait(true));
         Register(ShortcutAction.CloseTab, ActionScope.Tab, action => ResolveTab((action.Args as CloseTabArgs)?.Index) is not null,
             async action => await CloseTabAsync(ResolveTab((action.Args as CloseTabArgs)?.Index)!).ConfigureAwait(true));
@@ -1575,7 +1615,7 @@ public partial class MainWindow :
             });
         Register(ShortcutAction.RestartConnection, ActionScope.Pane, _ => ActiveControl is not null,
             async _ => await ActiveControl!.RestartAsync().ConfigureAwait(true));
-        Register(ShortcutAction.TogglePaneReadOnly, ActionScope.Pane, _ => _activeTab?.Panes.ActiveContent is not null, _ =>
+        Register(ShortcutAction.TogglePaneReadOnly, ActionScope.Pane, _ => ActiveControl is not null, _ =>
         {
             var state = _activeTab!.Panes.ActiveContent!.Presentation;
             state.IsReadOnly = !state.IsReadOnly;
@@ -2112,8 +2152,9 @@ public partial class MainWindow :
     private bool CanMovePane(ActionAndArgs action) =>
         action.Args is MovePaneArgs args &&
         string.IsNullOrEmpty(args.Window) &&
-        _activeTab?.Panes.ActiveContent is not null &&
-        ResolveTab(args.TabIndex) is { } target &&
+        _activeTab is { IsSettingsTab: false } &&
+        _activeTab.Panes.ActiveContent is not null &&
+        ResolveTab(args.TabIndex) is { IsSettingsTab: false } target &&
         !ReferenceEquals(target, _activeTab);
 
     private void MovePane(MovePaneArgs args)
@@ -2544,6 +2585,7 @@ public partial class MainWindow :
         var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
         var text = clipboard is null ? null : await clipboard.TryGetTextAsync().ConfigureAwait(true);
         if (tab is null ||
+            tab.IsSettingsTab ||
             activePane is null ||
             !_tabs.Contains(tab) ||
             string.IsNullOrEmpty(text))
@@ -2646,7 +2688,8 @@ public partial class MainWindow :
     }
 
     private bool CanPaste() =>
-        _activeTab?.Panes.ActiveContent is { } activePane &&
+        _activeTab is { IsSettingsTab: false } &&
+        _activeTab.Panes.ActiveContent is { } activePane &&
         _activeTab.BroadcastInput.ResolveTargets(activePane, _activeTab.Panes.Leaves()).Count > 0;
 
     private void TitleBar_OnPointerPressed(object? sender, PointerPressedEventArgs e)
@@ -2908,16 +2951,45 @@ public partial class MainWindow :
         };
     }
 
+    private void OpenSettingsTab()
+    {
+        var existing = _tabs.FirstOrDefault(static tab => tab.IsSettingsTab);
+        if (existing is not null)
+        {
+            ActivateTab(existing);
+            return;
+        }
+
+        var view = SettingsViewFactory.CreateView(
+            () => SettingsService.LoadWithDynamicProfiles(_dynamicProfileManager),
+            SaveSettingsAndRefresh,
+            SettingsService.CreateDefault);
+        var profile = new ProfileSettings
+        {
+            Name = "Settings",
+            TabTitle = "Settings",
+        };
+        var pane = new TerminalPane(
+            _nextPaneId++,
+            CreateSessionDescriptor(profile),
+            profile,
+            new TermControl());
+        var tab = new TerminalTab(pane)
+        {
+            CustomContent = view,
+            Title = "Settings",
+        };
+        _tabCollection.Add(tab);
+        ActivateTab(tab);
+    }
+
     private void OpenSettings(SettingsTarget target = SettingsTarget.SettingsUI)
     {
         switch (target)
         {
             case SettingsTarget.SettingsUI:
             case SettingsTarget.AllFiles:
-                SettingsViewFactory.CreateWindow(
-                    () => SettingsService.LoadWithDynamicProfiles(_dynamicProfileManager),
-                    SaveSettingsAndRefresh,
-                    SettingsService.CreateDefault).Show(this);
+                OpenSettingsTab();
                 break;
             case SettingsTarget.SettingsFile:
                 SaveSettingsAndRefresh(SettingsService.LoadWithDynamicProfiles(_dynamicProfileManager));
@@ -3046,7 +3118,9 @@ public partial class MainWindow :
 
     private (int Columns, int Rows) InitialTerminalSize()
     {
-        var profile = _activeTab?.Panes.ActiveContent?.Profile ?? _settings.GetDefaultProfile();
+        var profile = _activeTab is { IsSettingsTab: false } terminalTab
+            ? terminalTab.Panes.ActiveContent?.Profile ?? _settings.GetDefaultProfile()
+            : _settings.GetDefaultProfile();
         var cell = ActiveControl?.CellSize ?? TermControl.MeasureCell(profile, DisplayScale());
         var columns = Math.Max(
             20,
@@ -3063,8 +3137,8 @@ public partial class MainWindow :
     public TerminalWindowLayoutDescriptor CaptureLayout() =>
         new()
         {
-            ActiveTabId = _activeTab?.Id,
-            Tabs = _tabs.Select(CaptureTab).ToList(),
+            ActiveTabId = _activeTab is { IsSettingsTab: false } ? _activeTab.Id : null,
+            Tabs = _tabs.Where(static tab => !tab.IsSettingsTab).Select(CaptureTab).ToList(),
         };
 
     private TabLayoutDescriptor CaptureTab(TerminalTab tab) =>
@@ -4232,6 +4306,10 @@ public sealed class TerminalTab
         Title = initialPane.Title;
         Color = initialPane.Presentation.Color;
     }
+
+    public Control? CustomContent { get; set; }
+
+    public bool IsSettingsTab => CustomContent is not null;
 
     public TerminalTab(Guid id, PaneTree<TerminalPane> panes)
     {
