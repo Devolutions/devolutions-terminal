@@ -50,16 +50,20 @@ public sealed class TermControlOutputPumpTests
             var postsBefore = control.InvalidationPosts;
             var drainsBefore = control.InvalidationDrains;
 
-            // The UI thread is busy in this test method, so every chunk's
+            // The UI thread must not pump the dispatcher while the burst arrives:
+            // awaiting here would let the headless dispatcher interleave drains
+            // (observed on the macOS CI runner). Spin on Join so every chunk's
             // invalidation queues before any drain can run — the production burst
             // shape (one frame, many 16 KiB ConPTY reads).
-            await Task.Run(() =>
+            var producer = new Thread(() =>
             {
                 for (var index = 0; index < 64; index++)
                 {
                     connection.Emit($"line {index:D4} filler filler filler filler\r\n");
                 }
             });
+            producer.Start();
+            producer.Join();
 
             Dispatcher.UIThread.RunJobs();
 
