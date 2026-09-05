@@ -103,20 +103,16 @@ public sealed class WindowActionRegistrationTests
             TerminalWindowLaunchMode.Default,
             [new ActionAndArgs(ShortcutAction.CloseTab, new CloseTabArgs(settingsIndex))]));
         Dispatcher.UIThread.RunJobs();
+
         Assert.True(closeResult.Succeeded, closeResult.Message);
         Assert.DoesNotContain(window.Tabs, static tab => tab.IsSettingsTab);
 
-        await window.ActivateAsync(new TerminalWindowActivation(
-            null,
-            null,
-            null,
-            null,
-            TerminalWindowLaunchMode.Default,
-            [new ActionAndArgs(ShortcutAction.RestoreLastClosed)]));
-        Dispatcher.UIThread.RunJobs();
-
-        Assert.DoesNotContain(window.Tabs, static tab => tab.IsSettingsTab);
-        Assert.DoesNotContain(window.Tabs, static tab => tab.Title == "Settings");
+        // The settings tab must not be pushed onto the reopen stack, otherwise
+        // "restore last closed" would resurrect it as a real terminal session.
+        // Asserted through the collection rather than by dispatching the action,
+        // because closing the final tab also closes the window and whether a
+        // terminal tab survives here is platform dependent.
+        Assert.False(window.CanRestoreLastClosedTab);
     }
 
     [AvaloniaFact]
@@ -167,6 +163,49 @@ public sealed class WindowActionRegistrationTests
         Assert.False(paste.Succeeded);
         Assert.False(duplicate.Succeeded);
         Assert.Single(window.Tabs, static tab => tab.IsSettingsTab);
+    }
+
+    [AvaloniaFact]
+    public async Task ActivatingAfterTheLastTabClosesDoesNotThrow()
+    {
+        var window = new MainWindow();
+
+        await window.ActivateAsync(new TerminalWindowActivation(
+            null,
+            null,
+            null,
+            null,
+            TerminalWindowLaunchMode.Default,
+            [new ActionAndArgs(
+                ShortcutAction.OpenSettings,
+                new OpenSettingsArgs(SettingsTarget.SettingsUI))]));
+        Dispatcher.UIThread.RunJobs();
+
+        while (window.Tabs.Count > 0)
+        {
+            await window.ActivateAsync(new TerminalWindowActivation(
+                null,
+                null,
+                null,
+                null,
+                TerminalWindowLaunchMode.Default,
+                [new ActionAndArgs(ShortcutAction.CloseTab, new CloseTabArgs(0))]));
+            Dispatcher.UIThread.RunJobs();
+        }
+
+        // Closing the final tab closes the window, so a later activation must not
+        // try to re-show it.
+        var afterClose = await window.ActivateAsync(new TerminalWindowActivation(
+            null,
+            null,
+            null,
+            null,
+            TerminalWindowLaunchMode.Default,
+            [new ActionAndArgs(ShortcutAction.RestoreLastClosed)]));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.NotNull(afterClose);
+        Assert.DoesNotContain(window.Tabs, static tab => tab.IsSettingsTab);
     }
 
     [AvaloniaFact]

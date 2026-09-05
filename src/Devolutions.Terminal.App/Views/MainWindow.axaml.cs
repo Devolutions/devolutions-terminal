@@ -55,6 +55,7 @@ public partial class MainWindow :
     private Point _dragStart;
     private PaletteMode _paletteMode;
     private bool _layoutPersisted;
+    private bool _isClosed;
     private bool _focusMode;
     private bool _persistenceBlockedByInvalidLayout;
     private ActionDispatchResult? _lastDispatchResult;
@@ -176,6 +177,7 @@ public partial class MainWindow :
     public IReadOnlyCollection<ShortcutAction> RegisteredActions =>
         _actionDispatcher.RegisteredActions;
     public TerminalTab? ActiveTab => _activeTab;
+    public bool CanRestoreLastClosedTab => _tabCollection.ClosedCount > 0;
     public IReadOnlyList<string> WorkspaceNames => _stateStore.GetWorkspaceNames();
     public bool AlwaysShowNotificationIcon => _settings.AlwaysShowNotificationIcon;
     public bool MinimizeToNotificationArea => _settings.MinimizeToNotificationArea;
@@ -204,7 +206,7 @@ public partial class MainWindow :
             results.Add(await DispatchActionAsync(action).ConfigureAwait(true));
         }
 
-        if (!activation.Actions.Any(ManagesWindowVisibility))
+        if (!activation.Actions.Any(ManagesWindowVisibility) && !_isClosed)
         {
             Show();
             Activate();
@@ -4072,6 +4074,7 @@ public partial class MainWindow :
 
     protected override async void OnClosed(EventArgs e)
     {
+        _isClosed = true;
         if (!_layoutPersisted && _tabs.Count > 0)
         {
             TryPersistCurrentLayout(CaptureLayout());
