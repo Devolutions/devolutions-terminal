@@ -137,7 +137,8 @@ public sealed class UnicodeLegacyParityTests
             TerminalEngineCapabilities.Win32Input |
             TerminalEngineCapabilities.SixelImages |
             TerminalEngineCapabilities.Iterm2Images |
-            TerminalEngineCapabilities.ConEmuImages,
+            TerminalEngineCapabilities.ConEmuImages |
+            TerminalEngineCapabilities.KittyImages,
             engine.Capabilities);
     }
 

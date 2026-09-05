@@ -24,4 +24,7 @@ public interface IVtDispatch
     {
     }
     void OscDispatch(int command, ReadOnlySpan<char> data);
+    void ApcDispatch(ReadOnlySpan<char> data)
+    {
+    }
 }

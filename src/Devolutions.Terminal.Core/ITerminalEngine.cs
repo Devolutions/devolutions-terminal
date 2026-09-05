@@ -14,6 +14,7 @@ public enum TerminalEngineCapabilities
     SixelImages = 1 << 7,
     Iterm2Images = 1 << 8,
     ConEmuImages = 1 << 9,
+    KittyImages = 1 << 10,
 }
 
 public sealed record TerminalEngineDiagnostic(string Code, string Message);

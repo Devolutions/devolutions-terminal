@@ -29,6 +29,8 @@ public sealed class VtParser
         Vt52CursorColumn,
         OscString,
         OscEscape,
+        ApcString,
+        ApcEscape,
         StringIgnore,
         StringEscape,
     }
@@ -36,6 +38,7 @@ public sealed class VtParser
     private readonly IVtDispatch _dispatch;
     private readonly int[] _parameters = new int[MaxParameters];
     private readonly List<byte> _osc = [];
+    private readonly List<byte> _apc = [];
     private readonly List<byte> _dcs = [];
     private readonly byte[] _dcsIntermediates = new byte[MaxDcsIntermediates];
     private readonly byte[] _escIntermediates = new byte[MaxEscIntermediates];
@@ -72,6 +75,7 @@ public sealed class VtParser
         _state = State.Ground;
         ClearSequence();
         _osc.Clear();
+        _apc.Clear();
         ClearDcs();
         ResetUtf8();
         _ansiMode = true;
@@ -109,6 +113,34 @@ public sealed class VtParser
                 AppendOsc(0x1B);
                 _state = State.OscString;
                 ProcessOsc(value);
+            }
+
+            return;
+        }
+
+        if (_state == State.ApcString)
+        {
+            ProcessApc(value);
+            return;
+        }
+
+        if (_state == State.ApcEscape)
+        {
+            if (value is 0x18 or 0x1A)
+            {
+                _apc.Clear();
+                _state = State.Ground;
+                _dispatch.ExecuteC0(value);
+            }
+            else if (value == (byte)'\\')
+            {
+                FinishApc();
+            }
+            else
+            {
+                AppendApc(0x1B);
+                _state = State.ApcString;
+                ProcessApc(value);
             }
 
             return;
@@ -276,7 +308,13 @@ public sealed class VtParser
             return;
         }
 
-        if (value is 0x98 or 0x9E or 0x9F)
+        if (value is 0x9F)
+        {
+            EnterApc();
+            return;
+        }
+
+        if (value is 0x98 or 0x9E)
         {
             _state = State.StringIgnore;
             return;
@@ -344,8 +382,10 @@ public sealed class VtParser
                 break;
             case (byte)'X':
             case (byte)'^':
-            case (byte)'_':
                 _state = State.StringIgnore;
+                break;
+            case (byte)'_':
+                EnterApc();
                 break;
             case >= 0x20 and <= 0x2F:
                 AppendEscIntermediate(value);
@@ -533,6 +573,56 @@ public sealed class VtParser
     {
         _osc.Clear();
         _state = State.OscString;
+    }
+
+    private void EnterApc()
+    {
+        _apc.Clear();
+        _state = State.ApcString;
+    }
+
+    private void ProcessApc(byte value)
+    {
+        // ECMA-48: APC is terminated by ST only — BEL does not end it.
+        if (value is 0x18 or 0x1A)
+        {
+            _apc.Clear();
+            _state = State.Ground;
+            _dispatch.ExecuteC0(value);
+        }
+        else if (value is 0x9C)
+        {
+            FinishApc();
+        }
+        else if (value == 0x1B)
+        {
+            _state = State.ApcEscape;
+        }
+        else if (value >= 0x20 || value == 0x09)
+        {
+            AppendApc(value);
+        }
+    }
+
+    private void AppendApc(byte value)
+    {
+        if (_apc.Count < MaxStringBytes)
+        {
+            _apc.Add(value);
+        }
+        else
+        {
+            _apc.Clear();
+            _state = State.StringIgnore;
+        }
+    }
+
+    private void FinishApc()
+    {
+        var text = Encoding.UTF8.GetString(_apc.ToArray());
+        _apc.Clear();
+        _state = State.Ground;
+        _dispatch.ApcDispatch(text);
     }
 
     private void EnterDcs()

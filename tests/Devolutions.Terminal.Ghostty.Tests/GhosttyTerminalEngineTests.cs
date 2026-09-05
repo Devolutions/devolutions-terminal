@@ -82,6 +82,22 @@ public sealed class GhosttyTerminalEngineTests
     }
 
     [Fact]
+    public void KittyGraphicsProducesSingleUnsupportedDiagnostic()
+    {
+        using var engine = new GhosttyTerminalEngine();
+        var diagnostics = new List<TerminalEngineDiagnostic>();
+        engine.Diagnostic += (_, value) => diagnostics.Add(value);
+
+        // Chunked kitty transmissions repeat APC G per chunk; only one diagnostic.
+        engine.Feed("\u001b_Ga=T,f=32,s=1,v=1,i=1,m=1;AQID\u001b\\");
+        engine.Feed("\u001b_Gi=1,m=0;BA==\u001b\\");
+
+        Assert.Equal(
+            ["image.kitty.unsupported"],
+            diagnostics.Select(static value => value.Code));
+    }
+
+    [Fact]
     public void EngineSurvivesAdversarialCorpusOnSmallStackThread()
     {
         // winterm-ghostty lesson: full libghostty assumed a 16 MB stack and

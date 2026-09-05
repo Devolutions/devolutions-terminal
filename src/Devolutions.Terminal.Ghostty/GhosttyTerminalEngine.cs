@@ -58,6 +58,7 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
     private bool _ansiMode = true;
     private int _modifyOtherKeys;
     private KeyboardModeScanState _keyboardModeScan;
+    private bool _kittyImageReported;
     private byte _keyboardCsiPrivate;
     private int _keyboardCsiValue;
     private bool _keyboardCsiHasValue;
@@ -75,6 +76,9 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
         OscEscape,
         OscIgnored,
         OscIgnoredEscape,
+        Apc,
+        ApcIgnored,
+        ApcIgnoredEscape,
     }
 
     private enum KeyboardModeScanState : byte
@@ -514,6 +518,10 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
                     {
                         StartOscProbe();
                     }
+                    else if (value == 0x9F)
+                    {
+                        _imageProbeState = ImageProbeState.Apc;
+                    }
                     break;
                 case ImageProbeState.Escape:
                     if (value == (byte)'P')
@@ -525,10 +533,45 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
                     {
                         StartOscProbe();
                     }
+                    else if (value == (byte)'_')
+                    {
+                        _imageProbeState = ImageProbeState.Apc;
+                    }
                     else
                     {
                         _imageProbeState = ImageProbeState.Ground;
                     }
+                    break;
+                case ImageProbeState.Apc:
+                    if (value == (byte)'G')
+                    {
+                        // Chunked kitty transmissions repeat APC G per chunk;
+                        // report once per engine lifetime instead of per chunk.
+                        if (!_kittyImageReported)
+                        {
+                            _kittyImageReported = true;
+                            ReportUnsupportedImage(
+                                "image.kitty.unsupported",
+                                "The pinned libghostty-vt C ABI does not expose kitty graphics resources.");
+                        }
+                    }
+
+                    _imageProbeState = ImageProbeState.ApcIgnored;
+                    break;
+                case ImageProbeState.ApcIgnored:
+                    if (value == 0x9C)
+                    {
+                        _imageProbeState = ImageProbeState.Ground;
+                    }
+                    else if (value == 0x1B)
+                    {
+                        _imageProbeState = ImageProbeState.ApcIgnoredEscape;
+                    }
+                    break;
+                case ImageProbeState.ApcIgnoredEscape:
+                    _imageProbeState = value == (byte)'\\'
+                        ? ImageProbeState.Ground
+                        : ImageProbeState.ApcIgnored;
                     break;
                 case ImageProbeState.DcsHeader:
                     if (value is >= 0x40 and <= 0x7E)
