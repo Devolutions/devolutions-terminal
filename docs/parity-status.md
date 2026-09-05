@@ -80,11 +80,21 @@ registrations, and notices for both x64 and ARM64.
 | Sixel | Built-in decode/render, DECSDM scrolling/display behavior, retained cell geometry, and stable ownership implemented | The pinned Ghostty C ABI exposes no image resources and reports the capability unavailable |
 | OSC 1337 | Built-in bounded inline decode/render and stable ownership implemented; non-inline transfer is explicitly rejected without I/O | The pinned Ghostty C ABI exposes no image resources and reports the capability unavailable |
 | ConEmu images | Bounded single-part `st=0;sz=` payloads decode into shared overlay metadata and render safely | Multipart payloads are explicitly rejected; the pinned Ghostty C ABI exposes no image resources |
+| Kitty graphics | Direct-medium RGBA/RGB/PNG transmissions with chunking, zlib, placements, crop, z-order, deletes, and query responses implemented; unsupported media and animation are rejected deterministically | File/shared-memory media and animation frames are intentional gaps; the pinned Ghostty C ABI exposes no image resources and reports the capability unavailable |
 | Image ownership | Stable logical-line anchors survive scrollback and reflow in main and alternate buffers and are removed on owning-line eviction | Ghostty image projection is unavailable in the pinned C ABI and produces deterministic unsupported diagnostics |
 | VT52 | Output plus host cursor/PF/application-keypad encoding implemented, with built-in/Ghostty differential mode coverage | No remaining shared subset work |
 | DRCS | Built-in parse/resource mapping, bounded snapshot masks, render planning, and downloaded-pixel rendering implemented | The pinned Ghostty C ABI does not expose DRCS resources; capability is explicitly unavailable there |
 | Extended keyboard | Built-in Kitty set/query/push/pop flags, CSI-u event bytes, `modifyOtherKeys`, Win32-input mode, and press/repeat/release encoding implemented | Kitty alternate-key reporting and associated-text reporting are not advertised; the pinned Ghostty C ABI exposes no keyboard protocol state and reports these capabilities unavailable |
 | Shader effects | Optional deterministic, bounded Skia retro/scanline pass, toggleable per active terminal | Custom arbitrary HLSL/pixel-shader files are not loaded or advertised |
+
+Output bursts from the PTY read loop coalesce into one UI-thread invalidation
+drain per frame instead of one per 16 KiB chunk, and the cursor blink timer is
+damage-gated (no repaints for unfocused, steady-cursor, or hidden panes). The
+`tools/Devolutions.Terminal.Bench` harness measures the path (`engine` and
+`control` modes, 16 KiB chunks, medians over runs); an 8 MiB burst drains once
+per frame rather than 514 times. Concurrent host writes to ConPTY are serialized
+per sequence so query responses and key input cannot interleave mid-sequence,
+pinned by a live two-writer contract test.
 
 ## Distribution and validation
 

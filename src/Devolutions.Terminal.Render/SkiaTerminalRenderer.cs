@@ -127,12 +127,15 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
             _paint.Style = SKPaintStyle.Fill;
             _paint.Color = ToColor(frame.Background);
             canvas.DrawRect(bounds, _paint);
-            DrawImages(canvas, frame, bounds, padding);
+            DrawImages(canvas, frame, bounds, padding, overText: false);
 
             for (var rowIndex = 0; rowIndex < frame.RowsData.Count; rowIndex++)
             {
                 DrawRow(canvas, frame, frame.RowsData[rowIndex], padding);
             }
+
+            // Kitty placements with a non-negative z-index composite over text.
+            DrawImages(canvas, frame, bounds, padding, overText: true);
 
             DrawRanges(canvas, frame, overlays.Selection, padding);
             DrawRanges(canvas, frame, overlays.Search, padding);
@@ -301,33 +304,48 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
         SKCanvas canvas,
         TerminalRenderFrame frame,
         SKRect bounds,
-        float padding)
+        float padding,
+        bool overText)
     {
-        if (frame.Images.Count == 0)
+        if (!overText)
         {
-            if (_images.Count > 0)
+            if (frame.Images.Count == 0)
             {
-                foreach (var image in _images.Values)
+                if (_images.Count > 0)
                 {
-                    image.Dispose();
+                    foreach (var image in _images.Values)
+                    {
+                        image.Dispose();
+                    }
+
+                    _images.Clear();
+                    _imageBytes = 0;
                 }
 
-                _images.Clear();
-                _imageBytes = 0;
+                return;
             }
 
+            var activeIds = frame.Images.Select(static image => image.Id).ToHashSet();
+            foreach (var staleId in _images.Keys.Where(id => !activeIds.Contains(id)).ToArray())
+            {
+                _imageBytes -= _images[staleId].ByteSize;
+                _images[staleId].Dispose();
+                _images.Remove(staleId);
+            }
+
+            _invalidImages.RemoveWhere(id => !activeIds.Contains(id));
+        }
+        else if (frame.Images.Count == 0 || frame.Images.All(static image => image.Kitty is null))
+        {
             return;
         }
 
-        var activeIds = frame.Images.Select(static image => image.Id).ToHashSet();
-        foreach (var staleId in _images.Keys.Where(id => !activeIds.Contains(id)).ToArray())
-        {
-            _imageBytes -= _images[staleId].ByteSize;
-            _images[staleId].Dispose();
-            _images.Remove(staleId);
-        }
+        // Under-text pass: everything except non-negative-z kitty placements.
+        // Over-text pass: kitty placements with z >= 0, in z order.
+        var ordered = overText
+            ? frame.Images.Where(static i => i.Kitty is { ZIndex: >= 0 }).OrderBy(static i => i.Kitty!.ZIndex)
+            : frame.Images.Where(static i => i.Kitty is null || i.Kitty.ZIndex < 0);
 
-        _invalidImages.RemoveWhere(id => !activeIds.Contains(id));
         var viewport = new SKRect(
             bounds.Left + padding,
             bounds.Top + padding,
@@ -336,7 +354,7 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
         canvas.Save();
         canvas.ClipRect(viewport);
         _paint.Color = SKColors.White;
-        foreach (var image in frame.Images)
+        foreach (var image in ordered)
         {
             if (_invalidImages.Contains(image.Id))
             {
@@ -349,6 +367,12 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
                 : 1;
             var left = padding + (image.AnchorColumn * columnScale * (float)CellSize.Width);
             var top = padding + (image.AnchorRow * (float)CellSize.Height);
+            if (image.Kitty is { } kittyPlacement)
+            {
+                left += kittyPlacement.PixelOffsetX;
+                top += kittyPlacement.PixelOffsetY;
+            }
+
             if (left >= viewport.Right || top >= viewport.Bottom)
             {
                 continue;
@@ -386,7 +410,19 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
             }
 
             var destination = ImageDestination(image, cached.Bitmap, left, top, viewport);
-            canvas.DrawBitmap(cached.Bitmap, destination, _paint);
+            if (image.Kitty is { CropWidth: > 0, CropHeight: > 0 } cropped)
+            {
+                var source = SKRect.Create(
+                    Math.Min(cropped.CropX, cached.Bitmap.Width - 1),
+                    Math.Min(cropped.CropY, cached.Bitmap.Height - 1),
+                    Math.Min(cropped.CropWidth, cached.Bitmap.Width),
+                    Math.Min(cropped.CropHeight, cached.Bitmap.Height));
+                canvas.DrawBitmap(cached.Bitmap, source, destination, _paint);
+            }
+            else
+            {
+                canvas.DrawBitmap(cached.Bitmap, destination, _paint);
+            }
         }
 
         canvas.Restore();
@@ -416,12 +452,45 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
             return bitmap;
         }
 
+        if (image.Kitty is { Data.Rgba32Pixels: { } rgbaPixels } kittyRaw)
+        {
+            var raw = kittyRaw.Data;
+            var bitmap = new SKBitmap(
+                raw.Width,
+                raw.Height,
+                SKColorType.Rgba8888,
+                SKAlphaType.Unpremul);
+            var pixels = new SKColor[raw.Width * raw.Height];
+            for (var index = 0; index < pixels.Length; index++)
+            {
+                var offset = index * 4;
+                pixels[index] = new SKColor(
+                    rgbaPixels[offset],
+                    rgbaPixels[offset + 1],
+                    rgbaPixels[offset + 2],
+                    rgbaPixels[offset + 3]);
+            }
+
+            bitmap.Pixels = pixels;
+            return bitmap;
+        }
+
+        if (image.Kitty is { Data.EncodedData: { } kittyEncoded })
+        {
+            return DecodeCodecImage(kittyEncoded);
+        }
+
         if (image.InlineImage is not { } inline)
         {
             return null;
         }
 
-        using var data = SKData.CreateCopy(inline.Data.ToArray());
+        return DecodeCodecImage(inline.Data.ToArray());
+    }
+
+    private static SKBitmap? DecodeCodecImage(byte[] encoded)
+    {
+        using var data = SKData.CreateCopy(encoded);
         using var codec = SKCodec.Create(data);
         if (codec is null ||
             codec.Info.Width is <= 0 or > TerminalImageLimits.MaximumPixelDimension ||
@@ -462,10 +531,47 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
                 Math.Min(Math.Max(0.1f, sixelHeight), bounds.Bottom - top));
         }
 
+        if (image.Kitty is { } kitty)
+        {
+            // Source extent after crop; display size from c/r cells when given,
+            // preserving aspect when only one axis is specified (kitty semantics).
+            var sourceWidth = kitty.CropWidth > 0 ? (float)kitty.CropWidth : naturalWidth;
+            var sourceHeight = kitty.CropHeight > 0 ? (float)kitty.CropHeight : naturalHeight;
+            float kittyWidth;
+            float kittyHeight;
+            if (kitty.Columns > 0 && kitty.Rows > 0)
+            {
+                kittyWidth = kitty.Columns * (float)CellSize.Width;
+                kittyHeight = kitty.Rows * (float)CellSize.Height;
+            }
+            else if (kitty.Columns > 0)
+            {
+                kittyWidth = kitty.Columns * (float)CellSize.Width;
+                kittyHeight = sourceHeight * (kittyWidth / Math.Max(0.1f, sourceWidth));
+            }
+            else if (kitty.Rows > 0)
+            {
+                kittyHeight = kitty.Rows * (float)CellSize.Height;
+                kittyWidth = sourceWidth * (kittyHeight / Math.Max(0.1f, sourceHeight));
+            }
+            else
+            {
+                kittyWidth = sourceWidth;
+                kittyHeight = sourceHeight;
+            }
+
+            return SKRect.Create(
+                left,
+                top,
+                Math.Min(Math.Max(0.1f, kittyWidth), bounds.Right - left),
+                Math.Min(Math.Max(0.1f, kittyHeight), bounds.Bottom - top));
+        }
+
         if (image.InlineImage is not { } inline)
         {
             return SKRect.Create(left, top, naturalWidth, naturalHeight);
         }
+
 
         var width = ResolveDimension(
             inline.Metadata.Width,

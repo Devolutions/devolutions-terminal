@@ -4,6 +4,7 @@ public static class TerminalImageLimits
 {
     public const int MaximumDcsPayloadBytes = 4 * 1024 * 1024;
     public const int MaximumInlineImageBytes = 768 * 1024;
+    public const int MaximumKittyImageBytes = 32 * 1024 * 1024;
     public const int MaximumPixelDimension = 4096;
     public const int MaximumPixelCount = 16 * 1024 * 1024;
     public const int MaximumSixelPixelWrites = 64 * 1024 * 1024;
@@ -16,6 +17,7 @@ public enum TerminalImageProtocol : byte
     Sixel,
     Iterm2Inline,
     ConEmuInline,
+    KittyGraphics,
 }
 
 public enum TerminalImageDimensionKind : byte
@@ -100,6 +102,60 @@ public sealed class SixelImage
     }
 }
 
+/// <summary>
+/// Immutable kitty-graphics pixel storage, shared by every placement of the same
+/// image id. Either <see cref="Rgba32Pixels"/> (formats 24/32, converted to
+/// 4-bytes-per-pixel RGBA) or <see cref="EncodedData"/> (format 100, codec bytes
+/// retained for the renderer, mirroring the OSC 1337 contract) is set.
+/// </summary>
+public sealed class KittyImageData
+{
+    public KittyImageData(int width, int height, byte[] rgba32Pixels)
+    {
+        Width = width;
+        Height = height;
+        Rgba32Pixels = rgba32Pixels;
+    }
+
+    public KittyImageData(byte[] encodedData)
+    {
+        EncodedData = encodedData;
+    }
+
+    public int Width { get; }
+    public int Height { get; }
+    public byte[]? Rgba32Pixels { get; }
+    public byte[]? EncodedData { get; }
+    public long EstimatedByteSize => Rgba32Pixels?.Length ?? EncodedData?.Length ?? 0;
+}
+
+/// <summary>
+/// One kitty-graphics placement of a <see cref="KittyImageData"/>. Cell geometry of
+/// zero means "natural pixel size"; the renderer applies crop and cell offset.
+/// </summary>
+public sealed class KittyImage
+{
+    public KittyImage(uint imageId, uint placementId, KittyImageData data)
+    {
+        ImageId = imageId;
+        PlacementId = placementId;
+        Data = data;
+    }
+
+    public uint ImageId { get; }
+    public uint PlacementId { get; }
+    public KittyImageData Data { get; }
+    public int Columns { get; init; }
+    public int Rows { get; init; }
+    public int PixelOffsetX { get; init; }
+    public int PixelOffsetY { get; init; }
+    public int CropX { get; init; }
+    public int CropY { get; init; }
+    public int CropWidth { get; init; }
+    public int CropHeight { get; init; }
+    public int ZIndex { get; init; }
+}
+
 public readonly record struct TerminalImageAnchor(long LogicalLineId, int LogicalOffset);
 
 public readonly record struct TerminalImageCellGeometry(
@@ -115,6 +171,7 @@ public sealed record TerminalImageOverlay(
     SixelImage? Sixel,
     InlineImage? InlineImage)
 {
+    public KittyImage? Kitty { get; init; }
     public TerminalImageAnchor LogicalAnchor { get; init; }
     public TerminalImageCellGeometry CellGeometry { get; init; } = new(10, 20);
 }

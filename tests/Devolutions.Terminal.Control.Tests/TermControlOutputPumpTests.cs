@@ -1,5 +1,6 @@
 using System.Text;
 using Avalonia.Headless.XUnit;
+using Avalonia.Threading;
 using Devolutions.Terminal.Connection;
 using Devolutions.Terminal.Settings;
 using Xunit;
@@ -28,6 +29,52 @@ public sealed class TermControlOutputPumpTests
             var line = string.Concat(
                 control.Engine.CreateSnapshot().Buffer.Lines[0].Cells.Select(static cell => cell.Text));
             Assert.Contains("hello world", line, StringComparison.Ordinal);
+        }
+        finally
+        {
+            await control.CloseAsync();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task OutputBurstCoalescesIntoFewUiDrains()
+    {
+        var connection = new FakePtyConnection();
+        var control = new TermControl();
+        control.ConnectionFactory = _ => connection;
+
+        try
+        {
+            await control.StartAsync(new ProfileSettings { Commandline = "cmd.exe" }, 80, 24);
+            Dispatcher.UIThread.RunJobs();
+            var postsBefore = control.InvalidationPosts;
+            var drainsBefore = control.InvalidationDrains;
+
+            // The UI thread must not pump the dispatcher while the burst arrives:
+            // awaiting here would let the headless dispatcher interleave drains
+            // (observed on the macOS CI runner). Spin on Join so every chunk's
+            // invalidation queues before any drain can run — the production burst
+            // shape (one frame, many 16 KiB ConPTY reads).
+            var producer = new Thread(() =>
+            {
+                for (var index = 0; index < 64; index++)
+                {
+                    connection.Emit($"line {index:D4} filler filler filler filler\r\n");
+                }
+            });
+            producer.Start();
+            producer.Join();
+
+            Dispatcher.UIThread.RunJobs();
+
+            var posts = control.InvalidationPosts - postsBefore;
+            var drains = control.InvalidationDrains - drainsBefore;
+            Assert.True(posts >= 64, $"expected at least one post per chunk, got {posts}");
+            Assert.True(drains <= 2, $"expected the burst to coalesce into <= 2 drains, got {drains}");
+
+            var viewport = string.Concat(control.Engine.CreateSnapshot().Buffer.Lines
+                .SelectMany(static line => line.Cells.Select(static cell => cell.Text)));
+            Assert.Contains("line 0063", viewport, StringComparison.Ordinal);
         }
         finally
         {

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.Versioning;
 using System.Text;
+using System.Text.RegularExpressions;
 using Devolutions.Terminal.Connection;
 using Xunit;
 
@@ -559,6 +560,77 @@ public sealed class ConnectionContractTests
         }
 
         return completion;
+    }
+
+    [Fact(Skip = "ConPTY is Windows-only.", SkipUnless = nameof(IsWindows))]
+    public async Task ConcurrentWritesNeverSplitSequence()
+    {
+        // Pins the ConPTY injection lesson: query responses (engine, PTY thread) and
+        // key input (UI thread) race on the input pipe — every write must reach the
+        // child as one indivisible sequence. The child answers 'ok' for a uniform
+        // payload line and 'BAD' for a byte-interleaved one.
+        await using var connection = new ConPtyConnection();
+        var output = new List<byte>();
+        connection.OutputReceived += (_, bytes) =>
+        {
+            lock (output)
+            {
+                output.AddRange(bytes.ToArray());
+            }
+        };
+
+        await connection.StartAsync(
+            "powershell.exe -NoProfile -NonInteractive -Command \"" +
+            "while (($line = [Console]::In.ReadLine()) -ne $null) { " +
+            "if ($line -match '^(A+|B+)$') { [Console]::Out.Write('ok`n') } " +
+            "else { [Console]::Out.Write('BAD:' + $line + '`n') } " +
+            "[Console]::Out.Flush() }\"",
+            null,
+            200,
+            50);
+
+        var payloadA = new string('A', 100);
+        var payloadB = new string('B', 100);
+        const int writesPerThread = 100;
+        await Task.WhenAll(
+            Task.Run(() =>
+            {
+                for (var i = 0; i < writesPerThread; i++)
+                {
+                    connection.Write(payloadA + "\r");
+                }
+            }),
+            Task.Run(() =>
+            {
+                for (var i = 0; i < writesPerThread; i++)
+                {
+                    connection.Write(payloadB + "\r");
+                }
+            }));
+
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        var okCount = 0;
+        var sawBad = false;
+        while (DateTime.UtcNow < deadline)
+        {
+            string text;
+            lock (output)
+            {
+                text = Encoding.UTF8.GetString([.. output]);
+            }
+
+            okCount = Regex.Matches(text, "ok", RegexOptions.None, TimeSpan.FromSeconds(1)).Count;
+            sawBad = text.Contains("BAD:", StringComparison.Ordinal);
+            if (sawBad || okCount >= writesPerThread * 2)
+            {
+                break;
+            }
+
+            await Task.Delay(50);
+        }
+
+        Assert.False(sawBad, "child received a byte-interleaved line");
+        Assert.Equal(writesPerThread * 2, okCount);
     }
 
     private static async Task RunShortSessionAsync()

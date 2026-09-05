@@ -31,5 +31,6 @@
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/Devolutions.Terminal.PortInventory/Devolutions.Terminal.PortInventory.csproj" />
+    <Project Path="tools/Devolutions.Terminal.Bench/Devolutions.Terminal.Bench.csproj" />
   </Folder>
 </Solution>

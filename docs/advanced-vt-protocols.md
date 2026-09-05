@@ -2,10 +2,11 @@
 
 > [!NOTE]
 > The public out-of-process Windows ConPTY may filter DCS payloads before they
-> reach a terminal client on some Windows builds. The Core parser and renderer
-> support Sixel when a connection transports DCS bytes unchanged (for example,
-> remote/Azure transports); local ConPTY support is limited by the installed
-> Windows pseudoconsole implementation.
+> reach a terminal client on some Windows builds, and APC sequences (kitty
+> graphics) can be affected the same way. The Core parser and renderer
+> support Sixel and kitty graphics when a connection transports those bytes
+> unchanged (for example, remote/Azure transports); local ConPTY support is
+> limited by the installed Windows pseudoconsole implementation.
 
 `Devolutions.Terminal.Core` parses advanced string protocols without depending on Avalonia,
 Skia, Win32, or an image codec. It exposes decoded Sixel pixels and bounded
@@ -27,6 +28,7 @@ encoded OSC 1337/ConEmu images as renderer-neutral overlay metadata.
 | `CSI Ps $ w` / `DCS Ps $ t ... ST` | Reports and restores cursor presentation state (`Ps=1`) and tab stops (`Ps=2`). |
 | `OSC 1337 ; File=... : base64 ST` | Parses inline iTerm2 image name, declared size, width, height, aspect-ratio preference, and bounded encoded bytes. Non-inline file transfers are explicitly rejected without I/O. |
 | `OSC 9 ; 4 ; st=0 ; sz=N ; base64 ST` | Parses bounded, single-part ConEmu encoded images. Multipart, malformed, size-mismatched, and oversized transfers are rejected. |
+| `APC G control ; base64 ST` | Implements the kitty graphics protocol: direct transmission (`t=d`) of raw RGBA/RGB (`f=32`/`f=24`) and PNG-encoded (`f=100`) images, optional zlib compression (`o=z`), multi-chunk assembly (`m=`), transmit/transmit-and-display/put (`a=t/T/p`), query probe (`a=q`), and deletes by all/id/placement (`a=d` with `d=a/A/i/I/p`). Placements honor cell sizing (`c`/`r`, aspect-preserving when one axis is given), in-cell pixel offsets (`x`/`y`), source crop (`X`/`Y`/`w`/`h`), and z-index (`z<0` below text, `z>=0` above). `a=T` moves the cursor below the image unless `C=1`; `a=p` never moves it. Responds `APC G i=id ; OK/error ST` honoring the `q` quiet flags. |
 
 The DCS state machine handles 7-bit and C1 entry/termination, parameter and
 intermediate collection, passthrough, CAN/SUB cancellation, and an `ESC`
@@ -42,6 +44,8 @@ Limits are public constants on `TerminalImageLimits` and `VtResourceLimits`.
 | --- | ---: |
 | Collected DCS payload | 4 MiB |
 | Decoded OSC 1337 image | 768 KiB |
+| Assembled kitty image (decompressed) | 32 MiB |
+| Kitty pixel dimension / count | shared pixel limits below |
 | Sixel width or height | 4096 pixels |
 | Sixel pixel count | 16,777,216 |
 | Sixel pixel writes per sequence | 67,108,864 |
@@ -71,7 +75,7 @@ Renderers can consume `TerminalEngine.Images`, the detached
 - a monotonic ID and protocol;
 - the primary/alternate buffer identity;
 - the cursor cell where the image was received;
-- either a `SixelImage` or an `InlineImage`.
+- a `SixelImage`, an `InlineImage`, or a `KittyImage` placement.
 
 `SixelImage.PixelIndices` contains 16-bit palette indexes. Index 256 is
 transparent; indexes 0 through 255 address `SixelImage.Palette`, whose entries
@@ -100,6 +104,13 @@ evicted. Main and alternate buffers retain independent identities.
   Core tracks cursor-key and keypad modes for input layers to consume.
 - non-inline OSC 1337 file transfer and remote file access (explicitly rejected)
 - multipart ConEmu image payloads (explicitly rejected)
+- kitty graphics file/temp-file/shared-memory media (`t=f/t/s`) — rejected without
+  I/O, matching the non-inline OSC 1337 policy
+- kitty animation frame control (`a=f`) and Unicode placeholder placements
+  (answered `ENOTSUP`)
+- kitty cell/z-index/number-targeted deletes (`d=c/x/y/z/n`) — silent no-op;
+  the cursor for `f=100` images without `r` stays put because Core retains codec
+  bytes without decoding dimensions
 - Ghostty image projection (the pinned C ABI exposes no image resources)
 
 These gaps avoid remote I/O and renderer/input dependencies while keeping every

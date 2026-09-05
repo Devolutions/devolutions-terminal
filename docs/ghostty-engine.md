@@ -38,6 +38,17 @@ copied into JIT, NativeAOT, and MSIX outputs. The ABI type manifest is validated
 at startup. See `native/ghostty/ghostty-upstream.json` and
 `native/Restore-NativeLibraries.ps1`.
 
+## Stack headroom
+
+The engine's P/Invoke calls execute on whatever thread the host is using —
+including the ConPTY read loop's thread-pool thread with the default ~1 MB stack
+reserve. Full libghostty (renderer included) has overflowed a 1 MB stack in
+other hosts; the VT-only `libghostty-vt` has a much smaller surface. A test
+(`EngineSurvivesAdversarialCorpusOnSmallStackThread`) feeds an adversarial
+corpus on a 256 KB-stack thread — 4x below the host default — to pin that
+headroom. If the pinned upstream changes and that test fails, route engine calls
+onto a dedicated thread with an explicit `maxStackSize`.
+
 ## Current rendering boundary
 
 Ghostty owns VT parsing, modes, viewport state, resize/reflow, scrollback,

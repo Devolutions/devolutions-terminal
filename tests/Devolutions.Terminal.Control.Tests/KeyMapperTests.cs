@@ -245,6 +245,33 @@ public sealed class KeyMapperTests
     }
 
     [Fact]
+    public void ModifyOtherKeysUsesEventResolvedSymbolForShiftedKeys()
+    {
+        // US layout: Ctrl+Shift+/ produces '?'. The encoded rune must come from the
+        // routed event's own symbol (63 = '?'), never from the unshifted key
+        // (47 = '/') — translating against a keyboard-state snapshot instead of the
+        // event is exactly the mix-up winterm-ghostty hit with their translator.
+        var question = KeyMapper.ToVt(
+            Key.OemQuestion,
+            KeyModifiers.Control | KeyModifiers.Shift,
+            PhysicalKey.Slash,
+            "?",
+            new TerminalInputMode(true, false, false, KittyKeyboardFlags.None, 2, false));
+
+        Assert.Equal("\u001b[27;6;63~", question);
+    }
+
+    [Fact]
+    public void KittyAssociatedTextUsesEventResolvedShiftedSymbol()
+    {
+        var encoded = KeyMapper.EncodeKittyTextInput(
+            "?",
+            KittyKeyboardFlags.ReportAssociatedText);
+
+        Assert.Equal("\u001b[0;;63u", encoded);
+    }
+
+    [Fact]
     public void ModifyOtherKeysAndWin32InputHaveDistinctEncodings()
     {
         var modified = KeyMapper.ToVt(
