@@ -69,6 +69,23 @@ public sealed class TermControl : Avalonia.Controls.Control
     private bool _selectionAlternateBuffer;
     private bool _rendererDisposed;
     private bool _shaderEffectsEnabled = true;
+    private long _invalidationPosts;
+    private long _invalidationDrains;
+    private int _invalidationPending;
+
+    // Throughput-harness diagnostics (Devolutions.Terminal.Bench): posts requested by
+    // the engine-invalidated handler vs UI drains actually executed.
+    internal long InvalidationPosts => Interlocked.Read(ref _invalidationPosts);
+    internal long InvalidationDrains => Interlocked.Read(ref _invalidationDrains);
+
+    // True when a blink-timer tick can change pixels. Unfocused panes draw a static
+    // cursor, steady/hidden cursor modes (DECRST 12/25) never blink, and hidden
+    // controls do not present.
+    internal bool ShouldAnimateCursor =>
+        IsFocused &&
+        Engine.CursorBlinking &&
+        Engine.CursorVisible &&
+        IsEffectivelyVisible;
 
     public TermControl(ITerminalEngine? engine = null)
     {
@@ -86,11 +103,37 @@ public sealed class TermControl : Avalonia.Controls.Control
         ClipToBounds = true;
         TextInputMethodClientRequested += OnTextInputMethodClientRequested;
         GotFocus += (_, _) => SendFocusChanged(focused: true);
-        LostFocus += (_, _) => SendFocusChanged(focused: false);
+        LostFocus += (_, _) =>
+        {
+            SendFocusChanged(focused: false);
+            if (!_cursorOn)
+            {
+                // The unfocused pane draws a static cursor and the blink timer no
+                // longer animates it — repaint out of a mid-blink dark phase.
+                _cursorOn = true;
+                InvalidateVisual();
+            }
+        };
 
         _blinkTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(530) };
         _blinkTimer.Tick += (_, _) =>
         {
+            // Damage-gated idle rendering: skip the tick when blinking cannot change
+            // any pixel — unfocused panes draw a static cursor (see the drawCursor
+            // expression in Render), steady/hidden cursor modes never blink, and
+            // hidden controls do not present. When the animation is off, pin
+            // _cursorOn so the cursor is solid, repainting once if it was mid-blink.
+            if (!ShouldAnimateCursor)
+            {
+                if (!_cursorOn)
+                {
+                    _cursorOn = true;
+                    InvalidateVisual();
+                }
+
+                return;
+            }
+
             _cursorOn = !_cursorOn;
             InvalidateVisual();
         };
@@ -101,13 +144,20 @@ public sealed class TermControl : Avalonia.Controls.Control
             // Avalonia controls and may snapshot history. That work must not
             // run on the PTY thread or throw back into Engine.Feed — either
             // kills ConPTY ReadLoop and leaves the constructor-sized blank grid.
+            //
+            // Coalesce bursts: the PTY ReadLoop raises one invalidation per 16 KiB
+            // chunk, and each drain fires listener fan-out + InvalidateVisual.
+            // Collapse queued invalidations into a single trailing drain (the
+            // winterm-ghostty lesson: per-chunk UI work was the whole throughput
+            // gap). A drain re-queues itself if more output arrived mid-drain.
+            Interlocked.Increment(ref _invalidationPosts);
             if (Dispatcher.UIThread.CheckAccess())
             {
                 HandleEngineInvalidated();
             }
-            else
+            else if (Interlocked.Exchange(ref _invalidationPending, 1) == 0)
             {
-                Dispatcher.UIThread.Post(HandleEngineInvalidated, DispatcherPriority.Render);
+                Dispatcher.UIThread.Post(DrainEngineInvalidation, DispatcherPriority.Render);
             }
         };
         Engine.TitleChanged += (_, title) =>
@@ -1258,8 +1308,23 @@ public sealed class TermControl : Avalonia.Controls.Control
         }
     }
 
+    private void DrainEngineInvalidation()
+    {
+        // Trailing edge: clear the flag before handling so an invalidation that
+        // arrives during handling is observed by the loop check below. A producer
+        // that exchanges the flag from 0 to 1 posts its own drain; one that finds
+        // it already 1 relies on this loop's recheck.
+        do
+        {
+            Interlocked.Exchange(ref _invalidationPending, 0);
+            HandleEngineInvalidated();
+        }
+        while (Volatile.Read(ref _invalidationPending) != 0);
+    }
+
     private void HandleEngineInvalidated()
     {
+        Interlocked.Increment(ref _invalidationDrains);
         try
         {
             if (_selection is not null &&

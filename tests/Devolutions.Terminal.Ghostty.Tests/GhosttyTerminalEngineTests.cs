@@ -1,3 +1,4 @@
+using System.Text;
 using Devolutions.Terminal.Core;
 using Devolutions.Terminal;
 using Devolutions.Terminal.Ghostty;
@@ -78,6 +79,59 @@ public sealed class GhosttyTerminalEngineTests
         engine.Feed("\u001bP$qm\u001b\\\u001bP+q544e\u001b\\");
 
         Assert.Empty(diagnostics);
+    }
+
+    [Fact]
+    public void EngineSurvivesAdversarialCorpusOnSmallStackThread()
+    {
+        // winterm-ghostty lesson: full libghostty assumed a 16 MB stack and
+        // overflowed the host default in production. libghostty-vt is VT-only, but
+        // pin the headroom: the engine must survive an adversarial corpus on a
+        // 256 KB-stack thread — 4x smaller than the ~1 MB default of the .NET
+        // thread-pool threads the ConPTY ReadLoop feeds it from.
+        var corpus = BuildAdversarialCorpus();
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                using var engine = new GhosttyTerminalEngine();
+                engine.Feed(corpus);
+                _ = engine.CreateSnapshot(includeHistory: true);
+                _ = engine.Title;
+            }
+            catch (Exception ex)
+            {
+                failure = ex;
+            }
+        }, maxStackSize: 256 * 1024);
+        thread.Start();
+        thread.Join();
+
+        Assert.Null(failure);
+    }
+
+    private static string BuildAdversarialCorpus()
+    {
+        var builder = new StringBuilder(capacity: 512 * 1024);
+        builder.Append(new string('x', 100 * 1024)); // single over-long line: wrap/reflow
+        builder.Append("\r\n");
+        builder.Append("\u001b]8;;").Append(new string('a', 64 * 1024)).Append("link\u001b]8;;\u0007\r\n"); // long OSC 8
+        for (var i = 0; i < 200; i++)
+        {
+            builder.Append("\u001b[38;5;").Append(i % 256).Append('m'); // SGR churn
+        }
+
+        builder.Append("e").Append(new string('̃', 4096)).Append("\r\n"); // deep grapheme
+        builder.Append("\u001bP7q").Append(new string('~', 4096)).Append("\u001b\\\r\n"); // sixel-ish DCS
+        builder.Append(new string('進', 16 * 1024)).Append("\r\n"); // wide chars
+        for (var i = 0; i < 500; i++)
+        {
+            builder.Append("\u001b[").Append(i % 40 + 1).Append(';').Append(i % 100 + 1).Append('H');
+            builder.Append("cell").Append(i).Append("\r\n");
+        }
+
+        return builder.ToString();
     }
 
     [Theory]

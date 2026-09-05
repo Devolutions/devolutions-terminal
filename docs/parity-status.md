@@ -86,6 +86,15 @@ registrations, and notices for both x64 and ARM64.
 | Extended keyboard | Built-in Kitty set/query/push/pop flags, CSI-u event bytes, `modifyOtherKeys`, Win32-input mode, and press/repeat/release encoding implemented | Kitty alternate-key reporting and associated-text reporting are not advertised; the pinned Ghostty C ABI exposes no keyboard protocol state and reports these capabilities unavailable |
 | Shader effects | Optional deterministic, bounded Skia retro/scanline pass, toggleable per active terminal | Custom arbitrary HLSL/pixel-shader files are not loaded or advertised |
 
+Output bursts from the PTY read loop coalesce into one UI-thread invalidation
+drain per frame instead of one per 16 KiB chunk, and the cursor blink timer is
+damage-gated (no repaints for unfocused, steady-cursor, or hidden panes). The
+`tools/Devolutions.Terminal.Bench` harness measures the path (`engine` and
+`control` modes, 16 KiB chunks, medians over runs); an 8 MiB burst drains once
+per frame rather than 514 times. Concurrent host writes to ConPTY are serialized
+per sequence so query responses and key input cannot interleave mid-sequence,
+pinned by a live two-writer contract test.
+
 ## Distribution and validation
 
 The `linux-arm64-hardware` CI job runs on GitHub's native
