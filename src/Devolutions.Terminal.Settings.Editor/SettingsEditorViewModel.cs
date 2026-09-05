@@ -17,6 +17,7 @@ public sealed class SettingsNavigationItem
     public bool HasGroupHeader => !string.IsNullOrEmpty(GroupHeader);
     public required string Keywords { get; init; }
     public required object ViewModel { get; init; }
+    public ProfileItemViewModel? Profile { get; init; }
 
     public override string ToString() => Title;
 }
@@ -62,10 +63,11 @@ public sealed class SettingsEditorViewModel : ObservableObject
         _getRevision = getRevision ?? (() => null);
         _settings = _load();
         _loadedRevision = _getRevision();
-        ApplyCommand = new(Apply, () => IsDirty);
-        RevertCommand = new(Revert, () => IsDirty);
+        ApplyCommand = new(Apply);
+        RevertCommand = new(Revert);
         ResetCommand = new(ResetToDefaults);
         OpenJsonCommand = new(OpenJsonFile);
+        AddProfileCommand = new(AddProfile);
         BuildPages(SettingsPage.Startup);
     }
 
@@ -106,6 +108,12 @@ public sealed class SettingsEditorViewModel : ObservableObject
         {
             if (SetProperty(ref _selectedNavigationItem, value))
             {
+                if (value?.Profile is { } profile &&
+                    value.ViewModel is ProfilesSettingsViewModel profilesPage)
+                {
+                    profilesPage.SelectedProfile = profile;
+                }
+
                 OnPropertyChanged(nameof(CurrentPage));
             }
         }
@@ -131,6 +139,7 @@ public sealed class SettingsEditorViewModel : ObservableObject
     public RelayCommand RevertCommand { get; }
     public RelayCommand ResetCommand { get; }
     public RelayCommand OpenJsonCommand { get; }
+    public RelayCommand AddProfileCommand { get; }
 
     public void SelectPage(SettingsPage page)
     {
@@ -190,6 +199,37 @@ public sealed class SettingsEditorViewModel : ObservableObject
         StatusMessage = "Factory defaults loaded. Apply to save them.";
     }
 
+    public void AddProfile()
+    {
+        if (!TryCommitEditors(out var error))
+        {
+            StatusMessage = error!;
+            return;
+        }
+
+        var profile = new ProfileSettings
+        {
+            Guid = $"{{{Guid.NewGuid()}}}",
+            Name = "New profile",
+            Commandline = OperatingSystem.IsWindows()
+                ? @"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
+                : "/bin/bash",
+            Origin = SettingsOrigin.User,
+        };
+        _settings.Profiles.Add(profile);
+        MarkDirty();
+        BuildPages(SettingsPage.Profiles);
+        var created = _navigationItems.FirstOrDefault(item =>
+            item.Profile is not null &&
+            string.Equals(item.Profile.Guid, profile.Guid, StringComparison.OrdinalIgnoreCase));
+        if (created is not null)
+        {
+            SelectedNavigationItem = created;
+        }
+
+        StatusMessage = "New profile added. Apply to save it.";
+    }
+
     private void OpenJsonFile()
     {
         try
@@ -239,8 +279,9 @@ public sealed class SettingsEditorViewModel : ObservableObject
             .ToArray();
         _actions = new(_settings, MarkDirty);
         _newTabMenu = new(_settings, MarkDirty);
-        _navigationItems =
-        [
+        var profilesPage = new ProfilesSettingsViewModel(_profiles);
+        var items = new List<SettingsNavigationItem>
+        {
             Item(SettingsPage.Startup, "Startup", "launch default profile window position startup actions", new StartupSettingsViewModel(_settings, MarkDirty)),
             Item(SettingsPage.Interaction, "Interaction", "copy paste selection mouse urls focus", new InteractionSettingsViewModel(_settings, MarkDirty)),
             Item(SettingsPage.Appearance, "Appearance", "global themes tabs acrylic mica visual", new AppearanceSettingsViewModel(_settings, MarkDirty)),
@@ -248,13 +289,29 @@ public sealed class SettingsEditorViewModel : ObservableObject
             Item(SettingsPage.Rendering, "Rendering", "graphics api software invalidation", new RenderingSettingsViewModel(_settings, MarkDirty)),
             Item(SettingsPage.Compatibility, "Compatibility", "text measurement width input headless acrylic", new CompatibilitySettingsViewModel(_settings, MarkDirty)),
             Item(SettingsPage.Actions, "Actions", "keybindings key chord command json", _actions),
-            Item(SettingsPage.NewTabMenu, "New tab menu", "menu folder separator profile action json", _newTabMenu),
+            Item(SettingsPage.NewTabMenu, "New Tab Menu", "menu folder separator profile action json", _newTabMenu),
             Item(SettingsPage.Extensions, "Extensions", "sources fragments experimental language notification", new ExtensionsSettingsViewModel(_settings, MarkDirty)),
-            Item(SettingsPage.Profiles, "Defaults", "profile commandline directory icon tab title hidden", new ProfilesSettingsViewModel(_profiles), "Profiles"),
-            Item(SettingsPage.ProfileAppearance, "Profile appearance", "profile font colors opacity background image", new ProfileAppearanceSettingsViewModel(_profiles)),
-            Item(SettingsPage.ProfileTerminal, "Profile terminal", "profile scrollback cursor close antialiasing", new ProfileTerminalSettingsViewModel(_profiles)),
-            Item(SettingsPage.ProfileAdvanced, "Profile advanced", "profile vt environment kitty osc compatibility", new ProfileAdvancedSettingsViewModel(_profiles)),
-        ];
+            Item(SettingsPage.Profiles, "Defaults", "profile commandline directory icon tab title hidden", profilesPage, "Profiles"),
+        };
+        var windows = OperatingSystem.IsWindows();
+        foreach (var profile in _profiles)
+        {
+            items.Add(new SettingsNavigationItem
+            {
+                Page = SettingsPage.Profiles,
+                IconFontFamily = windows ? "Segoe Fluent Icons" : "Cascadia Mono",
+                Icon = NavigationIcon(profile.Icon, windows),
+                Title = profile.Name,
+                Keywords = $"profile {profile.Name} {profile.Commandline}",
+                ViewModel = profilesPage,
+                Profile = profile,
+            });
+        }
+
+        items.Add(Item(SettingsPage.ProfileAppearance, "Profile appearance", "profile font colors opacity background image", new ProfileAppearanceSettingsViewModel(_profiles)));
+        items.Add(Item(SettingsPage.ProfileTerminal, "Profile terminal", "profile scrollback cursor close antialiasing", new ProfileTerminalSettingsViewModel(_profiles)));
+        items.Add(Item(SettingsPage.ProfileAdvanced, "Profile advanced", "profile vt environment kitty osc compatibility", new ProfileAdvancedSettingsViewModel(_profiles)));
+        _navigationItems = items;
         Diagnostics = _settings.Diagnostics
             .Select(diagnostic => new SettingsDiagnosticViewModel(
                 diagnostic.Severity.ToString(),
@@ -267,6 +324,20 @@ public sealed class SettingsEditorViewModel : ObservableObject
             _navigationItems.FirstOrDefault(item => item.Page == selectedPage) ??
             _navigationItems[0];
         OnPropertyChanged(nameof(SettingsPath));
+    }
+
+    private static string NavigationIcon(string? icon, bool windows)
+    {
+        if (string.IsNullOrWhiteSpace(icon) ||
+            icon.Contains("://", StringComparison.Ordinal) ||
+            icon.Contains('\\') ||
+            icon.Contains('/') ||
+            icon.Length > 4)
+        {
+            return windows ? "\uE756" : ">";
+        }
+
+        return icon;
     }
 
     private static SettingsNavigationItem Item(

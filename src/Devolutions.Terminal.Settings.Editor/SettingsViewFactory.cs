@@ -11,5 +11,19 @@ public static class SettingsViewFactory
         Action<AppSettings> save,
         Func<AppSettings> createDefault,
         Func<string?>? getRevision = null) =>
-        new(new SettingsEditorViewModel(load, save, createDefault, getRevision));
+        new(CreateViewModel(load, save, createDefault, getRevision));
+
+    public static SettingsView CreateView(
+        Func<AppSettings> load,
+        Action<AppSettings> save,
+        Func<AppSettings> createDefault,
+        Func<string?>? getRevision = null) =>
+        new(CreateViewModel(load, save, createDefault, getRevision));
+
+    private static SettingsEditorViewModel CreateViewModel(
+        Func<AppSettings> load,
+        Action<AppSettings> save,
+        Func<AppSettings> createDefault,
+        Func<string?>? getRevision) =>
+        new(load, save, createDefault, getRevision);
 }
