@@ -9,16 +9,13 @@ namespace Devolutions.Terminal.Broker;
 public sealed class BrokerHost : IAsyncDisposable
 {
     private const int AcceptLoopCount = 8;
-    private const int MaximumCachedResponses = 1024;
-    private static readonly TimeSpan ResponseRetryWindow = TimeSpan.FromSeconds(5);
 
     private readonly BrokerEndpointStore _endpointStore;
     private readonly IBrokerRequestHandler _handler;
     private readonly BrokerElection _election;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly ConcurrentDictionary<int, Task> _connections = [];
-    private readonly ConcurrentDictionary<string, CachedResponse> _responses = [];
-    private readonly ConcurrentQueue<string> _responseOrder = [];
+    private readonly BrokerResponseCache _responses = new();
     private readonly Task[] _acceptLoops;
     private int _connectionId;
 
@@ -184,35 +181,26 @@ public sealed class BrokerHost : IAsyncDisposable
     {
         if (string.IsNullOrWhiteSpace(request.RequestId))
         {
+            return new(BrokerProtocol.Version, request.RequestId, BrokerStatus.InvalidRequest,
+                "A request ID is required for bounded, retry-safe dispatch.");
+        }
+
+        if (request.ProtocolVersion != BrokerProtocol.Version ||
+            !string.Equals(request.UserIdentity, BrokerIdentity.CurrentUser, StringComparison.Ordinal) ||
+            !FixedTimeEquals(request.AuthenticationToken, Endpoint.AuthenticationToken))
+        {
             return await DispatchAsync(request, cancellationToken).ConfigureAwait(false);
         }
 
-        var candidate = new CachedResponse(
-            new Lazy<Task<BrokerResponse>>(
-                () => DispatchAsync(request, _shutdown.Token).AsTask(),
-                LazyThreadSafetyMode.ExecutionAndPublication),
-            DateTimeOffset.UtcNow);
-        var operation = _responses.GetOrAdd(request.RequestId, candidate);
-        if (ReferenceEquals(operation, candidate))
+        var operation = _responses.GetOrAdd(request.RequestId,
+            () => DispatchAsync(request, _shutdown.Token).AsTask());
+        if (operation is null)
         {
-            _responseOrder.Enqueue(request.RequestId);
-            while (_responses.Count > MaximumCachedResponses &&
-                   _responseOrder.TryDequeue(out var expired))
-            {
-                if (_responses.TryGetValue(expired, out var cached) &&
-                    (!cached.Operation.IsValueCreated ||
-                     !cached.Operation.Value.IsCompleted ||
-                     DateTimeOffset.UtcNow - cached.CreatedAt < ResponseRetryWindow))
-                {
-                    _responseOrder.Enqueue(expired);
-                    break;
-                }
-
-                _responses.TryRemove(expired, out _);
-            }
+            return new(BrokerProtocol.Version, request.RequestId, BrokerStatus.Unavailable,
+                "Broker request capacity is full. No action was executed; retry after five seconds.");
         }
 
-        return await operation.Operation.Value.WaitAsync(cancellationToken).ConfigureAwait(false);
+        return await operation.WaitAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask<BrokerResponse> DispatchAsync(
@@ -317,10 +305,6 @@ public sealed class BrokerHost : IAsyncDisposable
         await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
         await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
-
-    private sealed record CachedResponse(
-        Lazy<Task<BrokerResponse>> Operation,
-        DateTimeOffset CreatedAt);
 }
 
 internal static class BrokerIdentity

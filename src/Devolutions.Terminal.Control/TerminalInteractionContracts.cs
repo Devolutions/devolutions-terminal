@@ -46,6 +46,7 @@ public enum TerminalPasteResult
     ConfirmationRequired,
     Cancelled,
     NoConnection,
+    InputRejected,
 }
 
 public enum TerminalScrollMarkKind

@@ -193,9 +193,9 @@
           </controls:SettingsRow.Value>
         </controls:SettingsRow>
         <controls:SettingsRow Header="Detect URLs"
-                              Description="Highlight and open hyperlinks inside the terminal.">
+                              Description="Not supported yet: automatic detection of plain-text URLs. Explicit terminal hyperlinks (OSC 8) remain available. Saved for compatibility only.">
           <controls:SettingsRow.Value>
-            <controls:SettingsToggle AutomationProperties.Name="Detect URLs" IsChecked="{Binding DetectUrls}" />
+            <controls:SettingsToggle IsEnabled="False" AutomationProperties.Name="Detect URLs (not supported)" IsChecked="{Binding DetectUrls}" />
           </controls:SettingsRow.Value>
         </controls:SettingsRow>
         <controls:SettingsRow Header="Warn about large paste"
@@ -284,9 +284,9 @@
           </controls:SettingsRow.Value>
         </controls:SettingsRow>
         <controls:SettingsRow Header="Disable animations"
-                              Description="Turn off window and pane animation effects.">
+                              Description="Not supported yet: window and pane animation effects are not configurable. Saved for compatibility only.">
           <controls:SettingsRow.Value>
-            <controls:SettingsToggle AutomationProperties.Name="Disable animations" IsChecked="{Binding DisableAnimations}" />
+            <controls:SettingsToggle IsEnabled="False" AutomationProperties.Name="Disable animations (not supported)" IsChecked="{Binding DisableAnimations}" />
           </controls:SettingsRow.Value>
         </controls:SettingsRow>
         <TextBlock Classes="sectionTitle" Text="Theme details" />
@@ -692,17 +692,21 @@
         <TextBlock Classes="pageDescription" Text="{Binding Description}" />
         <Border Classes="settings-card">
           <Grid ColumnDefinitions="220,*" RowDefinitions="Auto,Auto,Auto">
-          <TextBlock Grid.Row="0" Classes="fieldLabel" Text="Text measurement" />
+          <TextBlock Grid.Row="0" Classes="fieldLabel" Text="Text measurement (not supported)" />
           <ComboBox Grid.Row="0"
                     Grid.Column="1"
                     Classes="field"
                     ItemsSource="{Binding TextMeasurementChoices}"
+                    IsEnabled="False"
+                    ToolTip.Tip="The selected terminal engine controls measurement. This setting is saved for compatibility only."
                     SelectedItem="{Binding TextMeasurement}" />
-          <TextBlock Grid.Row="1" Classes="fieldLabel" Text="Ambiguous character width" />
+          <TextBlock Grid.Row="1" Classes="fieldLabel" Text="Ambiguous width (not supported)" />
           <ComboBox Grid.Row="1"
                     Grid.Column="1"
                     Classes="field"
                     ItemsSource="{Binding AmbiguousWidthChoices}"
+                    IsEnabled="False"
+                    ToolTip.Tip="The selected terminal engine controls character width. This setting is saved for compatibility only."
                     SelectedItem="{Binding AmbiguousWidth}" />
           <TextBlock Grid.Row="2" Classes="fieldLabel" Text="Default input scope" />
           <ComboBox Grid.Row="2"

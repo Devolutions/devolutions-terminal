@@ -39,6 +39,9 @@ public partial class MainWindow :
     private static string? _lastJumpListFingerprint;
     private static long _lastSystemToastTick;
     private AppSettings _settings;
+    private readonly TerminalConfirmationDialog _confirmationDialog = new();
+    private bool _closeApproved;
+    private bool _closeConfirmationPending;
     private readonly ApplicationStateStore _stateStore;
     private readonly TerminalConnectionFactory _connectionFactory;
     private readonly DynamicProfileManager _dynamicProfileManager;
@@ -526,6 +529,11 @@ public partial class MainWindow :
         var control = new TermControl(TerminalEngineFactory.Create(_settings, profile));
         control.ConnectionFactory = CreateConnection;
         control.InteractionOptions = TerminalInteractionOptions.FromSettings(_settings);
+        control.ConfirmPasteAsync = request => _confirmationDialog.ShowAsync(
+            this, "Confirm paste",
+            $"Paste {request.CharacterCount:N0} characters across {request.LineCount:N0} line(s)? " +
+            "Pasted text may execute commands in the terminal.",
+            "Paste");
         control.Cursor = new Cursor(StandardCursorType.Ibeam);
         control.NotificationRequested += (_, notification) => ShowNotification(notification);
         control.InteractionError += (_, error) => ShowNotification(new TerminalNotification(
@@ -571,7 +579,7 @@ public partial class MainWindow :
             var tab = FindTab(pane);
             if (tab is not null)
             {
-                await ClosePaneAsync(tab, pane).ConfigureAwait(true);
+                await ClosePaneAsync(tab, pane, automaticExit: true).ConfigureAwait(true);
             }
         };
         return pane;
@@ -679,7 +687,7 @@ public partial class MainWindow :
         pane.Control.Focus();
     }
 
-    private async Task ClosePaneAsync(TerminalTab tab, TerminalPane pane)
+    private async Task ClosePaneAsync(TerminalTab tab, TerminalPane pane, bool automaticExit = false)
     {
         if (tab.IsClosing)
         {
@@ -688,11 +696,12 @@ public partial class MainWindow :
 
         if (tab.Panes.Count == 1)
         {
-            await CloseTabAsync(tab).ConfigureAwait(true);
+            await CloseTabAsync(tab, automaticExit: automaticExit).ConfigureAwait(true);
             return;
         }
 
-        if (!tab.Panes.Close(pane))
+        if (!await ConfirmCloseAsync([pane], automaticExit).ConfigureAwait(true) ||
+            tab.IsClosing || !tab.Panes.Close(pane))
         {
             return;
         }
@@ -708,9 +717,16 @@ public partial class MainWindow :
         }
     }
 
-    private async Task CloseTabAsync(TerminalTab tab, bool remember = true)
+    private async Task CloseTabAsync(
+        TerminalTab tab, bool remember = true, bool automaticExit = false, bool confirmed = false)
     {
         if (tab.IsClosing)
+        {
+            return;
+        }
+
+        if ((!confirmed && !await ConfirmCloseAsync(tab.Panes.Leaves(), automaticExit).ConfigureAwait(true)) ||
+            tab.IsClosing)
         {
             return;
         }
@@ -2083,9 +2099,15 @@ public partial class MainWindow :
     private async Task CloseOtherTabsAsync(uint? index)
     {
         var keep = ResolveTab(index) ?? _activeTab;
-        foreach (var tab in _tabs.Where(tab => !ReferenceEquals(tab, keep)).ToArray())
+        var closing = _tabs.Where(tab => !ReferenceEquals(tab, keep)).ToArray();
+        if (!await ConfirmCloseAsync(closing.SelectMany(tab => tab.Panes.Leaves())).ConfigureAwait(true))
         {
-            await CloseTabAsync(tab).ConfigureAwait(true);
+            return;
+        }
+
+        foreach (var tab in closing)
+        {
+            await CloseTabAsync(tab, confirmed: true).ConfigureAwait(true);
         }
 
         if (keep is not null)
@@ -2098,15 +2120,29 @@ public partial class MainWindow :
     {
         var keep = ResolveTab(index) ?? _activeTab;
         var keepIndex = keep is null ? -1 : TabIndexOf(keep);
-        foreach (var tab in _tabs.Skip(keepIndex + 1).ToArray())
+        var closing = _tabs.Skip(keepIndex + 1).ToArray();
+        if (!await ConfirmCloseAsync(closing.SelectMany(tab => tab.Panes.Leaves())).ConfigureAwait(true))
         {
-            await CloseTabAsync(tab).ConfigureAwait(true);
+            return;
+        }
+
+        foreach (var tab in closing)
+        {
+            await CloseTabAsync(tab, confirmed: true).ConfigureAwait(true);
         }
     }
 
     private async Task CloseOtherPanesAsync()
     {
-        var closed = _activeTab!.Panes.CloseOthers();
+        var tab = _activeTab!;
+        var keep = tab.Panes.ActiveContent;
+        if (!await ConfirmCloseAsync(tab.Panes.Leaves().Where(pane => !ReferenceEquals(pane, keep))).ConfigureAwait(true) ||
+            tab.IsClosing || !ReferenceEquals(_activeTab, tab) || !ReferenceEquals(tab.Panes.ActiveContent, keep))
+        {
+            return;
+        }
+
+        var closed = tab.Panes.CloseOthers();
         foreach (var pane in closed)
         {
             await pane.Control.CloseAsync().ConfigureAwait(true);
@@ -4035,68 +4071,6 @@ public partial class MainWindow :
     [LibraryImport("user32.dll", EntryPoint = "GetCursorPos")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool GetCursorPosition(out CursorPoint point);
-
-    private void DetachPaneControls(TerminalTab tab)
-    {
-        foreach (var pane in tab.Panes.Leaves())
-        {
-            DetachControl(pane.Control);
-            if (_paneScrollBars.TryGetValue(pane, out var scrollBar))
-            {
-                DetachControl(scrollBar);
-            }
-        }
-    }
-
-    private static void DetachControl(Control control)
-    {
-        if (control.Parent is Decorator decorator)
-        {
-            decorator.Child = null;
-        }
-        else if (control.Parent is Panel panel)
-        {
-            panel.Children.Remove(control);
-        }
-    }
-
-    protected override void OnClosing(WindowClosingEventArgs e)
-    {
-        if (AboutOverlay.IsVisible)
-        {
-            e.Cancel = true;
-            CloseAbout();
-            return;
-        }
-
-        base.OnClosing(e);
-    }
-
-    protected override async void OnClosed(EventArgs e)
-    {
-        _isClosed = true;
-        if (!_layoutPersisted && _tabs.Count > 0)
-        {
-            TryPersistCurrentLayout(CaptureLayout());
-        }
-
-        foreach (var tab in _tabs.ToArray())
-        {
-            foreach (var pane in tab.Panes.Leaves())
-            {
-                await pane.Control.CloseAsync().ConfigureAwait(true);
-            }
-        }
-
-        foreach (var bitmap in _tabIconCache.Values)
-        {
-            bitmap.Dispose();
-        }
-
-        _tabIconCache.Clear();
-
-        base.OnClosed(e);
-    }
 
     private sealed class PaneScrollBar : Grid
     {

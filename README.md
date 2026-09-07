@@ -111,6 +111,40 @@ Build and release gates are documented in [docs/release.md](docs/release.md).
 
 ## Compatibility inventory
 
+### Safety and compatibility settings
+
+Large or multi-line pastes requiring confirmation are cancelled unless explicitly
+approved. The application prompts asynchronously; closing the prompt cancels the
+paste. Embedded controls without a confirmation handler also cancel warned pastes.
+
+`warning.confirmOnClose` applies to user-initiated window, tab, pane, and bulk
+close actions. `never` skips confirmation; `always` confirms closing any running
+session; `automatic` confirms when an action closes more than one running session
+(the legacy `confirmCloseAllTabs` behavior). Already-exited sessions and automatic
+process-exit cleanup never prompt.
+
+PTY input is queued in order off the UI thread, with limits of 256 pending writes
+and 4 MiB (including framing on Unix). Overflow rejects the entire new write and
+reports an error rather than blocking or silently dropping input. Async writes
+complete after transport delivery; caller cancellation skips writes not yet
+started. Cancelling an in-flight write terminates its session because input may
+have been partially delivered and Unix framing cannot safely resume. Closing a
+blocked Unix session has a one-second grace period before host termination;
+undelivered input is reported.
+
+The editor disables options that are currently retained only for settings-file
+compatibility: `compatibility.textMeasurement`, `compatibility.ambiguousWidth`,
+`experimental.detectURLs`, and `disableAnimations`. The terminal engine determines
+text measurement and character widths. Plain-text URL detection is not implemented;
+explicit OSC 8 hyperlinks remain supported. Window/pane animation effects are not
+configurable through `disableAnimations`.
+
+Broker retries share active requests and retain completed responses for at least
+five seconds after completion. Admission is bounded at 128 active requests and
+1024 total retained requests. When full, new requests receive an explicit
+unavailable response without executing their action; existing retries still join
+their original operation.
+
 The port tracks Windows Terminal settings, actions, VT dispatch, command line,
 and settings-page surfaces in
 [`compat/windows-terminal.json`](compat/windows-terminal.json). Tests use that

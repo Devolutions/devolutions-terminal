@@ -15,6 +15,88 @@ public sealed class TermControlPasteTests
     private const string Esc = "\u001b";
 
     [AvaloniaFact]
+    public async Task WarningWithoutHandlerFailsClosed()
+    {
+        var connection = new RecordingConnection();
+        var control = new TermControl { ConnectionFactory = _ => connection };
+        await control.StartAsync(new ProfileSettings { Commandline = "cmd.exe" }, 80, 24);
+        try
+        {
+            Assert.Equal(TerminalPasteResult.Cancelled, control.PasteText("first\nsecond"));
+            Assert.Equal(TerminalPasteResult.Cancelled, await control.PasteTextAsync(new string('x', 6000)));
+            Assert.Equal("", connection.WrittenText);
+        }
+        finally
+        {
+            await control.CloseAsync();
+        }
+    }
+
+    [AvaloniaTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AsyncConfirmationGatesPaste(bool accepted)
+    {
+        var connection = new RecordingConnection();
+        var control = new TermControl { ConnectionFactory = _ => connection };
+        await control.StartAsync(new ProfileSettings { Commandline = "cmd.exe" }, 80, 24);
+        try
+        {
+            var decision = new TaskCompletionSource<bool>();
+            control.ConfirmPasteAsync = request =>
+            {
+                Assert.Equal(2, request.LineCount);
+                return decision.Task;
+            };
+            var paste = control.PasteTextAsync("first\nsecond");
+            Assert.Equal("", connection.WrittenText);
+            decision.SetResult(accepted);
+            Assert.Equal(accepted ? TerminalPasteResult.Written : TerminalPasteResult.Cancelled, await paste);
+            Assert.Equal(accepted ? "first\rsecond" : "", connection.WrittenText);
+        }
+        finally
+        {
+            await control.CloseAsync();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task ClosingWhileConfirmationIsOpenDoesNotWrite()
+    {
+        var connection = new RecordingConnection();
+        var control = new TermControl { ConnectionFactory = _ => connection };
+        await control.StartAsync(new ProfileSettings { Commandline = "cmd.exe" }, 80, 24);
+        var decision = new TaskCompletionSource<bool>();
+        control.ConfirmPasteAsync = _ => decision.Task;
+        var paste = control.PasteTextAsync("first\nsecond");
+        await control.CloseAsync();
+        decision.SetResult(true);
+        Assert.Equal(TerminalPasteResult.NoConnection, await paste);
+        Assert.Equal("", connection.WrittenText);
+    }
+
+    [AvaloniaFact]
+    public async Task RejectedInputReportsErrorRatherThanSuccess()
+    {
+        var connection = new RecordingConnection { RejectInput = true };
+        var control = new TermControl { ConnectionFactory = _ => connection };
+        var errors = 0;
+        control.InteractionError += (_, _) => errors++;
+        await control.StartAsync(new ProfileSettings { Commandline = "cmd.exe" }, 80, 24);
+        try
+        {
+            Assert.Equal(TerminalPasteResult.InputRejected, control.PasteText("echo hi"));
+            control.WriteInput("x");
+            Assert.Equal(2, errors);
+            Assert.Equal("", connection.WrittenText);
+        }
+        finally
+        {
+            await control.CloseAsync();
+        }
+    }
+
+    [AvaloniaFact]
     public async Task WriteInputSendsLiteralBytesEvenInBracketedPasteMode()
     {
         var connection = new RecordingConnection();
@@ -108,6 +190,7 @@ public sealed class TermControlPasteTests
     private sealed class RecordingConnection : IRestartableTerminalConnection
     {
         private readonly MemoryStream _written = new();
+        public bool RejectInput { get; init; }
 
 #pragma warning disable CS0067
         public event EventHandler<ReadOnlyMemory<byte>>? OutputReceived;
@@ -151,6 +234,11 @@ public sealed class TermControlPasteTests
 
         public void Write(ReadOnlySpan<byte> data)
         {
+            if (RejectInput)
+            {
+                throw new IOException("Input queue is full.");
+            }
+
             lock (_written)
             {
                 _written.Write(data);

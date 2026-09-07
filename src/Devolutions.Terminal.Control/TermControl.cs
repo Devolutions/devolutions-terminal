@@ -171,7 +171,7 @@ public sealed class TermControl : Avalonia.Controls.Control
                 Dispatcher.UIThread.Post(() => TitleChanged?.Invoke(this, title));
             }
         };
-        Engine.ResponseReady += (_, data) => _connection?.Write(data);
+        Engine.ResponseReady += (_, data) => TryWriteInput(data);
         Engine.ClipboardWriteRequested += (_, text) =>
             Dispatcher.UIThread.Post(() => SetClipboardFromTerminalObservedAsync(text));
         Engine.NotificationRequested += (_, notification) =>
@@ -439,6 +439,34 @@ public sealed class TermControl : Avalonia.Controls.Control
         ArgumentNullException.ThrowIfNull(options);
         var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
         var text = clipboard is null ? null : await clipboard.TryGetTextAsync().ConfigureAwait(true);
+        return await PasteTextAsync(text, options).ConfigureAwait(true);
+    }
+
+    public Func<TerminalPasteRequest, Task<bool>>? ConfirmPasteAsync { get; set; }
+
+    public async Task<TerminalPasteResult> PasteTextAsync(
+        string? text, TerminalPasteOptions? options = null)
+    {
+        var request = TerminalInteractionModel.PreparePaste(
+            text, options ?? InteractionOptions.Paste, Engine.BracketedPaste);
+        var connection = _connection;
+        var session = ProcessMetadata;
+        if (request.RequiresConfirmation && ConfirmPasteAsync is { } confirm)
+        {
+            if (!await confirm(request).ConfigureAwait(true))
+            {
+                return TerminalPasteResult.Cancelled;
+            }
+
+            if (!ReferenceEquals(connection, _connection) || connection?.IsRunning != true ||
+                !Equals(session, ProcessMetadata) || Engine.BracketedPaste != request.BracketedPaste)
+            {
+                return TerminalPasteResult.NoConnection;
+            }
+
+            return WritePaste(request);
+        }
+
         return PasteText(text, options);
     }
 
@@ -456,22 +484,27 @@ public sealed class TermControl : Avalonia.Controls.Control
         if (request.RequiresConfirmation)
         {
             var args = new TerminalPasteWarningEventArgs(request);
-            if (PasteWarning is not null)
+            PasteWarning?.Invoke(this, args);
+            if (!args.Allow)
             {
-                PasteWarning.Invoke(this, args);
-                if (!args.Allow)
-                {
-                    return TerminalPasteResult.Cancelled;
-                }
+                return TerminalPasteResult.Cancelled;
             }
         }
 
+        return WritePaste(request);
+    }
+
+    private TerminalPasteResult WritePaste(TerminalPasteRequest request)
+    {
         if (_connection is null)
         {
             return TerminalPasteResult.NoConnection;
         }
 
-        _connection.Write(Engine.WrapPaste(request.Text));
+        if (!TryWriteInput(Engine.WrapPaste(request.Text)))
+        {
+            return TerminalPasteResult.InputRejected;
+        }
         SetScrollOffset(0);
         return TerminalPasteResult.Written;
     }
@@ -486,8 +519,29 @@ public sealed class TermControl : Avalonia.Controls.Control
     public void WriteInput(string input)
     {
         ArgumentNullException.ThrowIfNull(input);
-        _connection?.Write(input);
+        TryWriteInput(input);
         SetScrollOffset(0);
+    }
+
+    private bool TryWriteInput(string input) => TryWriteInput(Encoding.UTF8.GetBytes(input));
+
+    private bool TryWriteInput(ReadOnlySpan<byte> input)
+    {
+        if (_connection is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            _connection.Write(input);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or ObjectDisposedException)
+        {
+            ReportInteractionError("Terminal input was not accepted", ex);
+            return false;
+        }
     }
 
     public void SelectAll()
@@ -891,7 +945,17 @@ public sealed class TermControl : Avalonia.Controls.Control
         ResizeEngine(cols, rows);
         if (gridChanged)
         {
-            _connection?.Resize(cols, rows);
+            try
+            {
+                if (_connection?.IsRunning == true)
+                {
+                    _connection.Resize(cols, rows);
+                }
+            }
+            catch (Exception ex) when (ex is IOException or InvalidOperationException)
+            {
+                ReportInteractionError("Terminal resize was not accepted; resize again after input drains", ex);
+            }
         }
 
         return finalSize;
@@ -1013,7 +1077,7 @@ public sealed class TermControl : Avalonia.Controls.Control
                 TerminalKeyEventType.Release);
             if (vt is not null)
             {
-                _connection?.Write(vt);
+                TryWriteInput(vt);
                 e.Handled = true;
             }
         }
@@ -1054,7 +1118,7 @@ public sealed class TermControl : Avalonia.Controls.Control
             return null;
         }
 
-        _connection?.Write(vt);
+        TryWriteInput(vt);
         SetScrollOffset(0);
         if (IsTextInputCandidate(keySymbol) &&
             (mode.Win32InputMode ||
@@ -1083,7 +1147,7 @@ public sealed class TermControl : Avalonia.Controls.Control
         }
 
         var output = KeyMapper.EncodeKittyTextInput(text, mode.KittyFlags) ?? text;
-        _connection?.Write(output);
+        TryWriteInput(output);
         SetScrollOffset(0);
         return output;
     }
@@ -1163,7 +1227,7 @@ public sealed class TermControl : Avalonia.Controls.Control
                 x,
                 y,
                 Engine.ApplicationCursorKeys);
-            _connection?.Write(sequence);
+            TryWriteInput(sequence);
             e.Handled = true;
             base.OnPointerPressed(e);
             return;
@@ -1722,7 +1786,7 @@ public sealed class TermControl : Avalonia.Controls.Control
             return;
         }
 
-        _connection?.Write(TerminalInteractionModel.BuildCursorRepositionSequence(
+        TryWriteInput(TerminalInteractionModel.BuildCursorRepositionSequence(
             Engine.CursorX,
             Engine.CursorY,
             Engine.CursorX + delta,
@@ -1978,7 +2042,7 @@ public sealed class TermControl : Avalonia.Controls.Control
     {
         if (Engine.FocusTracking)
         {
-            _connection?.Write(focused ? "\u001b[I" : "\u001b[O");
+            TryWriteInput(focused ? "\u001b[I" : "\u001b[O");
         }
     }
 
@@ -1989,7 +2053,7 @@ public sealed class TermControl : Avalonia.Controls.Control
         bool released,
         KeyModifiers modifiers)
     {
-        _connection?.Write(TerminalInteractionModel.BuildMouseSequence(
+        TryWriteInput(TerminalInteractionModel.BuildMouseSequence(
             button,
             x,
             y,

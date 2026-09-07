@@ -11,6 +11,98 @@ public sealed class LinuxPtyConnectionTests
 {
     public static bool IsUnix => OperatingSystem.IsLinux() || OperatingSystem.IsMacOS();
 
+    [Fact(Skip = "Unix PTY host is Linux/macOS-only.", SkipUnless = nameof(IsUnix))]
+    public async Task BlockedInputStillRelaysOutputAndCloseHasDeadline()
+    {
+        await using var connection = new LinuxPtyConnection();
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var responsive = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var output = new StringBuilder();
+        var faults = new List<Exception>();
+        connection.OutputReceived += (_, data) =>
+        {
+            lock (output)
+            {
+                output.Append(Encoding.UTF8.GetString(data.Span));
+                var text = output.ToString();
+                if (text.Contains("READY", StringComparison.Ordinal)) ready.TrySetResult();
+                if (text.Contains("RESPONSIVE", StringComparison.Ordinal)) responsive.TrySetResult();
+            }
+        };
+        connection.Faulted += (_, error) => { lock (faults) faults.Add(error); };
+        await connection.StartAsync(
+            "stty -echo -icanon; printf READY; sleep 1; printf RESPONSIVE; sleep 30",
+            Environment.CurrentDirectory, 80, 24, TestContext.Current.CancellationToken);
+        await ready.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var started = System.Diagnostics.Stopwatch.StartNew();
+        connection.Write(new byte[2 * 1024 * 1024]);
+        Assert.True(started.Elapsed < TimeSpan.FromSeconds(1), "Input submission blocked.");
+        await responsive.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await connection.CloseAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(connection.IsRunning);
+        lock (faults)
+        {
+            Assert.NotEmpty(faults);
+        }
+    }
+
+    [Fact(Skip = "Unix PTY host is Linux/macOS-only.", SkipUnless = nameof(IsUnix))]
+    public async Task CancellingBlockedFrameStopsSessionWithoutWaitingForReader()
+    {
+        await using var connection = new LinuxPtyConnection();
+        using var cancellation = new CancellationTokenSource();
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var output = new StringBuilder();
+        connection.OutputReceived += (_, data) =>
+        {
+            lock (output)
+            {
+                output.Append(Encoding.UTF8.GetString(data.Span));
+                if (output.ToString().Contains("READY", StringComparison.Ordinal)) ready.TrySetResult();
+            }
+        };
+        await connection.StartAsync(
+            "stty -echo -icanon; printf READY; sleep 30",
+            Environment.CurrentDirectory, 80, 24, TestContext.Current.CancellationToken);
+        await ready.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var pending = connection.WriteAsync(new byte[2 * 1024 * 1024], cancellation.Token).AsTask();
+        await Task.Delay(100);
+        Assert.False(pending.IsCompleted);
+        cancellation.Cancel();
+        var error = await Record.ExceptionAsync(() => pending.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.True(error is OperationCanceledException or IOException, error?.ToString());
+        await connection.CloseAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(connection.IsRunning);
+    }
+
+    [Fact(Skip = "Unix PTY host is Linux/macOS-only.", SkipUnless = nameof(IsUnix))]
+    public async Task LargeInputFramesPreserveBytesAndFollowingResize()
+    {
+        await using var connection = new LinuxPtyConnection();
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var output = new StringBuilder();
+        connection.OutputReceived += (_, data) =>
+        {
+            lock (output)
+            {
+                output.Append(Encoding.UTF8.GetString(data.Span));
+                var text = output.ToString();
+                if (text.Contains("READY", StringComparison.Ordinal)) ready.TrySetResult();
+                if (text.Contains("1048576", StringComparison.Ordinal) &&
+                    text.Contains("40 100", StringComparison.Ordinal)) completed.TrySetResult();
+            }
+        };
+        await connection.StartAsync(
+            "stty raw -echo; printf READY; head -c 1048576 | wc -c; sleep 1; stty size; sleep 30",
+            Environment.CurrentDirectory, 80, 24, TestContext.Current.CancellationToken);
+        await ready.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await connection.WriteAsync(new byte[1024 * 1024]).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        connection.Resize(100, 40);
+        await completed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await connection.CloseAsync().WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
     [Fact]
     public async Task RealPtySupportsInputResizeAndExit()
     {
