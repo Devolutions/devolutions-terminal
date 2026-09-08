@@ -13,6 +13,23 @@ public sealed class ConnectionContractTests
     public static bool IsWindows => OperatingSystem.IsWindows();
 
     [Fact(Skip = "ConPTY is Windows-only.", SkipUnless = nameof(IsWindows))]
+    public async Task BlockedInputSubmissionAndCloseRemainResponsive()
+    {
+        await using var connection = new ConPtyConnection();
+        var output = new List<byte>();
+        connection.OutputReceived += (_, data) => { lock (output) output.AddRange(data.ToArray()); };
+        await connection.StartAsync(
+            "powershell.exe -NoProfile -Command \"[Console]::Write('READY'); Start-Sleep -Seconds 30\"",
+            Environment.CurrentDirectory, 80, 24, TestContext.Current.CancellationToken);
+        await WaitForOutputAsync(output, "READY");
+        var started = Stopwatch.StartNew();
+        connection.Write(new string('x', 2 * 1024 * 1024));
+        Assert.True(started.Elapsed < TimeSpan.FromSeconds(1), "Input submission blocked.");
+        await connection.CloseAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(connection.IsRunning);
+    }
+
+    [Fact(Skip = "ConPTY is Windows-only.", SkipUnless = nameof(IsWindows))]
     public async Task ConPtyStartsStopped()
     {
         await using var connection = new ConPtyConnection();

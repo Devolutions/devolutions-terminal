@@ -12,7 +12,7 @@ public sealed class ConPtyConnection : IRestartableTerminalConnection
 {
     private readonly object _stateLock = new();
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
-    private readonly SemaphoreSlim _writeLock = new(1, 1);
+    private OrderedInputWriter? _writer;
     private SessionResources? _session;
     private TerminalLaunchOptions? _lastOptions;
     private long _generation;
@@ -122,17 +122,7 @@ public sealed class ConPtyConnection : IRestartableTerminalConnection
             return;
         }
 
-        _writeLock.Wait();
-        try
-        {
-            var stream = GetWritableStream();
-            stream.Write(data);
-            stream.Flush();
-        }
-        finally
-        {
-            _writeLock.Release();
-        }
+        GetWriter().Post(data);
     }
 
     public void Write(string text)
@@ -153,26 +143,7 @@ public sealed class ConPtyConnection : IRestartableTerminalConnection
             return;
         }
 
-        CancellationToken lifetimeToken;
-        lock (_stateLock)
-        {
-            lifetimeToken = _session?.Lifetime.Token ?? CancellationToken.None;
-        }
-
-        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
-            cancellationToken,
-            lifetimeToken);
-        await _writeLock.WaitAsync(linkedCts.Token).ConfigureAwait(false);
-        try
-        {
-            var stream = GetWritableStream();
-            await stream.WriteAsync(data, linkedCts.Token).ConfigureAwait(false);
-            await stream.FlushAsync(linkedCts.Token).ConfigureAwait(false);
-        }
-        finally
-        {
-            _writeLock.Release();
-        }
+        await GetWriter().Enqueue(data.Span, cancellationToken).ConfigureAwait(false);
     }
 
     public void Resize(int columns, int rows)
@@ -290,6 +261,25 @@ public sealed class ConPtyConnection : IRestartableTerminalConnection
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
                 _session = session;
+                _writer = new OrderedInputWriter(
+                    async (data, token) =>
+                    {
+                        await session.Input.WriteAsync(data, token).ConfigureAwait(false);
+                        await session.Input.FlushAsync(token).ConfigureAwait(false);
+                    },
+                    error =>
+                    {
+                        if (session.Lifetime.IsCancellationRequested || session.ExitPublished)
+                        {
+                            Faulted?.Invoke(this, error);
+                        }
+                        else
+                        {
+                            PublishFault(session, error);
+                        }
+                    },
+                    session.Lifetime.Token,
+                    () => Cancel(session.Generation));
                 _lastOptions = options;
                 _hasStarted = true;
                 ProcessMetadata = metadata;
@@ -423,7 +413,7 @@ public sealed class ConPtyConnection : IRestartableTerminalConnection
         }
     }
 
-    private FileStream GetWritableStream()
+    private OrderedInputWriter GetWriter()
     {
         lock (_stateLock)
         {
@@ -433,7 +423,7 @@ public sealed class ConPtyConnection : IRestartableTerminalConnection
                 throw new InvalidOperationException("The ConPTY connection is not running.");
             }
 
-            return _session.Input;
+            return _writer!;
         }
     }
 
@@ -625,17 +615,14 @@ public sealed class ConPtyConnection : IRestartableTerminalConnection
         bool drainOutput)
     {
         session.CancellationRegistration.Dispose();
-        await _writeLock.WaitAsync().ConfigureAwait(false);
-        try
-        {
-            session.Input.Dispose();
-        }
-        finally
-        {
-            _writeLock.Release();
-        }
+        _writer?.Complete();
+        session.Input.Dispose();
 
         var taskErrors = new List<Exception>();
+        if (_writer is { } writer)
+        {
+            await ObserveAsync(writer.Completion, taskErrors).ConfigureAwait(false);
+        }
         if (drainOutput)
         {
             if (session.ReadTask is not null)

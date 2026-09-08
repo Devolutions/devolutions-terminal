@@ -2,6 +2,7 @@ using System.Text.Json.Nodes;
 using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
+using Avalonia.LogicalTree;
 using Devolutions.Terminal.Settings;
 using Devolutions.Terminal.Settings.Editor.Controls;
 using Xunit;
@@ -303,6 +304,37 @@ public sealed class SettingsEditorViewModelTests
         var window = new SettingsWindow(viewModel);
 
         Assert.Same(viewModel, window.DataContext);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(SettingsPage.Interaction, "Detect URLs")]
+    [InlineData(SettingsPage.Appearance, "Disable animations")]
+    public void UnsupportedTogglesAreDisabledAndExplained(SettingsPage page, string header)
+    {
+        var editor = CreateEditor();
+        editor.SelectPage(page);
+        var view = new SettingsView(editor);
+        var content = Assert.Single(view.DataTemplates, template => template.Match(editor.CurrentPage)).Build(editor.CurrentPage)!;
+        content.DataContext = editor.CurrentPage;
+        var row = Assert.Single(content.GetLogicalDescendants().OfType<SettingsRow>(),
+            row => row.Header == header);
+        Assert.Contains("Not supported", row.Description, StringComparison.Ordinal);
+        Assert.False(Assert.IsType<SettingsToggle>(row.Value).IsEnabled);
+    }
+
+    [AvaloniaFact]
+    public void UnsupportedMeasurementChoicesAreDisabledWithoutChangingSavedValues()
+    {
+        var settings = SettingsLoader.Load(Defaults,
+            """{ "compatibility.textMeasurement": "wcswidth", "compatibility.ambiguousWidth": "wide" }""");
+        var editor = CreateEditor(() => settings);
+        editor.SelectPage(SettingsPage.Compatibility);
+        var view = new SettingsView(editor);
+        var content = Assert.Single(view.DataTemplates, template => template.Match(editor.CurrentPage)).Build(editor.CurrentPage)!;
+        content.DataContext = editor.CurrentPage;
+        Assert.Equal(2, content.GetLogicalDescendants().OfType<ComboBox>().Count(combo => !combo.IsEnabled));
+        Assert.Equal("wcswidth", settings.TextMeasurement);
+        Assert.Equal("wide", settings.AmbiguousWidth);
     }
 
     [AvaloniaFact]

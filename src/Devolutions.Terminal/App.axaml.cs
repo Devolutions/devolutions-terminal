@@ -18,7 +18,13 @@ public partial class TerminalApp : Application
     internal static CliInvocation? InitialInvocation { get; set; }
     internal static DeferredBrokerHandler? BrokerHandler { get; set; }
 
-    public override void Initialize() => AvaloniaXamlLoader.Load(this);
+    public override void Initialize()
+    {
+        AvaloniaXamlLoader.Load(this);
+#if DEBUG
+        this.AttachDeveloperTools();
+#endif
+    }
 
     public override void OnFrameworkInitializationCompleted()
     {

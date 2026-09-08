@@ -10,7 +10,7 @@ public sealed class LinuxPtyConnection : IRestartableTerminalConnection
 {
     private readonly object _stateLock = new();
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
-    private readonly SemaphoreSlim _writeLock = new(1, 1);
+    private OrderedInputWriter? _writer;
     private Process? _process;
     private Stream? _input;
     private CancellationTokenSource? _lifetime;
@@ -123,15 +123,7 @@ public sealed class LinuxPtyConnection : IRestartableTerminalConnection
             return;
         }
 
-        _writeLock.Wait();
-        try
-        {
-            WriteFrame(GetInput(), data);
-        }
-        finally
-        {
-            _writeLock.Release();
-        }
+        GetWriter().Post(CreateDataFrame(data));
     }
 
     public void Write(string text)
@@ -149,36 +141,16 @@ public sealed class LinuxPtyConnection : IRestartableTerminalConnection
             return;
         }
 
-        await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            var input = GetInput();
-            await WriteFrameAsync(input, data, cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            _writeLock.Release();
-        }
+        await GetWriter().Enqueue(CreateDataFrame(data.Span), cancellationToken).ConfigureAwait(false);
     }
 
     public void Resize(int columns, int rows)
     {
         columns = Math.Clamp(columns, 1, ushort.MaxValue);
         rows = Math.Clamp(rows, 1, ushort.MaxValue);
-        _writeLock.Wait();
-        try
-        {
-            var header = Encoding.ASCII.GetBytes($"R {columns} {rows}\n");
-            var input = GetInput();
-            input.Write(header);
-            input.Flush();
-            Columns = columns;
-            Rows = rows;
-        }
-        finally
-        {
-            _writeLock.Release();
-        }
+        GetWriter().Post(Encoding.ASCII.GetBytes($"R {columns} {rows}\n"));
+        Columns = columns;
+        Rows = rows;
     }
 
     public async ValueTask DisposeAsync()
@@ -239,6 +211,28 @@ public sealed class LinuxPtyConnection : IRestartableTerminalConnection
         _process = process;
         _input = process.StandardInput.BaseStream;
         _lifetime = lifetime;
+        var input = _input;
+        _writer = new OrderedInputWriter(
+            async (data, token) =>
+            {
+                await input.WriteAsync(data, token).ConfigureAwait(false);
+                await input.FlushAsync(token).ConfigureAwait(false);
+            },
+            error =>
+            {
+                Faulted?.Invoke(this, error);
+                lock (_stateLock)
+                {
+                    if (generation == _generation && !lifetime.IsCancellationRequested)
+                    {
+                        _requestedExitReason ??= TerminalExitReason.ConnectionFailure;
+                        lifetime.Cancel();
+                        KillIfRunning(process);
+                    }
+                }
+            },
+            lifetime.Token,
+            () => Cancel(generation));
         _lastOptions = options;
         _hasStarted = true;
         _exitPublished = false;
@@ -443,31 +437,46 @@ public sealed class LinuxPtyConnection : IRestartableTerminalConnection
         }
 
         _cancellationRegistration.Dispose();
-        await _writeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(1));
         try
         {
-            if (_input is not null)
+            if (_writer is { } writer)
             {
-                var close = Encoding.ASCII.GetBytes("C\n");
-                await _input.WriteAsync(close, cancellationToken).ConfigureAwait(false);
-                await _input.FlushAsync(cancellationToken).ConfigureAwait(false);
+                writer.Post("C\n"u8);
+                writer.Complete();
+                await writer.Completion.WaitAsync(deadline.Token).ConfigureAwait(false);
             }
+
+            await process.WaitForExitAsync(deadline.Token).ConfigureAwait(false);
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or OperationCanceledException)
         {
+            if (!process.HasExited)
+            {
+                Faulted?.Invoke(this, new IOException(
+                    "Terminal shutdown could not drain input; the PTY host will be terminated.", ex));
+                KillIfRunning(process);
+            }
         }
         finally
         {
-            _writeLock.Release();
+            _writer?.Complete();
+            if (_lifetime is not null)
+            {
+                await _lifetime.CancelAsync().ConfigureAwait(false);
+            }
         }
 
-        var completed = await Task.WhenAny(
-            process.WaitForExitAsync(cancellationToken),
-            Task.Delay(TimeSpan.FromSeconds(1), cancellationToken)).ConfigureAwait(false);
-        if (!process.HasExited && completed.IsCompleted)
+        if (!process.HasExited)
         {
             KillIfRunning(process);
-            await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        await process.WaitForExitAsync().ConfigureAwait(false);
+        if (_writer is not null)
+        {
+            await _writer.Completion.ConfigureAwait(false);
         }
 
         if (_readTask is not null)
@@ -502,6 +511,7 @@ public sealed class LinuxPtyConnection : IRestartableTerminalConnection
         {
             _process = null;
             _input = null;
+            _writer = null;
             _lifetime = null;
         }
 
@@ -533,12 +543,17 @@ public sealed class LinuxPtyConnection : IRestartableTerminalConnection
         }
     }
 
-    private Stream GetInput()
+    private OrderedInputWriter GetWriter()
     {
         lock (_stateLock)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            return _input ?? throw new InvalidOperationException(
+            if (State != TerminalConnectionState.Connected)
+            {
+                throw new InvalidOperationException("The Linux PTY connection is not accepting input.");
+            }
+
+            return _writer ?? throw new InvalidOperationException(
                 "The Linux PTY connection is not running.");
         }
 
@@ -573,23 +588,18 @@ public sealed class LinuxPtyConnection : IRestartableTerminalConnection
         }
     }
 
-    private static void WriteFrame(Stream input, ReadOnlySpan<byte> data)
+    private static byte[] CreateDataFrame(ReadOnlySpan<byte> data)
     {
-        var header = Encoding.ASCII.GetBytes($"D {data.Length}\n");
-        input.Write(header);
-        input.Write(data);
-        input.Flush();
-    }
+        if (data.Length > OrderedInputWriter.MaximumBytes - 32)
+        {
+            throw new IOException("Terminal input exceeds the 4 MiB queue limit.");
+        }
 
-    private static async Task WriteFrameAsync(
-        Stream input,
-        ReadOnlyMemory<byte> data,
-        CancellationToken cancellationToken)
-    {
         var header = Encoding.ASCII.GetBytes($"D {data.Length}\n");
-        await input.WriteAsync(header, cancellationToken).ConfigureAwait(false);
-        await input.WriteAsync(data, cancellationToken).ConfigureAwait(false);
-        await input.FlushAsync(cancellationToken).ConfigureAwait(false);
+        var frame = new byte[header.Length + data.Length];
+        header.CopyTo(frame, 0);
+        data.CopyTo(frame.AsSpan(header.Length));
+        return frame;
     }
 
     private static void ValidateOptions(

@@ -3,6 +3,7 @@
 #endif
 
 #include <errno.h>
+#include <fcntl.h>
 #include <poll.h>
 #if defined(__APPLE__)
 #include <util.h>
@@ -20,60 +21,13 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-static bool write_all(int fd, const void *buffer, size_t length) {
-    const uint8_t *bytes = buffer;
-    while (length > 0) {
-        ssize_t written = write(fd, bytes, length);
-        if (written < 0) {
-            if (errno == EINTR) continue;
-            return false;
-        }
-
-        bytes += written;
-        length -= (size_t)written;
-    }
-
-    return true;
+static bool nonblocking(int fd) {
+    int flags = fcntl(fd, F_GETFL);
+    return flags >= 0 && fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
 }
 
-static bool read_all(int fd, void *buffer, size_t length) {
-    uint8_t *bytes = buffer;
-    while (length > 0) {
-        ssize_t count = read(fd, bytes, length);
-        if (count == 0) return false;
-        if (count < 0) {
-            if (errno == EINTR) continue;
-            return false;
-        }
-
-        bytes += count;
-        length -= (size_t)count;
-    }
-
-    return true;
-}
-
-static bool read_header(char *buffer, size_t capacity) {
-    size_t length = 0;
-    while (length + 1 < capacity) {
-        char value;
-        ssize_t count = read(STDIN_FILENO, &value, 1);
-        if (count == 0) return false;
-        if (count < 0) {
-            if (errno == EINTR) continue;
-            return false;
-        }
-
-        if (value == '\n') {
-            buffer[length] = '\0';
-            return true;
-        }
-
-        buffer[length++] = value;
-    }
-
-    errno = EMSGSIZE;
-    return false;
+static bool retryable(void) {
+    return errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK;
 }
 
 static void resize_pty(int master, pid_t child, unsigned columns, unsigned rows) {
@@ -122,54 +76,125 @@ int main(int argc, char **argv) {
         _exit(127);
     }
 
+    signal(SIGPIPE, SIG_IGN);
+    if (!nonblocking(master) || !nonblocking(STDIN_FILENO) || !nonblocking(STDOUT_FILENO)) {
+        perror("nonblocking relay");
+        kill(-child, SIGKILL);
+        close(master);
+        waitpid(child, NULL, 0);
+        return 74;
+    }
+
     bool input_open = true;
     bool master_open = true;
-    uint8_t buffer[16384];
-    while (master_open) {
-        struct pollfd descriptors[2] = {
-            { .fd = master, .events = POLLIN },
-            { .fd = input_open ? STDIN_FILENO : -1, .events = POLLIN },
+    bool master_hungup = false;
+    uint8_t input[16384], output[16384];
+    size_t input_length = 0, input_offset = 0;
+    size_t output_length = 0, output_offset = 0;
+    size_t remaining = 0, header_length = 0;
+    char header[96];
+    bool failed = false;
+    while (master_open || output_length > 0) {
+        struct pollfd descriptors[3] = {
+            { .fd = master_open && (output_length == 0 || (input_length > 0 && !master_hungup)) ? master : -1,
+              .events = (output_length == 0 ? POLLIN : 0) | (input_length > 0 ? POLLOUT : 0) },
+            { .fd = input_open && input_length == 0 ? STDIN_FILENO : -1, .events = POLLIN },
+            { .fd = output_length > 0 ? STDOUT_FILENO : -1, .events = POLLOUT },
         };
-        int result = poll(descriptors, 2, -1);
+        int result = poll(descriptors, 3, -1);
         if (result < 0) {
             if (errno == EINTR) continue;
             perror("poll");
+            failed = true;
             break;
         }
 
-        if (descriptors[0].revents & (POLLIN | POLLHUP)) {
-            ssize_t count = read(master, buffer, sizeof(buffer));
+        if (descriptors[0].revents & (POLLHUP | POLLERR)) master_hungup = true;
+
+        if (output_length == 0 && descriptors[0].revents & (POLLIN | POLLHUP | POLLERR)) {
+            ssize_t count = read(master, output, sizeof(output));
             if (count > 0) {
-                if (!write_all(STDOUT_FILENO, buffer, (size_t)count)) break;
+                output_length = (size_t)count;
+                output_offset = 0;
             } else if (count == 0 || errno == EIO) {
                 master_open = false;
-            } else if (errno != EINTR) {
+            } else if (!retryable()) {
                 perror("read pty");
+                failed = true;
+                break;
+            }
+        }
+
+        if (descriptors[2].revents & (POLLOUT | POLLERR | POLLHUP)) {
+            ssize_t count = write(STDOUT_FILENO, output + output_offset, output_length);
+            if (count > 0) {
+                output_offset += (size_t)count;
+                output_length -= (size_t)count;
+            } else if (count == 0 || !retryable()) {
+                perror("write stdout");
+                failed = true;
+                break;
+            }
+        }
+
+        if (master_open && input_length > 0 && descriptors[0].revents & POLLOUT) {
+            ssize_t count = write(master, input + input_offset, input_length);
+            if (count > 0) {
+                input_offset += (size_t)count;
+                input_length -= (size_t)count;
+            } else if (count == 0 || !retryable()) {
+                perror("write pty");
+                failed = true;
                 break;
             }
         }
 
         if (input_open && descriptors[1].revents & (POLLIN | POLLHUP)) {
-            char header[96];
-            if (!read_header(header, sizeof(header))) {
+            size_t capacity = remaining > 0
+                ? (remaining < sizeof(input) ? remaining : sizeof(input)) : 1;
+            ssize_t count = read(STDIN_FILENO, input, capacity);
+            if (count == 0) {
                 input_open = false;
                 kill(-child, SIGHUP);
                 continue;
             }
 
-            if (header[0] == 'D' && header[1] == ' ') {
-                size_t length = (size_t)strtoull(header + 2, NULL, 10);
-                while (length > 0) {
-                    size_t chunk = length < sizeof(buffer) ? length : sizeof(buffer);
-                    if (!read_all(STDIN_FILENO, buffer, chunk) ||
-                        !write_all(master, buffer, chunk)) {
-                        input_open = false;
-                        kill(-child, SIGHUP);
-                        break;
-                    }
+            if (count < 0) {
+                if (retryable()) continue;
+                perror("read stdin");
+                failed = true;
+                break;
+            }
 
-                    length -= chunk;
+            if (remaining > 0) {
+                input_length = (size_t)count;
+                input_offset = 0;
+                remaining -= (size_t)count;
+                continue;
+            }
+
+            if (input[0] != '\n') {
+                if (header_length + 1 >= sizeof(header)) {
+                    fprintf(stderr, "input header too long\n");
+                    failed = true;
+                    break;
                 }
+                header[header_length++] = (char)input[0];
+                continue;
+            }
+
+            header[header_length] = '\0';
+            header_length = 0;
+            if (header[0] == 'D' && header[1] == ' ') {
+                char *end;
+                errno = 0;
+                unsigned long length = strtoul(header + 2, &end, 10);
+                if (errno != 0 || end == header + 2 || *end != '\0' || length > 4 * 1024 * 1024) {
+                    fprintf(stderr, "invalid input frame length\n");
+                    failed = true;
+                    break;
+                }
+                remaining = (size_t)length;
             } else if (header[0] == 'R' && header[1] == ' ') {
                 unsigned new_columns = 0;
                 unsigned new_rows = 0;
@@ -185,11 +210,13 @@ int main(int argc, char **argv) {
         }
     }
 
+    if (failed) kill(-child, SIGKILL);
     close(master);
     int status = 0;
     while (waitpid(child, &status, 0) < 0 && errno == EINTR) {
     }
 
+    if (failed) return 74;
     if (WIFEXITED(status)) return WEXITSTATUS(status);
     if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
     return 1;

@@ -232,7 +232,7 @@ public sealed class TermControlAccessibilityTests
             WarnAboutLargePaste = false,
         };
 
-        Assert.Equal(TerminalPasteResult.NoConnection, control.PasteText("one\ntwo", options));
+        Assert.Equal(TerminalPasteResult.Cancelled, control.PasteText("one\ntwo", options));
 
         control.PasteWarning += (_, args) => args.Allow = false;
         Assert.Equal(TerminalPasteResult.Cancelled, control.PasteText("one\ntwo", options));
