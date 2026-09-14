@@ -57,6 +57,7 @@ else
         -r "$rid" \
         --self-contained true \
         -o "$publish_dir" \
+        -p:VersionPrefix="$version" \
         -p:DebugSymbols=false \
         -p:DebugType=None \
         -p:NativeDebugSymbols=false \
