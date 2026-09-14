@@ -194,14 +194,14 @@ else {
     }
 }
 
-$msixPackages = Get-ExpectedPackages -Names @(
+$msixPackages = @(Get-ExpectedPackages -Names @(
     "Devolutions.Terminal_${Version}_x64.msix",
     "Devolutions.Terminal_${Version}_arm64.msix"
-)
-$msiPackages = Get-ExpectedPackages -Names @(
+))
+$msiPackages = @(Get-ExpectedPackages -Names @(
     "Devolutions.Terminal_${Version}_x64.msi",
     "Devolutions.Terminal_${Version}_arm64.msi"
-)
+))
 
 if ($msixPackages.Count -eq 0 -and $msiPackages.Count -eq 0) {
     throw "No release packages for version '$Version' were found in '$PackageDirectory'."
