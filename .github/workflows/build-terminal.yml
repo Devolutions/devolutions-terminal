@@ -686,11 +686,14 @@ jobs:
         shell: bash
         run: |
           mkdir -p artifacts/release
-          cp -f artifacts/msix-packages/* artifacts/release/
-          cp -f artifacts/msi-packages/* artifacts/release/
-          cp -f artifacts/linux-x64/* artifacts/release/
-          cp -f artifacts/linux-arm64/* artifacts/release/
-          cp -f artifacts/macos-packages/* artifacts/release/
+          for artifact_dir in \
+            artifacts/msix-packages \
+            artifacts/msi-packages \
+            artifacts/linux-x64 \
+            artifacts/linux-arm64 \
+            artifacts/macos-packages; do
+            find "${artifact_dir}" -maxdepth 1 -type f -exec cp -f {} artifacts/release/ \;
+          done
           ls -1 artifacts/release
 
       - name: Upload dry-run release assets
