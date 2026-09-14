@@ -12,6 +12,25 @@ on:
     paths-ignore:
       - ".github/workflows/build-ghostty.yml"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to create or update when publishing (vMAJOR.MINOR.PATCH).
+        required: false
+        type: string
+      dry_run:
+        description: Build and package only; upload release assets without signing or publishing.
+        required: false
+        default: false
+        type: boolean
+      github-env:
+        description: GitHub Environment for code-signing secrets.
+        required: false
+        default: auto
+        type: choice
+        options:
+          - auto
+          - test
+          - prod
 
 permissions:
   contents: read
@@ -21,6 +40,84 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  release-metadata:
+    name: Resolve release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.resolve.outputs.release_tag }}
+      release_version: ${{ steps.resolve.outputs.release_version }}
+      msix_version: ${{ steps.resolve.outputs.msix_version }}
+      dry_run: ${{ steps.resolve.outputs.dry_run }}
+      publish_environment: ${{ steps.resolve.outputs.publish_environment }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Resolve tag, versions, and signing environment
+        id: resolve
+        shell: bash
+        env:
+          REQUESTED_TAG: ${{ inputs.tag }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          REQUESTED_ENVIRONMENT: ${{ inputs['github-env'] }}
+        run: |
+          dry_run="$(tr '[:upper:]' '[:lower:]' <<< "${DRY_RUN:-false}")"
+          if [[ "${dry_run}" != "true" && "${dry_run}" != "false" ]]; then
+            echo "dry_run must be true or false." >&2
+            exit 1
+          fi
+
+          if [[ "${dry_run}" == "true" ]]; then
+            publish_environment="publish-dry-run"
+          else
+            requested_environment="$(tr '[:upper:]' '[:lower:]' <<< "${REQUESTED_ENVIRONMENT:-auto}")"
+            case "${requested_environment}" in
+              auto)
+                if [[ "${GITHUB_REF_TYPE}" == "tag" || "${GITHUB_REF_NAME}" == "master" ]]; then
+                  publish_environment="publish-prod"
+                else
+                  publish_environment="publish-test"
+                fi
+                ;;
+              test) publish_environment="publish-test" ;;
+              prod) publish_environment="publish-prod" ;;
+              *)
+                echo "Unsupported github-env value: ${requested_environment}. Expected auto, test, or prod." >&2
+                exit 1
+                ;;
+            esac
+          fi
+
+          tag="${REQUESTED_TAG}"
+          if [[ -z "${tag}" ]]; then
+            if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+              tag="${GITHUB_REF_NAME}"
+            else
+              version_prefix="$(sed -n 's|^[[:space:]]*<VersionPrefix>\([0-9][0-9.]*\)</VersionPrefix>|\1|p' Directory.Build.props)"
+              if [[ ! "${version_prefix}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+                echo "Directory.Build.props must contain a three-component numeric VersionPrefix." >&2
+                exit 1
+              fi
+              tag="v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${GITHUB_RUN_NUMBER}"
+            fi
+          fi
+
+          if [[ ! "${tag}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "Release tag must be vMAJOR.MINOR.PATCH; received '${tag}'." >&2
+            exit 1
+          fi
+
+          release_version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+          msix_version="${release_version}.${GITHUB_RUN_NUMBER}"
+
+          {
+            echo "release_tag=${tag}"
+            echo "release_version=${release_version}"
+            echo "msix_version=${msix_version}"
+            echo "dry_run=${dry_run}"
+            echo "publish_environment=${publish_environment}"
+          } >> "${GITHUB_OUTPUT}"
+
   build:
     name: Build and test
     runs-on: windows-latest
@@ -165,7 +262,9 @@ jobs:
   macos-native-aot:
     name: macOS NativeAOT osx-arm64
     runs-on: macos-14
-    needs: macos-managed
+    needs:
+      - macos-managed
+      - release-metadata
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -201,7 +300,10 @@ jobs:
         env:
           MACOS_PUBLISH_DIR: ${{ github.workspace }}/artifacts/publish/osx-arm64
           SOURCE_DATE_EPOCH: "1704067200"
-        run: bash scripts/Build-MacOsPackage.sh osx-arm64 "0.1.${{ github.run_number }}" artifacts/macos-packages
+        run: >
+          bash scripts/Build-MacOsPackage.sh osx-arm64
+          "${{ needs.release-metadata.outputs.release_version }}"
+          artifacts/macos-packages
 
       - name: Validate package without launching UI
         run: bash scripts/Test-MacOsPackage.sh osx-arm64 artifacts/macos-packages/*.zip
@@ -219,7 +321,9 @@ jobs:
   linux-packages:
     name: Linux packages ${{ matrix.rid }}
     runs-on: ubuntu-24.04
-    needs: linux-managed
+    needs:
+      - linux-managed
+      - release-metadata
     strategy:
       fail-fast: false
       matrix:
@@ -282,7 +386,7 @@ jobs:
           SOURCE_DATE_EPOCH: "1704067200"
         run: |
           bash scripts/Build-LinuxPackage.sh \
-            "${{ matrix.rid }}" "0.1.${{ github.run_number }}" \
+            "${{ matrix.rid }}" "${{ needs.release-metadata.outputs.release_version }}" \
             artifacts/linux-packages all
 
       - name: Validate packages without launching UI
@@ -301,7 +405,7 @@ jobs:
           SOURCE_DATE_EPOCH: "1704067200"
         run: |
           bash scripts/Build-LinuxPackage.sh \
-            "${{ matrix.rid }}" "0.1.${{ github.run_number }}" \
+            "${{ matrix.rid }}" "${{ needs.release-metadata.outputs.release_version }}" \
             artifacts/linux-packages-rebuilt all
           cmp artifacts/linux-packages/*-"${{ matrix.rid }}".sha256 \
             artifacts/linux-packages-rebuilt/*-"${{ matrix.rid }}".sha256
@@ -355,7 +459,9 @@ jobs:
 
   msix:
     name: Unsigned MSIX packages
-    needs: native-aot
+    needs:
+      - native-aot
+      - release-metadata
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -384,7 +490,7 @@ jobs:
           ./src/Devolutions.Terminal.Package/Scripts/Build-Packages.ps1
           -SkipPublish
           -OutputDirectory ./artifacts/msix
-          -Version "0.1.${{ github.run_number }}.0"
+          -Version "${{ needs.release-metadata.outputs.msix_version }}"
 
       - name: Validate package structure
         shell: pwsh
@@ -403,7 +509,9 @@ jobs:
 
   msi:
     name: MSI packages
-    needs: native-aot
+    needs:
+      - native-aot
+      - release-metadata
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -427,7 +535,7 @@ jobs:
           ./src/Devolutions.Terminal.Package/Scripts/Build-Msi.ps1
           -SkipPublish
           -OutputDirectory ./artifacts/msi
-          -Version "0.1.${{ github.run_number }}.0"
+          -Version "${{ needs.release-metadata.outputs.msix_version }}"
 
       - name: Upload unsigned MSI artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -449,12 +557,15 @@ jobs:
       - linux-arm64-hardware
       - msix
       - msi
+      - release-metadata
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    environment:
+      name: ${{ needs.release-metadata.outputs.publish_environment }}
     env:
-      RELEASE_VERSION: 0.1.${{ github.run_number }}
-      MSIX_VERSION: 0.1.${{ github.run_number }}.0
+      RELEASE_TAG: ${{ needs.release-metadata.outputs.release_tag }}
+      MSIX_VERSION: ${{ needs.release-metadata.outputs.msix_version }}
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -490,6 +601,7 @@ jobs:
           path: artifacts/macos-packages
 
       - name: Install Linux psign-tool
+        if: needs.release-metadata.outputs.dry_run != 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -519,6 +631,7 @@ jobs:
           & $toolPath --version
 
       - name: Sign Windows packages with Azure Artifact Signing
+        if: needs.release-metadata.outputs.dry_run != 'true'
         shell: pwsh
         env:
           ARTIFACT_SIGNING_ENDPOINT: ${{ secrets.ARTIFACT_SIGNING_ENDPOINT }}
@@ -580,16 +693,23 @@ jobs:
           cp -f artifacts/macos-packages/* artifacts/release/
           ls -1 artifacts/release
 
+      - name: Upload dry-run release assets
+        if: needs.release-metadata.outputs.dry_run == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: DevolutionsTerminal-${{ env.RELEASE_TAG }}-dry-run
+          path: artifacts/release
+          if-no-files-found: error
+
       - name: Publish release to GitHub Releases
+        if: needs.release-metadata.outputs.dry_run != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          gh release view "v${RELEASE_VERSION}" >/dev/null 2>&1 || \
-            gh release create "v${RELEASE_VERSION}" \
-              --title "Devolutions Terminal ${RELEASE_VERSION}" \
+          gh release view "${RELEASE_TAG}" >/dev/null 2>&1 || \
+            gh release create "${RELEASE_TAG}" \
+              --title "Devolutions Terminal ${RELEASE_TAG#v}" \
               --generate-notes \
               --target "${{ github.sha }}"
-          gh release upload "v${RELEASE_VERSION}" artifacts/release/* --clobber
-
-
+          gh release upload "${RELEASE_TAG}" artifacts/release/* --clobber
