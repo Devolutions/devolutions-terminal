@@ -31,15 +31,15 @@ The native executable is written to
 macOS NativeAOT app bundles (Darwin only):
 
 ```bash
-scripts/Build-MacOsPackage.sh osx-arm64 0.1.0 artifacts/packages
+scripts/Build-MacOsPackage.sh osx-arm64 2026.3.0 artifacts/packages
 bash scripts/Test-MacOsPackage.sh osx-arm64 artifacts/packages/*.zip
 ```
 
 Linux x64 and ARM64 NativeAOT packages are built on Linux with:
 
 ```bash
-scripts/Build-LinuxPackage.sh linux-x64 0.1.0 artifacts/packages all
-scripts/Build-LinuxPackage.sh linux-arm64 0.1.0 artifacts/packages all
+scripts/Build-LinuxPackage.sh linux-x64 2026.3.0 artifacts/packages all
+scripts/Build-LinuxPackage.sh linux-arm64 2026.3.0 artifacts/packages all
 bash scripts/Test-LinuxPackage.sh linux-x64 artifacts/packages/*-linux-x64.*
 ```
 

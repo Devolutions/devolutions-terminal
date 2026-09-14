@@ -1,4 +1,25 @@
-# Devolutions Terminal MSIX packaging
+# Devolutions Terminal packaging
+
+The packaging area produces both an MSIX package and a per-machine MSI. The
+MSI is the replacement distribution path for the former `wt-distro` installer:
+it installs the NativeAOT host and `dt.exe` under
+`C:\Program Files\Devolutions\Terminal`, creates a
+Devolutions Terminal Start Menu shortcut, and registers `dt.exe` through
+Windows App Paths. It does not install `wt.exe` or claim Windows Terminal
+drop-in compatibility.
+
+Build the NuGet distribution, which contains the same self-contained Windows
+payloads used by the MSI:
+
+```powershell
+.\src\Devolutions.Terminal.Package\Scripts\Build-NuGet.ps1
+```
+
+Build the MSI:
+
+```powershell
+.\src\Devolutions.Terminal.Package\Scripts\Build-Msi.ps1
+```
 
 This project owns the development package identity and the scripts that turn the
 `win-x64` and `win-arm64` NativeAOT publishes into per-architecture MSIX packages.
@@ -63,7 +84,7 @@ $password = Read-Host "Certificate password" -AsSecureString
   -PackageDirectory .\artifacts\msix\packages `
   -CertificatePath .\artifacts\msix\certificates\Devolutions.Terminal.pfx `
   -Password $password `
-  -Version 0.1.0.0
+  -Version 2026.3.0.0
 ```
 
 Trust only the exported public certificate from an **elevated Administrator**
@@ -77,7 +98,7 @@ terminal:
 Install, launch, validate, and uninstall:
 
 ```powershell
-$package = ".\artifacts\msix\packages\Devolutions.Terminal_0.1.0.0_x64.msix"
+$package = ".\artifacts\msix\packages\Devolutions.Terminal_2026.3.0.0_x64.msix"
 .\src\Devolutions.Terminal.Package\Scripts\Test-Packages.ps1 -PackagePath $package -RequireSignature
 .\src\Devolutions.Terminal.Package\Scripts\Install-Package.ps1 -PackagePath $package -Launch
 dt.exe

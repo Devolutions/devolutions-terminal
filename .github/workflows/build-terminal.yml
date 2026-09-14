@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Release version to build/publish (for example 0.1.0).
+        description: Release version to build/publish (for example 2026.3.0).
         required: true
         type: string
       tag:
@@ -100,7 +100,7 @@ jobs:
           $tag = $env:REQUESTED_TAG
           if (-not [string]::IsNullOrWhiteSpace($requestedVersion)) {
             if ($requestedVersion -notmatch '^(\d+)\.(\d+)\.(\d+)$') {
-              throw "Release version must be MAJOR.MINOR.PATCH; received '$($env:REQUESTED_VERSION)'."
+              throw "Release version must use YYYY.MAJOR.PATCH; received '$($env:REQUESTED_VERSION)'."
             }
             $releaseVersion = $requestedVersion
             $expectedTag = "v$releaseVersion"
@@ -112,7 +112,7 @@ jobs:
           elseif ($env:GITHUB_REF_TYPE -eq "tag") {
             $tag = $env:GITHUB_REF_NAME
             if ($tag -notmatch '^v(\d+)\.(\d+)\.(\d+)$') {
-              throw "Release tag must be vMAJOR.MINOR.PATCH; received '$tag'."
+              throw "Release tag must be vYYYY.MAJOR.PATCH; received '$tag'."
             }
             $releaseVersion = "$($Matches[1]).$($Matches[2]).$($Matches[3])"
           }

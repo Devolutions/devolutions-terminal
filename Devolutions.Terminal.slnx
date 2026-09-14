@@ -11,6 +11,7 @@
     <Project Path="src/Devolutions.Terminal.App/Devolutions.Terminal.App.csproj" />
     <Project Path="src/Devolutions.Terminal.Interop/Devolutions.Terminal.Interop.csproj" />
     <Project Path="src/Devolutions.Terminal.Package/Devolutions.Terminal.Package.csproj" />
+    <Project Path="src/Devolutions.Terminal.Distribution/Devolutions.Terminal.Distribution.csproj" />
     <Project Path="src/Devolutions.Terminal.Settings.Editor/Devolutions.Terminal.Settings.Editor.csproj" />
     <Project Path="src/Devolutions.Terminal/Devolutions.Terminal.csproj" />
   </Folder>

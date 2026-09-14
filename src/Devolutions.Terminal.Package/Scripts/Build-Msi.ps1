@@ -3,8 +3,8 @@ param(
     [ValidateSet("x64", "arm64")]
     [string[]] $Architectures = @("x64", "arm64"),
 
-    [ValidatePattern("^\d{1,5}\.\d{1,5}\.\d{1,5}\.\d{1,5}$")]
-    [string] $Version = "0.1.0.0",
+    [ValidatePattern("^\d{1,5}\.\d{1,5}\.\d{1,5}(\.\d{1,5})?$")]
+    [string] $Version = "2026.3.0",
 
     [ValidateSet("Debug", "Release")]
     [string] $Configuration = "Release",
@@ -27,6 +27,9 @@ if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
 }
 
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
+$versionParts = $Version.Split('.')
+$publicVersion = ($versionParts[0..2] -join '.')
+$msiVersion = "{0}.{1}.{2}.0" -f ([int]$versionParts[0] % 100), $versionParts[1], $versionParts[2]
 $layoutRoot = Join-Path $OutputDirectory "layout"
 $packageOutput = Join-Path $OutputDirectory "packages"
 New-Item -ItemType Directory -Force -Path $layoutRoot, $packageOutput | Out-Null
@@ -61,7 +64,7 @@ foreach ($architecture in $Architectures) {
             "-c", $Configuration,
             "-r", $runtimeIdentifier,
             "--self-contained",
-            "-p:VersionPrefix=$Version",
+            "-p:VersionPrefix=$publicVersion",
             "-o", $layout
         )
     }
@@ -84,7 +87,7 @@ foreach ($architecture in $Architectures) {
         $installerProject,
         "-c", $Configuration,
         "-p:Platform=$platform",
-        "-p:ProductVersion=$Version",
+        "-p:ProductVersion=$msiVersion",
         "-p:OutputPath=$buildDirectory\\",
         "-p:OutputName=Devolutions.Terminal_${Version}_${architecture}"
     )
