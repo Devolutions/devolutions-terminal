@@ -213,18 +213,44 @@ release runner with Devolutions `psign-tool` and Azure Artifact Signing
 packages are uploaded alongside Linux and macOS archives. The workflow is
 intended for tag-based releases and for manual dispatch.
 
-Required secrets:
+Manual dispatch provides these inputs:
 
-- `ARTIFACT_SIGNING_ENDPOINT`
-- `ARTIFACT_SIGNING_ACCOUNT_NAME`
-- `ARTIFACT_SIGNING_PROFILE_NAME`
+- `tag` — optional release tag in `vMAJOR.MINOR.PATCH` form. If omitted, the
+  workflow generates `v<VersionPrefix-major>.<VersionPrefix-minor>.<run-number>`.
+- `dry_run` — build, package, and validate artifacts without creating or
+  updating a GitHub Release. The combined release assets are uploaded as a
+  workflow artifact.
+- `sign_dry_run` — with `dry_run`, sign Windows packages using the selected
+  signing environment when all signing secrets are available. This validates
+  the real `psign-tool` and Azure Artifact Signing path without publishing.
+  Without this option, dry-run assets remain unsigned.
+- `github-env` — selects the GitHub Environment containing signing credentials:
+  `test`, `prod`, or `auto`. `auto` selects `publish-prod` for `master` and tag
+  runs, and `publish-test` for other branches. Dry runs always use the
+  credential-free `publish-dry-run` environment unless `sign_dry_run` is set.
+
+Create `publish-dry-run`, `publish-test`, and `publish-prod` GitHub
+Environments before use and store the signing secrets only in the test and
+production environments. Signing uses GitHub Actions OIDC and Azure Login;
+configure the Azure application trust relationship for the repository and
+environment. Environment protection rules can require approval before a
+non-dry-run release reaches signing and publication. Pushed release tags must
+use the `vMAJOR.MINOR.PATCH` form. The workflow derives a unique
+four-component MSIX/MSI version by appending the GitHub run number to the
+release version.
+
+Required environment secrets:
+
+- `AZURE_CLIENT_ID`
 - `AZURE_TENANT_ID`
-- `CODE_SIGNING_CLIENT_ID`
-- `CODE_SIGNING_CLIENT_SECRET`
+- `AZURE_SUBSCRIPTION_ID`
+- `TRUSTED_SIGNING_ENDPOINT`
+- `TRUSTED_SIGNING_ACCOUNT_NAME`
+- `TRUSTED_SIGNING_PROFILE_NAME`
 
-Optional repository variable:
+Optional environment or repository variable:
 
-- `CODE_SIGNING_TIMESTAMP_SERVER` (defaults to `http://timestamp.acs.microsoft.com/`)
+- `TRUSTED_SIGNING_TIMESTAMP_SERVER` (defaults to `http://timestamp.acs.microsoft.com/`)
 
 `psign-tool` portable Artifact Signing signs the per-architecture `.msix` and
 `.msi` files. The MSIX `Publisher` identity in `Package.appxmanifest` must
@@ -313,6 +339,7 @@ match the Artifact Signing certificate subject.
 ## Versioning
 
 Assembly versions derive from `VersionPrefix` in `Directory.Build.props`.
-Package versions use four numeric components. CI uses
-`0.1.<run-number>.0`; release automation must set the final package version
-explicitly and must never reuse a published MSIX version.
+Package versions use four numeric components. Release automation derives the
+three-component package version from the validated release tag and appends the
+GitHub run number for its unique fourth component; it must never reuse a
+published MSIX version.

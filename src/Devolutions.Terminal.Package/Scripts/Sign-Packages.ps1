@@ -1,4 +1,4 @@
-[CmdletBinding(DefaultParameterSetName = "ArtifactSigning")]
+[CmdletBinding(DefaultParameterSetName = "ArtifactSigningClientSecret")]
 param(
     [Parameter(Mandatory)]
     [ValidateScript({ Test-Path -LiteralPath $_ -PathType Container })]
@@ -15,25 +15,32 @@ param(
     [Parameter(ParameterSetName = "Certificate")]
     [securestring] $Password,
 
-    [Parameter(ParameterSetName = "ArtifactSigning", Mandatory)]
+    [Parameter(ParameterSetName = "ArtifactSigningClientSecret", Mandatory)]
+    [Parameter(ParameterSetName = "ArtifactSigningAccessToken", Mandatory)]
     [string] $ArtifactSigningEndpoint,
 
-    [Parameter(ParameterSetName = "ArtifactSigning", Mandatory)]
+    [Parameter(ParameterSetName = "ArtifactSigningClientSecret", Mandatory)]
+    [Parameter(ParameterSetName = "ArtifactSigningAccessToken", Mandatory)]
     [string] $ArtifactSigningAccountName,
 
-    [Parameter(ParameterSetName = "ArtifactSigning", Mandatory)]
+    [Parameter(ParameterSetName = "ArtifactSigningClientSecret", Mandatory)]
+    [Parameter(ParameterSetName = "ArtifactSigningAccessToken", Mandatory)]
     [string] $ArtifactSigningProfileName,
 
-    [Parameter(ParameterSetName = "ArtifactSigning", Mandatory)]
+    [Parameter(ParameterSetName = "ArtifactSigningClientSecret", Mandatory)]
     [string] $AzureTenantId,
 
-    [Parameter(ParameterSetName = "ArtifactSigning", Mandatory)]
+    [Parameter(ParameterSetName = "ArtifactSigningClientSecret", Mandatory)]
     [string] $ClientId,
 
-    [Parameter(ParameterSetName = "ArtifactSigning", Mandatory)]
+    [Parameter(ParameterSetName = "ArtifactSigningClientSecret", Mandatory)]
     [string] $ClientSecret,
 
-    [Parameter(ParameterSetName = "ArtifactSigning")]
+    [Parameter(ParameterSetName = "ArtifactSigningAccessToken", Mandatory)]
+    [string] $ArtifactSigningAccessToken,
+
+    [Parameter(ParameterSetName = "ArtifactSigningClientSecret")]
+    [Parameter(ParameterSetName = "ArtifactSigningAccessToken")]
     [string] $TimestampServer = "http://timestamp.acs.microsoft.com/",
 
     [string] $PsignTool
@@ -43,7 +50,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $PackageDirectory = [IO.Path]::GetFullPath($PackageDirectory)
-$useArtifactSigning = $PSCmdlet.ParameterSetName -eq "ArtifactSigning"
+$useArtifactSigning = $PSCmdlet.ParameterSetName -in @("ArtifactSigningClientSecret", "ArtifactSigningAccessToken")
 
 function Get-ExpectedPackages {
     param(
@@ -85,7 +92,8 @@ function Resolve-PsignTool {
 function Invoke-PsignArtifactSign {
     param(
         [string] $ToolPath,
-        [string[]] $Files
+        [string[]] $Files,
+        [string] $AccessToken
     )
 
     $Files = @($Files | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) })
@@ -96,23 +104,43 @@ function Invoke-PsignArtifactSign {
     $metadataPath = Join-Path ([IO.Path]::GetTempPath()) ("artifact-signing-" + [guid]::NewGuid().ToString("N") + ".json")
     $fileListPath = Join-Path ([IO.Path]::GetTempPath()) ("psign-files-" + [guid]::NewGuid().ToString("N") + ".txt")
     try {
-        $metadata = [ordered]@{
-            Endpoint = $ArtifactSigningEndpoint
-            CodeSigningAccountName = $ArtifactSigningAccountName
-            CertificateProfileName = $ArtifactSigningProfileName
-        }
-        $metadata | ConvertTo-Json -Compress | Set-Content -LiteralPath $metadataPath -Encoding utf8
         Set-Content -LiteralPath $fileListPath -Value $Files -Encoding utf8
 
-        & $ToolPath --mode portable --verbose sign `
-            --dmdf $metadataPath `
-            --artifact-signing-tenant-id $AzureTenantId `
-            --artifact-signing-client-id $ClientId `
-            --artifact-signing-client-secret $ClientSecret `
-            --timestamp-url $TimestampServer `
-            --timestamp-digest sha256 `
-            --digest sha256 `
-            --input-file-list $fileListPath
+        $arguments = @(
+            "--mode", "portable", "--verbose", "sign"
+        )
+
+        if ([string]::IsNullOrWhiteSpace($AccessToken)) {
+            $metadata = [ordered]@{
+                Endpoint = $ArtifactSigningEndpoint
+                CodeSigningAccountName = $ArtifactSigningAccountName
+                CertificateProfileName = $ArtifactSigningProfileName
+            }
+            $metadata | ConvertTo-Json -Compress | Set-Content -LiteralPath $metadataPath -Encoding utf8
+            $arguments += @(
+                "--dmdf", $metadataPath,
+                "--artifact-signing-tenant-id", $AzureTenantId,
+                "--artifact-signing-client-id", $ClientId,
+                "--artifact-signing-client-secret", $ClientSecret
+            )
+        }
+        else {
+            $arguments += @(
+                "--artifact-signing-endpoint", $ArtifactSigningEndpoint,
+                "--artifact-signing-account-name", $ArtifactSigningAccountName,
+                "--artifact-signing-profile-name", $ArtifactSigningProfileName,
+                "--artifact-signing-access-token", $AccessToken
+            )
+        }
+
+        $arguments += @(
+            "--timestamp-url", $TimestampServer,
+            "--timestamp-digest", "sha256",
+            "--digest", "sha256",
+            "--input-file-list", $fileListPath
+        )
+
+        & $ToolPath @arguments
         if ($LASTEXITCODE -ne 0) {
             throw "psign-tool Artifact Signing failed with exit code $LASTEXITCODE."
         }
@@ -166,14 +194,14 @@ else {
     }
 }
 
-$msixPackages = Get-ExpectedPackages -Names @(
+$msixPackages = @(Get-ExpectedPackages -Names @(
     "Devolutions.Terminal_${Version}_x64.msix",
     "Devolutions.Terminal_${Version}_arm64.msix"
-)
-$msiPackages = Get-ExpectedPackages -Names @(
+))
+$msiPackages = @(Get-ExpectedPackages -Names @(
     "Devolutions.Terminal_${Version}_x64.msi",
     "Devolutions.Terminal_${Version}_arm64.msi"
-)
+))
 
 if ($msixPackages.Count -eq 0 -and $msiPackages.Count -eq 0) {
     throw "No release packages for version '$Version' were found in '$PackageDirectory'."
@@ -191,7 +219,7 @@ try {
             $filesToSign += @($msiPackages.FullName)
         }
 
-        Invoke-PsignArtifactSign -ToolPath $PsignTool -Files $filesToSign
+        Invoke-PsignArtifactSign -ToolPath $PsignTool -Files $filesToSign -AccessToken $ArtifactSigningAccessToken
         return
     }
 
