@@ -65,7 +65,7 @@ jobs:
 
       - name: Resolve tag, versions, and signing environment
         id: resolve
-        shell: bash
+        shell: pwsh
         env:
           REQUESTED_VERSION: ${{ inputs.version }}
           REQUESTED_TAG: ${{ inputs.tag }}
@@ -73,80 +73,67 @@ jobs:
           SIGN_DRY_RUN: ${{ inputs.sign_dry_run }}
           REQUESTED_ENVIRONMENT: ${{ inputs['github-env'] }}
         run: |
-          dry_run="$(tr '[:upper:]' '[:lower:]' <<< "${DRY_RUN:-false}")"
-          if [[ "${dry_run}" != "true" && "${dry_run}" != "false" ]]; then
-            echo "dry_run must be true or false." >&2
-            exit 1
-          fi
+          $dryRun = if ([string]::IsNullOrWhiteSpace($env:DRY_RUN)) { "false" } else { $env:DRY_RUN.ToLowerInvariant() }
+          if ($dryRun -notin @("true", "false")) {
+            throw "dry_run must be true or false."
+          }
 
-          sign_dry_run="$(tr '[:upper:]' '[:lower:]' <<< "${SIGN_DRY_RUN:-false}")"
-          if [[ "${sign_dry_run}" != "true" && "${sign_dry_run}" != "false" ]]; then
-            echo "sign_dry_run must be true or false." >&2
-            exit 1
-          fi
+          $signDryRun = if ([string]::IsNullOrWhiteSpace($env:SIGN_DRY_RUN)) { "false" } else { $env:SIGN_DRY_RUN.ToLowerInvariant() }
+          if ($signDryRun -notin @("true", "false")) {
+            throw "sign_dry_run must be true or false."
+          }
 
-          if [[ "${dry_run}" == "true" && "${sign_dry_run}" != "true" ]]; then
-            publish_environment="publish-dry-run"
-          else
-            requested_environment="$(tr '[:upper:]' '[:lower:]' <<< "${REQUESTED_ENVIRONMENT:-auto}")"
-            case "${requested_environment}" in
-              auto)
-                if [[ "${GITHUB_REF_TYPE}" == "tag" || "${GITHUB_REF_NAME}" == "master" ]]; then
-                  publish_environment="publish-prod"
-                else
-                  publish_environment="publish-test"
-                fi
-                ;;
-              test) publish_environment="publish-test" ;;
-              prod) publish_environment="publish-prod" ;;
-              *)
-                echo "Unsupported github-env value: ${requested_environment}. Expected auto, test, or prod." >&2
-                exit 1
-                ;;
-            esac
-          fi
+          if ($dryRun -eq "true" -and $signDryRun -ne "true") {
+            $publishEnvironment = "publish-dry-run"
+          }
+          else {
+            $requestedEnvironment = if ([string]::IsNullOrWhiteSpace($env:REQUESTED_ENVIRONMENT)) { "auto" } else { $env:REQUESTED_ENVIRONMENT.ToLowerInvariant() }
+            $publishEnvironment = switch ($requestedEnvironment) {
+              "auto" { if ($env:GITHUB_REF_TYPE -eq "tag" -or $env:GITHUB_REF_NAME -eq "master") { "publish-prod" } else { "publish-test" } }
+              "test" { "publish-test" }
+              "prod" { "publish-prod" }
+              default { throw "Unsupported github-env value: $requestedEnvironment. Expected auto, test, or prod." }
+            }
+          }
 
-          requested_version="${REQUESTED_VERSION#v}"
-          tag="${REQUESTED_TAG}"
-          if [[ -n "${requested_version}" ]]; then
-            if [[ ! "${requested_version}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-              echo "Release version must be MAJOR.MINOR.PATCH; received '${REQUESTED_VERSION}'." >&2
-              exit 1
-            fi
-            release_version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
-            expected_tag="v${release_version}"
-            if [[ -n "${tag}" && "${tag}" != "${expected_tag}" ]]; then
-              echo "Version '${release_version}' does not match tag '${tag}'." >&2
-              exit 1
-            fi
-            tag="${expected_tag}"
-          elif [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            tag="${GITHUB_REF_NAME}"
-            if [[ ! "${tag}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-              echo "Release tag must be vMAJOR.MINOR.PATCH; received '${tag}'." >&2
-              exit 1
-            fi
-            release_version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
-          else
-            version_prefix="$(sed -n 's|^[[:space:]]*<VersionPrefix>\([0-9][0-9.]*\)</VersionPrefix>|\1|p' Directory.Build.props)"
-            if [[ ! "${version_prefix}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-              echo "Directory.Build.props must contain a three-component numeric VersionPrefix." >&2
-              exit 1
-            fi
-            release_version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
-            tag="v${release_version}.${GITHUB_RUN_NUMBER}"
-          fi
+          $requestedVersion = if ($null -eq $env:REQUESTED_VERSION) { "" } else { $env:REQUESTED_VERSION.TrimStart("v") }
+          $tag = $env:REQUESTED_TAG
+          if (-not [string]::IsNullOrWhiteSpace($requestedVersion)) {
+            if ($requestedVersion -notmatch '^(\d+)\.(\d+)\.(\d+)$') {
+              throw "Release version must be MAJOR.MINOR.PATCH; received '$($env:REQUESTED_VERSION)'."
+            }
+            $releaseVersion = $requestedVersion
+            $expectedTag = "v$releaseVersion"
+            if (-not [string]::IsNullOrWhiteSpace($tag) -and $tag -ne $expectedTag) {
+              throw "Version '$releaseVersion' does not match tag '$tag'."
+            }
+            $tag = $expectedTag
+          }
+          elseif ($env:GITHUB_REF_TYPE -eq "tag") {
+            $tag = $env:GITHUB_REF_NAME
+            if ($tag -notmatch '^v(\d+)\.(\d+)\.(\d+)$') {
+              throw "Release tag must be vMAJOR.MINOR.PATCH; received '$tag'."
+            }
+            $releaseVersion = "$($Matches[1]).$($Matches[2]).$($Matches[3])"
+          }
+          else {
+            [xml]$props = Get-Content -LiteralPath "Directory.Build.props"
+            $releaseVersion = $props.Project.PropertyGroup.VersionPrefix
+            if ($releaseVersion -notmatch '^\d+\.\d+\.\d+$') {
+              throw "Directory.Build.props must contain a three-component numeric VersionPrefix."
+            }
+            $tag = "v$releaseVersion.$env:GITHUB_RUN_NUMBER"
+          }
 
-          msix_version="${release_version}.${GITHUB_RUN_NUMBER}"
-
-          {
-            echo "release_tag=${tag}"
-            echo "release_version=${release_version}"
-            echo "msix_version=${msix_version}"
-            echo "dry_run=${dry_run}"
-            echo "sign_dry_run=${sign_dry_run}"
-            echo "publish_environment=${publish_environment}"
-          } >> "${GITHUB_OUTPUT}"
+          $msixVersion = "$releaseVersion.$env:GITHUB_RUN_NUMBER"
+          @(
+            "release_tag=$tag"
+            "release_version=$releaseVersion"
+            "msix_version=$msixVersion"
+            "dry_run=$dryRun"
+            "sign_dry_run=$signDryRun"
+            "publish_environment=$publishEnvironment"
+          ) | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
   build:
     name: Build and test
@@ -395,26 +382,36 @@ jobs:
       - name: Fetch pinned AppImage runtime
         env:
           GH_TOKEN: ${{ github.token }}
+        shell: pwsh
         run: |
-          mkdir -p artifacts/tools
-          gh release download 20251108 --repo AppImage/type2-runtime \
-            --pattern "runtime-${{ matrix.appimage_arch }}" \
+          New-Item -ItemType Directory -Force -Path artifacts/tools | Out-Null
+          gh release download 20251108 --repo AppImage/type2-runtime `
+            --pattern "runtime-${{ matrix.appimage_arch }}" `
             --dir artifacts/tools
-          echo "${{ matrix.runtime_sha256 }}  artifacts/tools/runtime-${{ matrix.appimage_arch }}" |
-            sha256sum --check
+          $runtime = "artifacts/tools/runtime-${{ matrix.appimage_arch }}"
+          $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $runtime).Hash.ToLowerInvariant()
+          if ($actualHash -ne "${{ matrix.runtime_sha256 }}") {
+            throw "Runtime hash mismatch: expected ${{ matrix.runtime_sha256 }}, got $actualHash."
+          }
 
       - name: NativeAOT publish
-        shell: bash
+        shell: pwsh
         run: |
-          extra=()
-          if [[ "${{ matrix.rid }}" == linux-arm64 ]]; then
-            extra+=("-p:ObjCopyName=aarch64-linux-gnu-objcopy")
-          fi
-          dotnet publish src/Devolutions.Terminal/Devolutions.Terminal.csproj \
-            -c Release -r "${{ matrix.rid }}" --self-contained true \
-            -p:VersionPrefix="${{ needs.release-metadata.outputs.release_version }}" \
-            -p:DebugSymbols=false -p:DebugType=None -p:NativeDebugSymbols=false \
-            -o "artifacts/publish/${{ matrix.rid }}" "${extra[@]}"
+          $publishArgs = @(
+            "src/Devolutions.Terminal/Devolutions.Terminal.csproj",
+            "-c", "Release",
+            "-r", "${{ matrix.rid }}",
+            "--self-contained", "true",
+            "-p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}",
+            "-p:DebugSymbols=false",
+            "-p:DebugType=None",
+            "-p:NativeDebugSymbols=false",
+            "-o", "artifacts/publish/${{ matrix.rid }}"
+          )
+          if ("${{ matrix.rid }}" -eq "linux-arm64") {
+            $publishArgs += "-p:ObjCopyName=aarch64-linux-gnu-objcopy"
+          }
+          dotnet publish @publishArgs
 
       - name: Build deterministic tar, DEB, RPM, and AppImage
         env:
@@ -463,15 +460,13 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Verify native ARM64 runner
-        shell: bash
+        shell: pwsh
         run: |
-          case "$(uname -m)" in
-            aarch64|arm64) ;;
-            *)
-              echo "::error::linux-arm64-hardware requires native ARM64; uname -m returned '$(uname -m)'. QEMU is not an accepted fallback."
-              exit 78
-              ;;
-          esac
+          $machine = uname -m
+          if ($machine -notin @("aarch64", "arm64")) {
+            Write-Error "::error::linux-arm64-hardware requires native ARM64; uname -m returned '$machine'. QEMU is not an accepted fallback."
+            exit 78
+          }
 
       - name: Set up .NET
         uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
@@ -758,18 +753,20 @@ jobs:
             -TimestampServer $timestampServer
 
       - name: Stage release assets
-        shell: bash
+        shell: pwsh
         run: |
-          mkdir -p artifacts/release
-          for artifact_dir in \
-            artifacts/msix-packages \
-            artifacts/msi-packages \
-            artifacts/linux-x64 \
-            artifacts/linux-arm64 \
-            artifacts/macos-packages; do
-            find "${artifact_dir}" -maxdepth 1 -type f -exec cp -f {} artifacts/release/ \;
-          done
-          ls -1 artifacts/release
+          New-Item -ItemType Directory -Force -Path artifacts/release | Out-Null
+          $artifactDirectories = @(
+            "artifacts/msix-packages",
+            "artifacts/msi-packages",
+            "artifacts/linux-x64",
+            "artifacts/linux-arm64",
+            "artifacts/macos-packages"
+          )
+          foreach ($directory in $artifactDirectories) {
+            Get-ChildItem -LiteralPath $directory -File | Copy-Item -Destination artifacts/release -Force
+          }
+          Get-ChildItem -LiteralPath artifacts/release -File | Select-Object -ExpandProperty Name
 
       - name: Upload dry-run release assets
         if: needs.release-metadata.outputs.dry_run == 'true'
@@ -783,11 +780,20 @@ jobs:
         if: needs.release-metadata.outputs.dry_run != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        shell: bash
+        shell: pwsh
         run: |
-          gh release view "${RELEASE_TAG}" >/dev/null 2>&1 || \
-            gh release create "${RELEASE_TAG}" \
-              --title "Devolutions Terminal ${RELEASE_TAG#v}" \
-              --generate-notes \
+          gh release view $env:RELEASE_TAG *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $env:RELEASE_TAG `
+              --title "Devolutions Terminal $($env:RELEASE_TAG.TrimStart('v'))" `
+              --generate-notes `
               --target "${{ github.sha }}"
-          gh release upload "${RELEASE_TAG}" artifacts/release/* --clobber
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to create GitHub release $env:RELEASE_TAG."
+            }
+          }
+          $assets = Get-ChildItem -LiteralPath artifacts/release -File | ForEach-Object FullName
+          gh release upload $env:RELEASE_TAG @assets --clobber
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to upload release assets."
+          }
