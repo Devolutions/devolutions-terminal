@@ -215,6 +215,8 @@ intended for tag-based releases and for manual dispatch.
 
 Manual dispatch provides these inputs:
 
+- `version` — required three-component release version, such as `0.1.0`. This
+  value is injected into the .NET build metadata and all platform packages.
 - `tag` — optional release tag in `vMAJOR.MINOR.PATCH` form. If omitted, the
   workflow generates `v<VersionPrefix-major>.<VersionPrefix-minor>.<run-number>`.
 - `dry_run` — build, package, and validate artifacts without creating or
@@ -235,7 +237,8 @@ production environments. Signing uses GitHub Actions OIDC and Azure Login;
 configure the Azure application trust relationship for the repository and
 environment. Environment protection rules can require approval before a
 non-dry-run release reaches signing and publication. Pushed release tags must
-use the `vMAJOR.MINOR.PATCH` form. The workflow derives a unique
+use the `vMAJOR.MINOR.PATCH` form. A manual `version` input generates the
+corresponding tag and must agree with an explicitly supplied `tag`. The workflow derives a unique
 four-component MSIX/MSI version by appending the GitHub run number to the
 release version.
 

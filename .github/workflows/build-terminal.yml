@@ -13,6 +13,10 @@ on:
       - ".github/workflows/build-ghostty.yml"
   workflow_dispatch:
     inputs:
+      version:
+        description: Release version to build/publish (for example 0.1.0).
+        required: true
+        type: string
       tag:
         description: Release tag to create or update when publishing (vMAJOR.MINOR.PATCH).
         required: false
@@ -63,6 +67,7 @@ jobs:
         id: resolve
         shell: bash
         env:
+          REQUESTED_VERSION: ${{ inputs.version }}
           REQUESTED_TAG: ${{ inputs.tag }}
           DRY_RUN: ${{ inputs.dry_run }}
           SIGN_DRY_RUN: ${{ inputs.sign_dry_run }}
@@ -101,26 +106,37 @@ jobs:
             esac
           fi
 
+          requested_version="${REQUESTED_VERSION#v}"
           tag="${REQUESTED_TAG}"
-          if [[ -z "${tag}" ]]; then
-            if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-              tag="${GITHUB_REF_NAME}"
-            else
-              version_prefix="$(sed -n 's|^[[:space:]]*<VersionPrefix>\([0-9][0-9.]*\)</VersionPrefix>|\1|p' Directory.Build.props)"
-              if [[ ! "${version_prefix}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-                echo "Directory.Build.props must contain a three-component numeric VersionPrefix." >&2
-                exit 1
-              fi
-              tag="v${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${GITHUB_RUN_NUMBER}"
+          if [[ -n "${requested_version}" ]]; then
+            if [[ ! "${requested_version}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+              echo "Release version must be MAJOR.MINOR.PATCH; received '${REQUESTED_VERSION}'." >&2
+              exit 1
             fi
+            release_version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+            expected_tag="v${release_version}"
+            if [[ -n "${tag}" && "${tag}" != "${expected_tag}" ]]; then
+              echo "Version '${release_version}' does not match tag '${tag}'." >&2
+              exit 1
+            fi
+            tag="${expected_tag}"
+          elif [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            tag="${GITHUB_REF_NAME}"
+            if [[ ! "${tag}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+              echo "Release tag must be vMAJOR.MINOR.PATCH; received '${tag}'." >&2
+              exit 1
+            fi
+            release_version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+          else
+            version_prefix="$(sed -n 's|^[[:space:]]*<VersionPrefix>\([0-9][0-9.]*\)</VersionPrefix>|\1|p' Directory.Build.props)"
+            if [[ ! "${version_prefix}" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+              echo "Directory.Build.props must contain a three-component numeric VersionPrefix." >&2
+              exit 1
+            fi
+            release_version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+            tag="v${release_version}.${GITHUB_RUN_NUMBER}"
           fi
 
-          if [[ ! "${tag}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-            echo "Release tag must be vMAJOR.MINOR.PATCH; received '${tag}'." >&2
-            exit 1
-          fi
-
-          release_version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
           msix_version="${release_version}.${GITHUB_RUN_NUMBER}"
 
           {
@@ -135,6 +151,7 @@ jobs:
   build:
     name: Build and test
     runs-on: windows-latest
+    needs: release-metadata
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -157,17 +174,18 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Restore
-        run: dotnet restore Devolutions.Terminal.slnx
+        run: dotnet restore Devolutions.Terminal.slnx -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
 
       - name: Build
-        run: dotnet build Devolutions.Terminal.slnx -c Release --no-restore
+        run: dotnet build Devolutions.Terminal.slnx -c Release --no-restore -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
 
       - name: Test
-        run: dotnet test Devolutions.Terminal.slnx -c Release --no-build
+        run: dotnet test Devolutions.Terminal.slnx -c Release --no-build -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
 
   native-aot:
     name: NativeAOT ${{ matrix.rid }}
     runs-on: windows-latest
+    needs: release-metadata
     strategy:
       fail-fast: false
       matrix:
@@ -200,6 +218,7 @@ jobs:
           -c Release
           -r ${{ matrix.rid }}
           --self-contained
+          -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
           -o artifacts/${{ matrix.rid }}
 
       - name: Upload native executable
@@ -212,6 +231,7 @@ jobs:
   linux-managed:
     name: Linux managed and metadata tests
     runs-on: ubuntu-24.04
+    needs: release-metadata
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -233,10 +253,10 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Restore
-        run: dotnet restore Devolutions.Terminal.slnx
+        run: dotnet restore Devolutions.Terminal.slnx -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
 
       - name: Run managed tests
-        run: dotnet test Devolutions.Terminal.slnx -c Release --no-restore
+        run: dotnet test Devolutions.Terminal.slnx -c Release --no-restore -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
 
       - name: Validate Linux scripts and metadata
         run: bash scripts/Test-LinuxPackagingMetadata.sh
@@ -244,6 +264,7 @@ jobs:
   macos-managed:
     name: macOS managed and metadata tests
     runs-on: macos-14
+    needs: release-metadata
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -265,10 +286,10 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Restore
-        run: dotnet restore Devolutions.Terminal.slnx
+        run: dotnet restore Devolutions.Terminal.slnx -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
 
       - name: Run managed tests
-        run: dotnet test Devolutions.Terminal.slnx -c Release --no-restore
+        run: dotnet test Devolutions.Terminal.slnx -c Release --no-restore -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
 
       - name: Validate macOS scripts and metadata
         run: bash scripts/Test-MacOsPackagingMetadata.sh
@@ -305,6 +326,7 @@ jobs:
           -c Release
           -r osx-arm64
           --self-contained true
+          -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
           -p:DebugSymbols=false
           -p:DebugType=None
           -p:NativeDebugSymbols=false
@@ -390,6 +412,7 @@ jobs:
           fi
           dotnet publish src/Devolutions.Terminal/Devolutions.Terminal.csproj \
             -c Release -r "${{ matrix.rid }}" --self-contained true \
+            -p:VersionPrefix="${{ needs.release-metadata.outputs.release_version }}" \
             -p:DebugSymbols=false -p:DebugType=None -p:NativeDebugSymbols=false \
             -o "artifacts/publish/${{ matrix.rid }}" "${extra[@]}"
 

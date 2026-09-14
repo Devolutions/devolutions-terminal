@@ -132,6 +132,7 @@ try {
                 "-c", $Configuration,
                 "-r", $runtimeIdentifier,
                 "--self-contained",
+                "-p:VersionPrefix=$Version",
                 "-o", $layout
             )
         }
