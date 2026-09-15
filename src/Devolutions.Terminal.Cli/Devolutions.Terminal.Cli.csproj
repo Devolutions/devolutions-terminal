@@ -1,8 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
+    <OutputType>WinExe</OutputType>
     <RootNamespace>Devolutions.Terminal.Cli</RootNamespace>
     <AssemblyName>dt</AssemblyName>
+    <ApplicationIcon>$(DevolutionsTerminalWindowsIcon)</ApplicationIcon>
     <Description>Devolutions Terminal command-line client and activation parser.</Description>
     <PublishAot>true</PublishAot>
     <PublishTrimmed>true</PublishTrimmed>

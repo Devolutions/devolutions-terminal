@@ -2,6 +2,7 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <RootNamespace>Devolutions.Terminal</RootNamespace>
+    <ApplicationIcon>$(DevolutionsTerminalWindowsIcon)</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <BuiltInComInteropSupport>false</BuiltInComInteropSupport>
