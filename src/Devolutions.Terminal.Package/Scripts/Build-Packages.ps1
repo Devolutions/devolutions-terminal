@@ -4,7 +4,7 @@ param(
     [string[]] $Architectures = @("x64", "arm64"),
 
     [ValidatePattern("^\d{1,5}\.\d{1,5}\.\d{1,5}\.\d{1,5}$")]
-    [string] $Version = "0.1.0.0",
+    [string] $Version = "2026.3.0.0",
 
     [ValidateSet("Debug", "Release")]
     [string] $Configuration = "Release",

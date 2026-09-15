@@ -32,7 +32,7 @@ link `libutil` from the SDK.
 ```bash
 dotnet test Devolutions.Terminal.slnx
 dotnet publish src/Devolutions.Terminal -c Release -r osx-arm64 --self-contained
-scripts/Build-MacOsPackage.sh osx-arm64 0.1.0 artifacts/packages
+scripts/Build-MacOsPackage.sh osx-arm64 2026.3.0 artifacts/packages
 bash scripts/Test-MacOsPackage.sh osx-arm64 artifacts/packages/*.zip
 bash scripts/Test-MacOsRuntime.sh artifacts/packages
 ```
@@ -45,4 +45,3 @@ writes a zip plus SHA-256 manifest.
 ```bash
 open "artifacts/packages/Devolutions Terminal.app"
 ```
-

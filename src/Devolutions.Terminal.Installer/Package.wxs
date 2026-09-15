@@ -7,16 +7,32 @@
       UpgradeCode="{1B5D5A55-1C5A-48AA-ACD2-B1FEC7950FF8}"
       Scope="perMachine"
       Language="1033">
+    <SummaryInformation Description="Devolutions Terminal installer" />
     <MediaTemplate CompressionLevel="high" EmbedCab="yes" />
 
     <Feature Id="MainFeature" Title="Devolutions Terminal" Level="1">
       <ComponentGroupRef Id="ProductComponents" />
+      <ComponentRef Id="DtAppPath" />
     </Feature>
   </Package>
 
   <Fragment>
     <StandardDirectory Id="ProgramFiles6432Folder">
-      <Directory Id="INSTALLLOCATION" Name="Devolutions Terminal" />
+      <Directory Id="DEVOLUTIONSFOLDER" Name="Devolutions">
+        <Directory Id="INSTALLLOCATION" Name="Terminal" />
+      </Directory>
     </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ApplicationProgramsFolder" Name="Devolutions Terminal" />
+    </StandardDirectory>
+  </Fragment>
+
+  <Fragment>
+    <Component Id="DtAppPath" Directory="INSTALLLOCATION">
+      <RegistryKey Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\App Paths\dt.exe">
+        <RegistryValue Type="string" Value="[INSTALLLOCATION]dt.exe" />
+        <RegistryValue Name="Path" Type="string" Value="[INSTALLLOCATION]" />
+      </RegistryKey>
+    </Component>
   </Fragment>
 </Wix>

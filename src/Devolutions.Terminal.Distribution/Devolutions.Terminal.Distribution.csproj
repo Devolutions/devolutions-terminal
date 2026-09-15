@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <IncludeSymbols>false</IncludeSymbols>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <IsAotCompatible>false</IsAotCompatible>
+    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+    <PackageId>Devolutions.Terminal</PackageId>
+    <PackageTitle>Devolutions Terminal</PackageTitle>
+    <Description>Devolutions Terminal native distributions for Windows.</Description>
+    <PackageTags>Devolutions;Terminal;Windows;NativeAOT;dt</PackageTags>
+    <Authors>Devolutions Inc.</Authors>
+    <Company>Devolutions Inc.</Company>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="$(MSBuildThisFileDirectory)..\..\artifacts\nuget\layout\win-x64\**\*"
+             Pack="true"
+             PackagePath="runtimes\win-x64\native\dt\%(RecursiveDir)%(FileName)%(Extension)" />
+    <Content Include="$(MSBuildThisFileDirectory)..\..\artifacts\nuget\layout\win-arm64\**\*"
+             Pack="true"
+             PackagePath="runtimes\win-arm64\native\dt\%(RecursiveDir)%(FileName)%(Extension)" />
+    <None Include="Devolutions.Terminal.targets" Pack="true" PackagePath="build\Devolutions.Terminal.targets" />
+    <None Include="README.md" Pack="true" PackagePath="README.md" />
+  </ItemGroup>
+</Project>

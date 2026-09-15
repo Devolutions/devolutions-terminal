@@ -61,7 +61,7 @@ macOS NativeAOT app bundles (Darwin only):
 dotnet publish src/Devolutions.Terminal -c Release -r osx-arm64 --self-contained \
   -o artifacts/native/osx-arm64
 MACOS_PUBLISH_DIR="$PWD/artifacts/native/osx-arm64" \
-  bash scripts/Build-MacOsPackage.sh osx-arm64 0.1.0 artifacts/packages
+  bash scripts/Build-MacOsPackage.sh osx-arm64 2026.3.0 artifacts/packages
 bash scripts/Test-MacOsPackage.sh osx-arm64 artifacts/packages/*.zip
 bash scripts/Test-MacOsRuntime.sh artifacts/packages
 ```
@@ -73,8 +73,8 @@ ad-hoc signed icon. Notarization, DMG, and Homebrew are not part of this gate.
 Linux package formats:
 
 ```bash
-scripts/Build-LinuxPackage.sh linux-x64 0.1.0 artifacts/packages all
-scripts/Build-LinuxPackage.sh linux-arm64 0.1.0 artifacts/packages all
+scripts/Build-LinuxPackage.sh linux-x64 2026.3.0 artifacts/packages all
+scripts/Build-LinuxPackage.sh linux-arm64 2026.3.0 artifacts/packages all
 ```
 
 These commands publish NativeAOT executables and create reproducible tar, DEB,
@@ -166,7 +166,7 @@ whitespace while retaining unknown/local-layer data. Runtime state is stored in
 Create unsigned x64 and ARM64 packages:
 
 ```powershell
-.\src\Devolutions.Terminal.Package\Scripts\Build-Packages.ps1 -Version 0.1.0.0
+.\src\Devolutions.Terminal.Package\Scripts\Build-Packages.ps1 -Version 2026.3.0.0
 $packages = Get-ChildItem .\artifacts\msix\packages\*.msix
 .\src\Devolutions.Terminal.Package\Scripts\Test-Packages.ps1 `
   -PackagePath $packages.FullName
@@ -181,7 +181,7 @@ $password = Read-Host "Certificate password" -AsSecureString
 .\src\Devolutions.Terminal.Package\Scripts\Sign-Packages.ps1 `
   -PackageDirectory .\artifacts\msix\packages `
   -CertificatePath .\artifacts\msix\certificates\Devolutions.Terminal.pfx `
-  -Version 0.1.0.0
+  -Version 2026.3.0.0
 ```
 
 ## MSI
@@ -191,12 +191,16 @@ Build a WiX-based MSI package for the same published Windows outputs:
 ```powershell
 .\src\Devolutions.Terminal.Package\Scripts\Build-Msi.ps1 `
   -Architectures x64,arm64 `
-  -Version 0.1.0.0 `
+  -Version 2026.3.0.0 `
   -OutputDirectory .\artifacts\msi
 ```
 
 The MSI project is in `src/Devolutions.Terminal.Installer` and uses a fixed
-`UpgradeCode` with per-machine install scope under `ProgramFiles6432Folder`.
+`UpgradeCode` with per-machine install scope under
+`C:\Program Files\Devolutions\Terminal`. Windows Installer cannot represent a
+calendar year such as `2026` in its major version field, so the MSI metadata
+uses the corresponding two-digit year (`26.3.0.0`) while the artifact and
+application version remain `2026.3.0`.
 
 Never commit PFX files, passwords, certificate private keys, or signed internal
 artifacts. CI produces unsigned packages unless a protected release environment
@@ -215,7 +219,7 @@ intended for tag-based releases and for manual dispatch.
 
 Manual dispatch provides these inputs:
 
-- `version` — required three-component release version, such as `0.1.0`. This
+- `version` — required three-component release version, such as `2026.3.0`. This
   value is injected into the .NET build metadata and all platform packages.
 - `tag` — optional release tag in `vMAJOR.MINOR.PATCH` form. If omitted, the
   workflow generates `v<VersionPrefix-major>.<VersionPrefix-minor>.<run-number>`.
@@ -236,11 +240,11 @@ Environments before use and store the signing secrets only in the test and
 production environments. Signing uses GitHub Actions OIDC and Azure Login;
 configure the Azure application trust relationship for the repository and
 environment. Environment protection rules can require approval before a
-non-dry-run release reaches signing and publication. Pushed release tags must
-use the `vMAJOR.MINOR.PATCH` form. A manual `version` input generates the
+non-dry-run release reaches signing and publication. Pushed release tags must use the `vYYYY.MAJOR.PATCH` form. A manual `version` input generates the
 corresponding tag and must agree with an explicitly supplied `tag`. The workflow derives a unique
-four-component MSIX/MSI version by appending the GitHub run number to the
-release version.
+four-component MSIX version by appending the GitHub run number to the release
+version. The MSI maps the calendar year to its two-digit equivalent because
+Windows Installer limits its major version field to 255.
 
 Required environment secrets:
 

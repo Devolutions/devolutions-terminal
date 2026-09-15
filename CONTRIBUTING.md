@@ -20,7 +20,7 @@ dotnet publish src/Devolutions.Terminal -c Release -r win-x64 --self-contained
 Linux packages:
 
 ```bash
-scripts/Build-LinuxPackage.sh linux-x64 0.1.0 artifacts/packages all
+scripts/Build-LinuxPackage.sh linux-x64 2026.3.0 artifacts/packages all
 ```
 
 Windows MSIX:
@@ -60,7 +60,7 @@ See [docs/macos.md](docs/macos.md). On a Mac:
 
 ```bash
 dotnet test Devolutions.Terminal.slnx
-scripts/Build-MacOsPackage.sh osx-arm64 0.1.0 artifacts/packages
+scripts/Build-MacOsPackage.sh osx-arm64 2026.3.0 artifacts/packages
 ```
 
 `dotnet build` restores Ghostty and `dt-pty-host` for `osx-arm64` / `osx-x64`.
