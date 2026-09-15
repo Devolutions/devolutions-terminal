@@ -7,6 +7,7 @@ public static class Program
 {
     public static async Task<int> Main(string[] args)
     {
+        WindowsParentConsole.Attach();
         var parsed = new CliParser().Parse(args);
         if (parsed.ShouldExit)
         {

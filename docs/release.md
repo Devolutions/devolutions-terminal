@@ -47,7 +47,7 @@ dotnet publish src/Devolutions.Terminal -c Release -r win-arm64 --self-contained
 Each publish directory contains:
 
 - `Devolutions.Terminal.exe` — GUI host and broker primary
-- `dt.exe` — console command-line/broker client
+- `dt.exe` — command-line/broker client (Windows GUI subsystem; attaches to a parent console)
 - Avalonia/Skia native dependencies
 - bundled Noto Color Emoji fallback and its SIL OFL notice
 

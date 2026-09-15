@@ -10,6 +10,7 @@ internal static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        WindowsParentConsole.Attach();
         CliInvocation? directActivation = null;
         if (args is ["--toast-activation", var encodedActivation])
         {

@@ -18,5 +18,6 @@
     <InvariantGlobalization>false</InvariantGlobalization>
     <NuGetAudit>true</NuGetAudit>
     <NuGetAuditMode>direct</NuGetAuditMode>
+    <DevolutionsTerminalWindowsIcon>$(MSBuildThisFileDirectory)assets\icons\terminal.ico</DevolutionsTerminalWindowsIcon>
   </PropertyGroup>
 </Project>

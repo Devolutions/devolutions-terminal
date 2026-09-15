@@ -9,6 +9,8 @@
       Language="1033">
     <SummaryInformation Description="Devolutions Terminal installer" />
     <MediaTemplate CompressionLevel="high" EmbedCab="yes" />
+    <Icon Id="DevolutionsTerminal.ico" SourceFile="..\..\assets\icons\terminal.ico" />
+    <Property Id="ARPPRODUCTICON" Value="DevolutionsTerminal.ico" />
 
     <Feature Id="MainFeature" Title="Devolutions Terminal" Level="1">
       <ComponentGroupRef Id="ProductComponents" />
