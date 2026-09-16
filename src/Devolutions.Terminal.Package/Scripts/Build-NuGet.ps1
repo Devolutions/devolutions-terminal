@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("x64", "arm64")]
-    [string[]] $Architectures = @("x64", "arm64"),
+    [ValidateSet("win-x64", "win-arm64", "linux-x64", "linux-arm64", "osx-x64", "osx-arm64")]
+    [string[]] $RuntimeIdentifiers = @("win-x64", "win-arm64", "linux-x64", "linux-arm64", "osx-x64", "osx-arm64"),
 
     [ValidatePattern("^\d{1,5}\.\d{1,5}\.\d{1,5}$")]
     [string] $Version = "2026.3.0",
@@ -45,8 +45,7 @@ function Invoke-Checked {
     }
 }
 
-foreach ($architecture in $Architectures) {
-    $runtimeIdentifier = "win-$architecture"
+foreach ($runtimeIdentifier in $RuntimeIdentifiers) {
     $layout = Join-Path $layoutRoot $runtimeIdentifier
     if (-not $SkipPublish) {
         if (Test-Path -LiteralPath $layout) {
@@ -63,15 +62,17 @@ foreach ($architecture in $Architectures) {
             "-o", $layout
         )
     }
-    elseif (-not (Test-Path -LiteralPath (Join-Path $layout "dt.exe"))) {
-        throw "Published output for '$runtimeIdentifier' was not found at '$layout'."
+    else {
+        $executableName = if ($runtimeIdentifier.StartsWith("win-", [StringComparison]::Ordinal)) { "dt.exe" } else { "dt" }
+        if (-not (Test-Path -LiteralPath (Join-Path $layout $executableName))) {
+            throw "Published output for '$runtimeIdentifier' was not found at '$layout'."
+        }
     }
 }
 
 Invoke-Checked dotnet @(
     "pack", $distributionProject,
     "-c", $Configuration,
-    "--no-build",
     "-p:PackageVersion=$Version",
     "-p:PackageOutputPath=$packageOutput\"
 )

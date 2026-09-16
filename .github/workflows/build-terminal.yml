@@ -40,9 +40,8 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: build-terminal-${{ github.ref }}
-  cancel-in-progress: true
+env:
+  NUGET_PACKAGE_SOURCE: https://api.nuget.org/v3/index.json
 
 jobs:
   release-metadata:
@@ -316,6 +315,13 @@ jobs:
           -p:NativeDebugSymbols=false
           -o artifacts/publish/${{ matrix.rid }}
 
+      - name: Upload macOS NativeAOT publish
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: DevolutionsTerminal-${{ matrix.rid }}
+          path: artifacts/publish/${{ matrix.rid }}
+          if-no-files-found: error
+
       - name: Build app bundle and zip
         env:
           MACOS_PUBLISH_DIR: ${{ github.workspace }}/artifacts/publish/${{ matrix.rid }}
@@ -535,6 +541,13 @@ jobs:
           }
           dotnet publish @publishArgs
 
+      - name: Upload Linux NativeAOT publish
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: DevolutionsTerminal-${{ matrix.rid }}
+          path: artifacts/publish/${{ matrix.rid }}
+          if-no-files-found: error
+
       - name: Build deterministic tar, DEB, RPM, and AppImage
         env:
           APPIMAGE_RUNTIME_FILE: ${{ github.workspace }}/artifacts/tools/runtime-${{ matrix.appimage_arch }}
@@ -659,6 +672,73 @@ jobs:
         with:
           name: DevolutionsTerminal-MSIX-unsigned
           path: artifacts/msix/packages
+          if-no-files-found: error
+
+  nuget:
+    name: NuGet distribution package
+    needs:
+      - native-aot
+      - linux-packages
+      - macos-native-aot
+      - release-metadata
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Download Windows x64 publish
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: DevolutionsTerminal-win-x64
+          path: artifacts/nuget/layout/win-x64
+
+      - name: Download Windows arm64 publish
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: DevolutionsTerminal-win-arm64
+          path: artifacts/nuget/layout/win-arm64
+
+      - name: Download Linux x64 publish
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: DevolutionsTerminal-linux-x64
+          path: artifacts/nuget/layout/linux-x64
+
+      - name: Download Linux arm64 publish
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: DevolutionsTerminal-linux-arm64
+          path: artifacts/nuget/layout/linux-arm64
+
+      - name: Download macOS x64 publish
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: DevolutionsTerminal-osx-x64
+          path: artifacts/nuget/layout/osx-x64
+
+      - name: Download macOS arm64 publish
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: DevolutionsTerminal-osx-arm64
+          path: artifacts/nuget/layout/osx-arm64
+
+      - name: Build NuGet distribution package
+        shell: pwsh
+        run: >
+          ./src/Devolutions.Terminal.Package/Scripts/Build-NuGet.ps1
+          -SkipPublish
+          -Version "${{ needs.release-metadata.outputs.release_version }}"
+
+      - name: Upload NuGet distribution package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: DevolutionsTerminal-NuGet
+          path: artifacts/nuget/packages/*.nupkg
           if-no-files-found: error
 
   msi:
@@ -855,6 +935,7 @@ jobs:
       - linux-arm64-hardware
       - msix
       - msi
+      - nuget
       - release-metadata
     runs-on: ubuntu-latest
     permissions:
@@ -904,6 +985,50 @@ jobs:
         with:
           name: DevolutionsTerminal-osx-x64-signed-packages
           path: artifacts/macos-packages
+
+      - name: Download NuGet distribution package
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: DevolutionsTerminal-NuGet
+          path: artifacts/nuget
+
+      - name: NuGet login (OIDC)
+        if: needs.release-metadata.outputs.dry_run != 'true'
+        id: nuget-login
+        uses: NuGet/login@v1
+        with:
+          user: ${{ secrets.NUGET_BOT_USERNAME }}
+
+      - name: Publish NuGet distribution package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $dryRun = [System.Boolean]::Parse('${{ needs.release-metadata.outputs.dry_run }}')
+          $packages = @(Get-ChildItem -LiteralPath artifacts/nuget -Filter "*.nupkg" -File | Sort-Object Name)
+          if ($packages.Count -ne 1) {
+            throw "Expected exactly one NuGet package, found $($packages.Count)."
+          }
+
+          $packagePath = $packages[0].FullName
+          if ($dryRun) {
+            Write-Host "Dry run: skipping NuGet.org publication of $packagePath."
+            exit 0
+          }
+
+          $nugetApiKey = '${{ steps.nuget-login.outputs.NUGET_API_KEY }}'
+          if ([string]::IsNullOrWhiteSpace($nugetApiKey)) {
+            throw "NuGet/login did not provide a NuGet API key."
+          }
+
+          & dotnet nuget push $packagePath `
+            --api-key $nugetApiKey `
+            --source $env:NUGET_PACKAGE_SOURCE `
+            --skip-duplicate `
+            --no-symbols
+          if ($LASTEXITCODE -ne 0) {
+            throw "dotnet nuget push failed for '$packagePath' with exit code $LASTEXITCODE."
+          }
 
       - name: Resolve signing mode
         id: signing-mode
@@ -1033,7 +1158,8 @@ jobs:
             "artifacts/msi-packages",
             "artifacts/linux-x64",
             "artifacts/linux-arm64",
-            "artifacts/macos-packages"
+            "artifacts/macos-packages",
+            "artifacts/nuget"
           )
           foreach ($directory in $artifactDirectories) {
             Get-ChildItem -LiteralPath $directory -File | Copy-Item -Destination artifacts/release -Force
