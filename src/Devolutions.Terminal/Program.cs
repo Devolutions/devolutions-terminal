@@ -140,14 +140,9 @@ internal static class Program
     }
 
     public static AppBuilder BuildAvaloniaApp()
-    {
-        var builder = AppBuilder.Configure<TerminalApp>()
-            .UsePlatformDetect();
-#if DEBUG
-        builder = builder.WithDeveloperTools();
-#endif
-        return builder.LogToTrace();
-    }
+        => AppBuilder.Configure<TerminalApp>()
+            .UsePlatformDetect()
+            .LogToTrace();
 
     private static async ValueTask<BrokerResponse> ForwardToPrimaryAsync(CliInvocation invocation)
     {

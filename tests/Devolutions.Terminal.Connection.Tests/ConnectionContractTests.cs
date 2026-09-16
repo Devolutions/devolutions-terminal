@@ -3,6 +3,7 @@ using System.Runtime.Versioning;
 using System.Text;
 using System.Text.RegularExpressions;
 using Devolutions.Terminal.Connection;
+using Microsoft.Win32;
 using Xunit;
 
 namespace Devolutions.Terminal.Connection.Tests;
@@ -179,6 +180,30 @@ public sealed class ConnectionContractTests
 
         Assert.Equal(0, await exited.Task.WaitAsync(TimeSpan.FromSeconds(10)));
         await WaitForOutputAsync(output, "profile-value");
+    }
+
+    [Fact(Skip = "Windows environment regeneration is Windows-only.", SkipUnless = nameof(IsWindows))]
+    public void RegeneratedEnvironmentIncludesMachineAndUserPath()
+    {
+        var variables = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        WindowsEnvironment.ApplyRegistryVariables(
+            variables,
+            [
+                new("SystemRoot", @"C:\Windows", RegistryValueKind.String),
+                new("Path", @"%SystemRoot%\System32", RegistryValueKind.ExpandString),
+            ]);
+        WindowsEnvironment.ApplyRegistryVariables(
+            variables,
+            [
+                new("Path", @"C:\Users\test\AppData\Local\Programs", RegistryValueKind.String),
+                new("TOOLS_HOME", @"%SystemRoot%\Tools", RegistryValueKind.ExpandString),
+            ]);
+
+        Assert.Equal(
+            @"C:\Windows\System32;C:\Users\test\AppData\Local\Programs",
+            variables["Path"]);
+        Assert.Equal(@"C:\Windows\Tools", variables["TOOLS_HOME"]);
     }
 
     [Fact(Skip = "ConPTY is Windows-only.", SkipUnless = nameof(IsWindows))]

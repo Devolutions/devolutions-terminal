@@ -12,6 +12,8 @@ public sealed record TerminalLaunchOptions
 
     public bool InheritEnvironment { get; init; } = true;
 
+    public bool ReloadEnvironmentVariables { get; init; }
+
     public IReadOnlyDictionary<string, string?> EnvironmentVariables { get; init; } =
         new Dictionary<string, string?>();
 

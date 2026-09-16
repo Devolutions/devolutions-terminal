@@ -729,17 +729,7 @@ public sealed class ConPtyConnection : IRestartableTerminalConnection
 
     private static nint CreateEnvironmentBlock(TerminalLaunchOptions options)
     {
-        var variables = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        if (options.InheritEnvironment)
-        {
-            foreach (System.Collections.DictionaryEntry pair in Environment.GetEnvironmentVariables())
-            {
-                if (pair.Key is string key && pair.Value is string value)
-                {
-                    variables[key] = value;
-                }
-            }
-        }
+        var variables = WindowsEnvironment.Create(options);
 
         foreach (var pair in options.EnvironmentVariables)
         {
