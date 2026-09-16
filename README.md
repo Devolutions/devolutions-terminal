@@ -109,6 +109,13 @@ Advanced VT protocols are documented in
 Azure Cloud Shell is documented in [docs/azure-cloud-shell.md](docs/azure-cloud-shell.md).
 Build and release gates are documented in [docs/release.md](docs/release.md).
 
+`Devolutions.Terminal.Control` is also published to
+[nuget.org](https://www.nuget.org/packages/Devolutions.Terminal.Control) as a
+reusable, self-contained Avalonia terminal control package (it bundles
+`Core`/`Render`/`Connection`/`Settings` internally) for embedding in other
+Avalonia applications. See the "NuGet package" section of
+[docs/release.md](docs/release.md) for packaging and consumption details.
+
 ## Compatibility inventory
 
 ### Safety and compatibility settings

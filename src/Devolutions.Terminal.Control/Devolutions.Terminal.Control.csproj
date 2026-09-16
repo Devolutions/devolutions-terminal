@@ -2,16 +2,56 @@
   <PropertyGroup>
     <RootNamespace>Devolutions.Terminal</RootNamespace>
     <Description>Avalonia terminal control that renders Devolutions.Terminal.Core.</Description>
+
+    <PackageId>Devolutions.Terminal.Control</PackageId>
+    <PackageTags>avalonia;terminal;console;vt100;ansi;pty;conpty;xterm</PackageTags>
+    <PackageReadmeFile>PACKAGE.md</PackageReadmeFile>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/Devolutions/devolutions-terminal</PackageProjectUrl>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="PACKAGE.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="all" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Avalonia" />
     <PackageReference Include="Avalonia.Skia" />
+    <!--
+      Genuine third-party dependencies pulled in transitively via the
+      internal Devolutions.Terminal.Render reference below. PrivateAssets on
+      that ProjectReference prevents its own PackageReferences from flowing
+      into this package's nuspec automatically, so they are declared here
+      directly to keep this package's dependency list complete/correct.
+    -->
+    <PackageReference Include="SkiaSharp" />
+    <PackageReference Include="SkiaSharp.HarfBuzz" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux" />
+    <PackageReference Include="HarfBuzzSharp.NativeAssets.Linux" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\Devolutions.Terminal.Core\Devolutions.Terminal.Core.csproj" />
-    <ProjectReference Include="..\Devolutions.Terminal.Render\Devolutions.Terminal.Render.csproj" />
-    <ProjectReference Include="..\Devolutions.Terminal.Connection\Devolutions.Terminal.Connection.csproj" />
-    <ProjectReference Include="..\Devolutions.Terminal.Settings\Devolutions.Terminal.Settings.csproj" />
+    <!--
+      Core/Render/Connection/Settings are internal (IsPackable=false) and are
+      bundled directly into this package's lib folder below rather than
+      published as separate NuGet packages. PrivateAssets="all" keeps them
+      out of this package's dependency list in the nuspec (otherwise NuGet
+      would emit dangling dependencies on packages that are never published).
+      This also means other in-repo projects can no longer rely on Control to
+      transitively expose these assemblies at compile time — any project
+      that uses their types directly must reference them directly.
+    -->
+    <ProjectReference Include="..\Devolutions.Terminal.Core\Devolutions.Terminal.Core.csproj" PrivateAssets="all" />
+    <ProjectReference Include="..\Devolutions.Terminal.Render\Devolutions.Terminal.Render.csproj" PrivateAssets="all" />
+    <ProjectReference Include="..\Devolutions.Terminal.Connection\Devolutions.Terminal.Connection.csproj" PrivateAssets="all" />
+    <ProjectReference Include="..\Devolutions.Terminal.Settings\Devolutions.Terminal.Settings.csproj" PrivateAssets="all" />
   </ItemGroup>
   <ItemGroup>
     <AvaloniaResource Include="..\..\assets\fonts\CascadiaMono.ttf"
@@ -22,5 +62,23 @@
                       Link="Assets\Fonts\NotoColorEmoji.ttf" />
   </ItemGroup>
   <Import Project="..\..\native\noto-emoji\NotoEmoji.targets" />
+
+  <!--
+    Bundle the build outputs of the internal, non-packable project
+    references (Core/Render/Connection/Settings) directly into this
+    package's lib\<tfm> folder, so consumers get one self-contained
+    Devolutions.Terminal.Control package instead of a chain of internal
+    package dependencies. Genuine third-party dependencies (Avalonia,
+    SkiaSharp, HarfBuzzSharp, native runtime assets) are unaffected and
+    continue to flow through as normal transitive PackageReferences.
+  -->
+  <PropertyGroup>
+    <TargetsForTfmSpecificBuildOutput>$(TargetsForTfmSpecificBuildOutput);CopyProjectReferencesToPackage</TargetsForTfmSpecificBuildOutput>
+  </PropertyGroup>
+  <Target Name="CopyProjectReferencesToPackage" DependsOnTargets="ResolveReferences">
+    <ItemGroup>
+      <BuildOutputInPackage Include="@(ReferenceCopyLocalPaths->WithMetadataValue('ReferenceSourceTarget', 'ProjectReference'))" />
+    </ItemGroup>
+  </Target>
 </Project>
 

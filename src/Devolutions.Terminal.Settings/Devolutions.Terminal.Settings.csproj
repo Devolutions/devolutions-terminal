@@ -2,6 +2,8 @@
   <PropertyGroup>
     <RootNamespace>Devolutions.Terminal.Settings</RootNamespace>
     <Description>JSON settings model compatible with a Windows Terminal subset.</Description>
+    <!-- Not published standalone; bundled into the Devolutions.Terminal.Control NuGet package. -->
+    <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Devolutions.Terminal.Core\Devolutions.Terminal.Core.csproj" />
