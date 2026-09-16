@@ -87,7 +87,7 @@ try {
         param([Parameter(Mandatory)][string]$Label)
 
         $cli = Join-Path $macosDir $metadata.CLI_NAME
-        $help = & $cli --help
+        $help = (& $cli --help) -join "`n"
         if ($LASTEXITCODE -ne 0 -or ($help -notmatch 'dt - Devolutions Terminal')) {
             throw "$Label dt --help did not report the expected banner."
         }
