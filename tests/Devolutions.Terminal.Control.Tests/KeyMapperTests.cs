@@ -37,6 +37,25 @@ public sealed class KeyMapperTests
         Assert.Equal("\r", sequence);
     }
 
+    [Theory]
+    [InlineData(PhysicalKey.ArrowUp, "\u001b[A")]
+    [InlineData(PhysicalKey.ArrowDown, "\u001b[B")]
+    [InlineData(PhysicalKey.ArrowLeft, "\u001b[D")]
+    [InlineData(PhysicalKey.ArrowRight, "\u001b[C")]
+    public void MapsPhysicalCursorKeysWhenLogicalKeyIsUnavailable(
+        PhysicalKey physicalKey,
+        string expected)
+    {
+        var sequence = KeyMapper.ToVt(
+            Key.None,
+            KeyModifiers.None,
+            physicalKey,
+            null,
+            applicationCursorKeys: false);
+
+        Assert.Equal(expected, sequence);
+    }
+
     [Fact]
     public void PhysicalAltEnterPreservesEscapePrefix()
     {
@@ -110,11 +129,14 @@ public sealed class KeyMapperTests
             0,
             false);
 
+        // Up is a legacy-representable key, so it keeps its "CSI [1;]mods A"
+        // form (with an event-type subfield) instead of switching to the
+        // numeric "CSI codepoint u" encoding.
         Assert.Equal(
-            "\u001b[57352;7u",
+            "\u001b[1;7A",
             KeyMapper.ToVt(Key.Up, KeyModifiers.Alt | KeyModifiers.Control, PhysicalKey.None, null, mode));
         Assert.Equal(
-            "\u001b[57352;1:2u",
+            "\u001b[1;1:2A",
             KeyMapper.ToVt(
                 Key.Up,
                 KeyModifiers.None,
@@ -123,7 +145,7 @@ public sealed class KeyMapperTests
                 mode,
                 TerminalKeyEventType.Repeat));
         Assert.Equal(
-            "\u001b[57352;1:3u",
+            "\u001b[1;1:3A",
             KeyMapper.ToVt(
                 Key.Up,
                 KeyModifiers.None,
@@ -131,6 +153,30 @@ public sealed class KeyMapperTests
                 null,
                 mode,
                 TerminalKeyEventType.Release));
+    }
+
+    [Theory]
+    [InlineData(Key.Up, "\u001b[A")]
+    [InlineData(Key.Down, "\u001b[B")]
+    [InlineData(Key.Left, "\u001b[D")]
+    [InlineData(Key.Right, "\u001b[C")]
+    public void KittyDisambiguateKeepsLegacyArrowSequences(Key key, string expected)
+    {
+        // This is the exact scenario that broke arrow-key navigation in
+        // Ink-based CLI prompts (e.g. Claude Code's workspace-trust menu):
+        // the app enables only the "disambiguate escape codes" flag, and
+        // arrow keys must still be reported using their bare legacy form.
+        var mode = new TerminalInputMode(
+            true,
+            false,
+            false,
+            KittyKeyboardFlags.DisambiguateEscapeCodes,
+            0,
+            false);
+
+        Assert.Equal(
+            expected,
+            KeyMapper.ToVt(key, KeyModifiers.None, PhysicalKey.None, null, mode));
     }
 
     [Fact]
@@ -156,7 +202,7 @@ public sealed class KeyMapperTests
             "A",
             mode);
 
-        Assert.Equal("\u001b[57352;5u", sequence);
+        Assert.Equal("\u001b[1;5A", sequence);
         Assert.Null(shiftedText);
     }
 

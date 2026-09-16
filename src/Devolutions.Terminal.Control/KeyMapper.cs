@@ -40,6 +40,17 @@ public static class KeyMapper
         {
             key = Key.Return;
         }
+        else
+        {
+            key = physicalKey switch
+            {
+                PhysicalKey.ArrowUp => Key.Up,
+                PhysicalKey.ArrowDown => Key.Down,
+                PhysicalKey.ArrowLeft => Key.Left,
+                PhysicalKey.ArrowRight => Key.Right,
+                _ => key,
+            };
+        }
 
         if (mode.KittyFlags != KittyKeyboardFlags.None)
         {
@@ -186,6 +197,30 @@ public static class KeyMapper
             return null;
         }
 
+        // Cursor/navigation/function keys already have a well-known legacy escape
+        // sequence (e.g. "\u001b[A" for Up, "\u001b[3~" for Delete) recognized by
+        // virtually every terminal application. Per the kitty keyboard protocol
+        // spec, these keys keep using that legacy-compatible form -- with an
+        // added modifier/event-type subfield when needed -- even when the
+        // "disambiguate escape codes" flag is set; they only ever switch to the
+        // numeric "CSI codepoint u" form for keys with no legacy representation.
+        // Sending the raw private-use codepoint here (as opposed to the legacy
+        // form) is not recognized by applications such as Claude Code's Ink-based
+        // prompts, which silently drop the key event -- breaking arrow-key
+        // navigation entirely.
+        if (TryLegacyFunctionalKey(key, out var legacyForm))
+        {
+            var reportEvents = flags.HasFlag(KittyKeyboardFlags.ReportEventTypes);
+            if (!flags.HasFlag(KittyKeyboardFlags.ReportAllKeysAsEscapeCodes) &&
+                !flags.HasFlag(KittyKeyboardFlags.DisambiguateEscapeCodes) &&
+                !reportEvents)
+            {
+                return null;
+            }
+
+            return EncodeLegacyFunctionalKey(legacyForm, modifiers, eventType, reportEvents);
+        }
+
         var codepoint = KittyCodepoint(key);
         var textKey = codepoint == 0;
         if (textKey)
@@ -245,6 +280,66 @@ public static class KeyMapper
         return string.Create(
             CultureInfo.InvariantCulture,
             $"\u001b[{codepoint};{modifierField}u");
+    }
+
+    private readonly record struct LegacyFunctionalKeyForm(char? Letter, int? TildeNumber);
+
+    private static bool TryLegacyFunctionalKey(Key key, out LegacyFunctionalKeyForm form)
+    {
+        form = key switch
+        {
+            Key.Up => new LegacyFunctionalKeyForm('A', null),
+            Key.Down => new LegacyFunctionalKeyForm('B', null),
+            Key.Right => new LegacyFunctionalKeyForm('C', null),
+            Key.Left => new LegacyFunctionalKeyForm('D', null),
+            Key.Home => new LegacyFunctionalKeyForm('H', null),
+            Key.End => new LegacyFunctionalKeyForm('F', null),
+            Key.Insert => new LegacyFunctionalKeyForm(null, 2),
+            Key.Delete => new LegacyFunctionalKeyForm(null, 3),
+            Key.PageUp => new LegacyFunctionalKeyForm(null, 5),
+            Key.PageDown => new LegacyFunctionalKeyForm(null, 6),
+            Key.F1 => new LegacyFunctionalKeyForm('P', null),
+            Key.F2 => new LegacyFunctionalKeyForm('Q', null),
+            // F3 has no letter form: "CSI R" conflicts with Cursor Position Report.
+            Key.F3 => new LegacyFunctionalKeyForm(null, 13),
+            Key.F4 => new LegacyFunctionalKeyForm('S', null),
+            Key.F5 => new LegacyFunctionalKeyForm(null, 15),
+            Key.F6 => new LegacyFunctionalKeyForm(null, 17),
+            Key.F7 => new LegacyFunctionalKeyForm(null, 18),
+            Key.F8 => new LegacyFunctionalKeyForm(null, 19),
+            Key.F9 => new LegacyFunctionalKeyForm(null, 20),
+            Key.F10 => new LegacyFunctionalKeyForm(null, 21),
+            Key.F11 => new LegacyFunctionalKeyForm(null, 23),
+            Key.F12 => new LegacyFunctionalKeyForm(null, 24),
+            _ => default,
+        };
+        return form.Letter is not null || form.TildeNumber is not null;
+    }
+
+    private static string EncodeLegacyFunctionalKey(
+        LegacyFunctionalKeyForm form,
+        KeyModifiers modifiers,
+        TerminalKeyEventType eventType,
+        bool reportEvents)
+    {
+        var modifier = KittyModifiers(modifiers);
+        var eventSuffix = reportEvents && eventType != TerminalKeyEventType.Press
+            ? $":{(int)eventType}"
+            : string.Empty;
+        var modifierField = modifier != 1 || eventSuffix.Length > 0
+            ? modifier.ToString(CultureInfo.InvariantCulture) + eventSuffix
+            : string.Empty;
+
+        if (form.Letter is char letter)
+        {
+            return modifierField.Length == 0
+                ? $"\u001b[{letter}"
+                : $"\u001b[1;{modifierField}{letter}";
+        }
+
+        return modifierField.Length == 0
+            ? $"\u001b[{form.TildeNumber}~"
+            : $"\u001b[{form.TildeNumber};{modifierField}~";
     }
 
     internal static string? EncodeKittyTextInput(string text, KittyKeyboardFlags flags)
@@ -314,23 +409,15 @@ public static class KeyMapper
     private static bool IsKittyText(Rune rune) =>
         rune.Value is > 0x1F and < 0x7F or > 0x9F;
 
+    // Keys with a legacy escape sequence (arrows, Home/End, Insert/Delete,
+    // PageUp/PageDown, F1-F12) are handled earlier by TryLegacyFunctionalKey /
+    // EncodeLegacyFunctionalKey and never reach this codepoint table.
     private static int KittyCodepoint(Key key) => key switch
     {
         Key.Escape => 27,
         Key.Return or Key.LineFeed => 13,
         Key.Tab => 9,
         Key.Back => 127,
-        Key.Insert => 57348,
-        Key.Delete => 57349,
-        Key.PageUp => 57350,
-        Key.PageDown => 57351,
-        Key.Up => 57352,
-        Key.Down => 57353,
-        Key.Left => 57354,
-        Key.Right => 57355,
-        Key.Home => 57356,
-        Key.End => 57357,
-        >= Key.F1 and <= Key.F12 => 57364 + key - Key.F1,
         _ => 0,
     };
 
