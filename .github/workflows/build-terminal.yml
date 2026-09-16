@@ -159,6 +159,90 @@ jobs:
       - name: Test
         run: dotnet test Devolutions.Terminal.slnx -c Release --no-build -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
 
+  nuget-pack:
+    name: Pack Devolutions.Terminal.Control NuGet package
+    runs-on: windows-latest
+    needs:
+      - release-metadata
+      - build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache native libraries
+        uses: actions/cache@v4
+        with:
+          path: |
+            native/noto-emoji/NotoColorEmoji.ttf
+          key: native-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/**/*.ps1', 'native/ghostty/ghostty-upstream.json', 'native/linux-pty/dt-pty-host.c', 'native/noto-emoji/noto-emoji.json') }}
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Pack Devolutions.Terminal.Control
+        run: >-
+          dotnet pack src/Devolutions.Terminal.Control/Devolutions.Terminal.Control.csproj
+          -c Release
+          -o artifacts/nuget
+          -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
+
+      - name: Smoke-test package via samples/Devolutions.Terminal.Control.Sample
+        run: dotnet build samples/Devolutions.Terminal.Control.Sample -c Release
+
+      - name: Upload NuGet package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: DevolutionsTerminal-nuget-packages
+          path: artifacts/nuget
+          if-no-files-found: error
+
+  nuget-publish:
+    name: Publish Devolutions.Terminal.Control to nuget.org
+    if: ${{ needs.release-metadata.outputs.dry_run != 'true' && startsWith(github.ref, 'refs/tags/') }}
+    needs:
+      - release-metadata
+      - nuget-pack
+    runs-on: ubuntu-latest
+    environment:
+      name: nuget.org
+    steps:
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Download NuGet package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: DevolutionsTerminal-nuget-packages
+          path: artifacts/nuget
+
+      - name: Push to nuget.org
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:NUGET_API_KEY)) {
+            throw "Missing NUGET_API_KEY secret."
+          }
+
+          $packages = Get-ChildItem -LiteralPath artifacts/nuget -Filter "*.nupkg" -File
+          if ($packages.Count -eq 0) {
+            throw "No .nupkg files found to publish."
+          }
+
+          foreach ($package in $packages) {
+            dotnet nuget push $package.FullName `
+              --source https://api.nuget.org/v3/index.json `
+              --api-key $env:NUGET_API_KEY `
+              --skip-duplicate
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to push $($package.Name) to nuget.org."
+            }
+          }
+
   native-aot:
     name: NativeAOT ${{ matrix.rid }}
     runs-on: windows-latest

@@ -1,0 +1,12 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Devolutions.Terminal.Control.Sample.MainWindow"
+        Title="Devolutions.Terminal.Control sample"
+        Width="960"
+        Height="600">
+    <!--
+      TermControl has no parameterless constructor usable from XAML (its
+      constructor takes an optional ITerminalEngine), so it is instantiated
+      in code-behind instead - see MainWindow.axaml.cs.
+    -->
+</Window>

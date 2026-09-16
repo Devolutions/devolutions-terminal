@@ -21,7 +21,8 @@ CI workflows:
 - `build-ghostty.yml` — compile `libghostty-vt` for every RID and upload
   artifacts (optional cache; not required to develop).
 - `build-terminal.yml` — restore natives from source, test, NativeAOT, Linux
-  packages, macOS `.app`/zip, MSIX.
+  packages, macOS `.app`/zip, MSIX, and the `Devolutions.Terminal.Control`
+  NuGet package.
 
 ## Developer build
 
@@ -274,6 +275,87 @@ The release job publishes `Devolutions.Terminal.App` to NuGet.org through OIDC
 trusted publishing. Configure the `publish-test` and `publish-prod`
 environments as trusted publishers for the package on NuGet.org. Dry runs do
 not request a NuGet API key or publish the package.
+
+## NuGet package (`Devolutions.Terminal.Control`)
+
+`src/Devolutions.Terminal.Control` is published to nuget.org as a single,
+self-contained package so it can be embedded in other Avalonia applications
+(for example, replacing an internal terminal-control package in a downstream
+product). The package bundles the build output of `Devolutions.Terminal.Core`,
+`Devolutions.Terminal.Render`, `Devolutions.Terminal.Connection`, and
+`Devolutions.Terminal.Settings` directly into its `lib/net10.0` folder — those
+four projects are marked `IsPackable=false` and are never published as
+separate packages, so the only NuGet dependencies a consumer sees are the
+genuine third-party ones (`Avalonia`, `Avalonia.Skia`, `SkiaSharp`,
+`SkiaSharp.HarfBuzz`, and their Linux native-asset packages).
+
+Pack it locally:
+
+```powershell
+dotnet pack src/Devolutions.Terminal.Control/Devolutions.Terminal.Control.csproj `
+  -c Release -o artifacts/nuget
+```
+
+Consume it as a package (see `samples/Devolutions.Terminal.Control.Sample`
+for a full working app):
+
+```xml
+<PackageReference Include="Devolutions.Terminal.Control" Version="2026.3.0" />
+```
+
+`TermControl` has no parameterless constructor usable from XAML (its
+constructor takes an optional `ITerminalEngine`), so instantiate it in
+code-behind rather than declaring it directly as a XAML element:
+
+```csharp
+using Devolutions.Terminal;
+using Devolutions.Terminal.Settings;
+
+var terminal = new TermControl();
+Content = terminal;
+await terminal.StartAsync(new ProfileSettings(), columns: 120, rows: 30);
+```
+
+`samples/Devolutions.Terminal.Control.Sample` is a minimal Avalonia app that
+consumes the package this way via a plain `PackageReference` (never a
+`ProjectReference`), and is deliberately excluded from
+`Devolutions.Terminal.slnx` since it must resolve the package from a feed. Its
+`NuGet.Config` maps the `Devolutions.Terminal.Control` package id exclusively
+to a local `artifacts/nuget` feed via package source mapping, so it always
+builds against whatever was just packed rather than an already-published
+version. CI builds it in the `nuget-pack` job right after packing, as a
+consumer smoke test that would catch packaging regressions (missing bundled
+assemblies/assets, broken dependencies, API usage that doesn't actually work
+from outside the repo) that an in-repo `ProjectReference` build cannot surface.
+
+CI packs the project in the `nuget-pack` job of `build-terminal.yml` on every
+build, builds the sample against the freshly packed package as a smoke test,
+and uploads the `.nupkg`/`.snupkg` as a workflow artifact. The
+`nuget-publish` job pushes those packages to nuget.org only for tag-triggered,
+non-dry-run runs, using the `NUGET_API_KEY` secret configured on the
+`nuget.org` GitHub Environment.
+
+Required environment secret:
+
+- `NUGET_API_KEY` — an API key scoped to the `Devolutions.Terminal.Control`
+  package ID on nuget.org.
+
+When changing the internal project boundary (adding a new internal project
+that `Control` needs, or a project that needs direct access to
+`Core`/`Render`/`Connection`/`Settings` types), keep two things in sync:
+
+- Any new internal, non-packable dependency needs its own
+  `<ProjectReference ... PrivateAssets="all" />` entry in `Control.csproj` so
+  it is bundled into `lib/net10.0` without leaking a dangling NuGet
+  dependency.
+- Any third-party `PackageReference` declared only on one of those internal
+  projects (such as `Render`'s SkiaSharp/HarfBuzzSharp references) must also
+  be declared directly on `Control.csproj`, because `PrivateAssets="all"`
+  prevents it from flowing into `Control`'s nuspec automatically.
+- In-repo consumers (tests, tools, `Devolutions.Terminal.App`) that use
+  `Core`/`Render`/`Connection`/`Settings` types directly can no longer rely on
+  transitive project-reference flow through `Control` and must add their own
+  explicit `ProjectReference`.
 
 ## Release gates
 

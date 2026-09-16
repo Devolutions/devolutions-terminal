@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Minimal Avalonia app that consumes Devolutions.Terminal.Control purely as a
+    NuGet PackageReference (see NuGet.Config next to this file), never as a
+    ProjectReference. It exists to:
+      - document real-world usage of the published package, and
+      - act as a build-time smoke test for the `nuget-pack` CI job, which
+        packs Devolutions.Terminal.Control locally and then builds this
+        project against that freshly produced package.
+
+    Deliberately excluded from Devolutions.Terminal.slnx: it must resolve the
+    package from a NuGet feed, so it cannot be part of the normal
+    build/test/restore path that runs before the package has ever been
+    packed or published.
+  -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>Devolutions.Terminal.Control.Sample</RootNamespace>
+    <AssemblyName>Devolutions.Terminal.Control.Sample</AssemblyName>
+    <Description>Minimal Avalonia app demonstrating Devolutions.Terminal.Control consumed as a NuGet package.</Description>
+    <IsPackable>false</IsPackable>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.1" />
+    <!--
+      "*" always resolves to whatever the local "local-artifacts" feed
+      currently holds. NuGet.Config maps this package id exclusively to that
+      feed, so this can never silently pick up an already-published version
+      from nuget.org instead of the package under test.
+    -->
+    <PackageReference Include="Devolutions.Terminal.Control" Version="*" />
+  </ItemGroup>
+
+</Project>

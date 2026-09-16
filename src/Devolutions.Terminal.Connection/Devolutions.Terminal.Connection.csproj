@@ -3,6 +3,8 @@
     <RootNamespace>Devolutions.Terminal.Connection</RootNamespace>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Description>ConPTY and Azure Cloud Shell connections for the .NET Windows Terminal port.</Description>
+    <!-- Not published standalone; bundled into the Devolutions.Terminal.Control NuGet package. -->
+    <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Devolutions.Terminal.Core\Devolutions.Terminal.Core.csproj" />

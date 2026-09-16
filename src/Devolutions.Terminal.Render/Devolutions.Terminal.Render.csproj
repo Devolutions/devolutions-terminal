@@ -2,6 +2,8 @@
   <PropertyGroup>
     <RootNamespace>Devolutions.Terminal.Render</RootNamespace>
     <Description>Renderer-neutral snapshots and Skia rendering contracts.</Description>
+    <!-- Not published standalone; bundled into the Devolutions.Terminal.Control NuGet package. -->
+    <IsPackable>false</IsPackable>
   </PropertyGroup>
 
   <ItemGroup>

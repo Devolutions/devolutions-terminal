@@ -1,6 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
     <ProjectReference Include="..\..\src\Devolutions.Terminal.Control\Devolutions.Terminal.Control.csproj" />
+    <ProjectReference Include="..\..\src\Devolutions.Terminal.Connection\Devolutions.Terminal.Connection.csproj" />
+    <ProjectReference Include="..\..\src\Devolutions.Terminal.Core\Devolutions.Terminal.Core.csproj" />
+    <ProjectReference Include="..\..\src\Devolutions.Terminal.Render\Devolutions.Terminal.Render.csproj" />
+    <ProjectReference Include="..\..\src\Devolutions.Terminal.Settings\Devolutions.Terminal.Settings.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Avalonia.Headless.XUnit" />
