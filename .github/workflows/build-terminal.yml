@@ -439,6 +439,10 @@ jobs:
     needs:
       - macos-native-aot
       - release-metadata
+    environment:
+      # Use the same release environment as the downstream publish jobs so macOS signing
+      # secrets are available for workflow_dispatch and tag releases.
+      name: ${{ (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')) && needs.release-metadata.outputs.publish_environment || 'publish-dry-run' }}
     strategy:
       fail-fast: false
       matrix:
