@@ -94,7 +94,9 @@ try {
             continue
         }
 
-        $isolatedPath = Join-Path $signingWork ([guid]::NewGuid().ToString('N'))
+        $isolatedDirectory = Join-Path $signingWork ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $isolatedDirectory | Out-Null
+        $isolatedPath = Join-Path $isolatedDirectory (Split-Path -Leaf $path)
         Invoke-Native -FilePath cp -ArgumentList '-p', $path, $isolatedPath
         $codesignArguments = @(
             '--force', '--options', 'runtime'
