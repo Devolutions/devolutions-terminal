@@ -14,15 +14,11 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Release version to build/publish (for example 2026.3.0).
+        description: Release version to build/publish (X.Y.Z, for example 2026.3.0).
         required: true
         type: string
-      tag:
-        description: Release tag to create or update when publishing (vMAJOR.MINOR.PATCH).
-        required: false
-        type: string
       dry_run:
-        description: Build and package; upload release assets without publishing.
+        description: Dry run.
         required: false
         default: false
         type: boolean
@@ -68,7 +64,6 @@ jobs:
         shell: pwsh
         env:
           REQUESTED_VERSION: ${{ inputs.version }}
-          REQUESTED_TAG: ${{ inputs.tag }}
           DRY_RUN: ${{ inputs.dry_run }}
           SIGN_DRY_RUN: ${{ inputs.sign_dry_run }}
           REQUESTED_ENVIRONMENT: ${{ inputs['github-env'] }}
@@ -96,18 +91,14 @@ jobs:
             }
           }
 
-          $requestedVersion = if ($null -eq $env:REQUESTED_VERSION) { "" } else { $env:REQUESTED_VERSION.TrimStart("v") }
-          $tag = $env:REQUESTED_TAG
+          $requestedVersion = if ($null -eq $env:REQUESTED_VERSION) { "" } else { $env:REQUESTED_VERSION.Trim() }
+          $tag = $null
           if (-not [string]::IsNullOrWhiteSpace($requestedVersion)) {
             if ($requestedVersion -notmatch '^(\d+)\.(\d+)\.(\d+)$') {
-              throw "Release version must use YYYY.MAJOR.PATCH; received '$($env:REQUESTED_VERSION)'."
+              throw "Release version must use X.Y.Z; received '$($env:REQUESTED_VERSION)'."
             }
             $releaseVersion = $requestedVersion
-            $expectedTag = "v$releaseVersion"
-            if (-not [string]::IsNullOrWhiteSpace($tag) -and $tag -ne $expectedTag) {
-              throw "Version '$releaseVersion' does not match tag '$tag'."
-            }
-            $tag = $expectedTag
+            $tag = "v$releaseVersion"
           }
           elseif ($env:GITHUB_REF_TYPE -eq "tag") {
             $tag = $env:GITHUB_REF_NAME
