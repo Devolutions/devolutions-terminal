@@ -209,7 +209,9 @@ application version remain `2026.3.0`.
 
 Never commit PFX files, passwords, certificate private keys, or signed internal
 artifacts. CI produces unsigned packages unless a protected release environment
-injects signing credentials.
+injects signing credentials. macOS release packaging likewise falls back to
+unsigned, unnotarized archives when its Apple signing or notarization
+credentials are unavailable.
 
 ## GitHub Release automation
 
@@ -262,6 +264,9 @@ Required environment secrets:
 - `TRUSTED_SIGNING_PROFILE_NAME`
 - `NUGET_BOT_USERNAME` — NuGet.org trusted-publishing identity for
   `Devolutions.Terminal.App`
+- `APPLE_APP_DEV_ID_APP_CERTIFICATE` — base64-encoded Developer ID certificate
+- `APPLE_APP_DEV_ID_APP_CERTIFICATE_PASSWORD` — Developer ID certificate password
+- `APPLE_BOT_PASSWORD` — app-specific password for macOS notarization
 
 Optional environment or repository variable:
 
