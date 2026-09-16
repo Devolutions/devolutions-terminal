@@ -241,10 +241,11 @@ production environments. Signing uses GitHub Actions OIDC and Azure Login;
 configure the Azure application trust relationship for the repository and
 environment. Environment protection rules can require approval before a
 non-dry-run release reaches signing and publication. Pushed release tags must use the `vYYYY.MAJOR.PATCH` form. A manual `version` input generates the
-corresponding tag and must agree with an explicitly supplied `tag`. The workflow derives a unique
-four-component MSIX version by appending the GitHub run number to the release
-version. The MSI maps the calendar year to its two-digit equivalent because
-Windows Installer limits its major version field to 255.
+corresponding tag and must agree with an explicitly supplied `tag`. The workflow
+pads the three-component release version with `.0` because MSIX identity versions
+must have four numeric components. The MSI maps the calendar year to its
+two-digit equivalent because Windows Installer limits its major version field
+to 255.
 
 Required environment secrets:
 
@@ -346,7 +347,6 @@ match the Artifact Signing certificate subject.
 ## Versioning
 
 Assembly versions derive from `VersionPrefix` in `Directory.Build.props`.
-Package versions use four numeric components. Release automation derives the
-three-component package version from the validated release tag and appends the
-GitHub run number for its unique fourth component; it must never reuse a
-published MSIX version.
+Windows package versions use four numeric components. Release automation derives
+the three-component package version from the validated release tag and pads it
+with `.0` for MSIX identity and Windows artifact names.

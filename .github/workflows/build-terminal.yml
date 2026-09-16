@@ -125,7 +125,7 @@ jobs:
             $tag = "v$releaseVersion.$env:GITHUB_RUN_NUMBER"
           }
 
-          $msixVersion = "$releaseVersion.$env:GITHUB_RUN_NUMBER"
+          $msixVersion = "$releaseVersion.0"
           @(
             "release_tag=$tag"
             "release_version=$releaseVersion"
