@@ -62,8 +62,8 @@ function Test-MacOsAppBundle {
         (Join-Path $macosDir $metadata.GHOSTTY_LIBRARY),
         (Join-Path $macosDir 'libSkiaSharp.dylib'),
         (Join-Path $macosDir 'libHarfBuzzSharp.dylib'),
-        (Join-Path $macosDir 'THIRD-PARTY-NOTICES-GHOSTTY.txt'),
-        (Join-Path $macosDir 'THIRD-PARTY-NOTICES-NOTO-EMOJI.txt'),
+        (Join-Path $App 'Contents/Resources/THIRD-PARTY-NOTICES-GHOSTTY.txt'),
+        (Join-Path $App 'Contents/Resources/THIRD-PARTY-NOTICES-NOTO-EMOJI.txt'),
         (Join-Path $App 'Contents/Resources/LICENSE'),
         $plist,
         $icns
