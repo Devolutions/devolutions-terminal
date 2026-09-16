@@ -264,6 +264,9 @@ Required environment secrets:
 - `TRUSTED_SIGNING_PROFILE_NAME`
 - `NUGET_BOT_USERNAME` — NuGet.org trusted-publishing identity for
   `Devolutions.Terminal.App`
+- `APPLE_APP_DEV_ID_APP_CERTIFICATE` — base64-encoded Developer ID certificate
+- `APPLE_APP_DEV_ID_APP_CERTIFICATE_PASSWORD` — Developer ID certificate password
+- `APPLE_BOT_PASSWORD` — app-specific password for macOS notarization
 
 Optional environment or repository variable:
 

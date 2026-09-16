@@ -463,22 +463,16 @@ jobs:
         id: signing-mode
         shell: pwsh
         env:
-          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_NOTARIZATION_API_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_API_KEY_ID }}
-          APPLE_NOTARIZATION_API_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_API_ISSUER_ID }}
-          APPLE_NOTARIZATION_API_KEY_P8: ${{ secrets.APPLE_NOTARIZATION_API_KEY_P8 }}
+          APPLE_APP_DEV_ID_APP_CERTIFICATE: ${{ secrets.APPLE_APP_DEV_ID_APP_CERTIFICATE }}
+          APPLE_APP_DEV_ID_APP_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_APP_DEV_ID_APP_CERTIFICATE_PASSWORD }}
+          APPLE_BOT_PASSWORD: ${{ secrets.APPLE_BOT_PASSWORD }}
         run: |
           $dryRun = '${{ needs.release-metadata.outputs.dry_run }}'
           $signDryRun = '${{ needs.release-metadata.outputs.sign_dry_run }}'
           $required = @(
-            'APPLE_CERTIFICATE_BASE64',
-            'APPLE_CERTIFICATE_PASSWORD',
-            'APPLE_SIGNING_IDENTITY',
-            'APPLE_NOTARIZATION_API_KEY_ID',
-            'APPLE_NOTARIZATION_API_ISSUER_ID',
-            'APPLE_NOTARIZATION_API_KEY_P8'
+            'APPLE_APP_DEV_ID_APP_CERTIFICATE',
+            'APPLE_APP_DEV_ID_APP_CERTIFICATE_PASSWORD',
+            'APPLE_BOT_PASSWORD'
           )
           $missing = @($required | Where-Object { [string]::IsNullOrEmpty([System.Environment]::GetEnvironmentVariable($_)) })
 
@@ -500,19 +494,19 @@ jobs:
         if: steps.signing-mode.outputs.should_sign == 'true'
         shell: pwsh
         env:
-          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_APP_DEV_ID_APP_CERTIFICATE: ${{ secrets.APPLE_APP_DEV_ID_APP_CERTIFICATE }}
+          APPLE_APP_DEV_ID_APP_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_APP_DEV_ID_APP_CERTIFICATE_PASSWORD }}
         run: |
           $keychain = Join-Path $env:RUNNER_TEMP 'macos-signing.keychain-db'
           $keychainPassword = (& uuidgen)
           $certificatePath = Join-Path $env:RUNNER_TEMP 'apple-certificate.p12'
 
-          [System.IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:APPLE_CERTIFICATE_BASE64))
+          [System.IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:APPLE_APP_DEV_ID_APP_CERTIFICATE))
 
           & security create-keychain -p $keychainPassword $keychain
           & security set-keychain-settings -lut 21600 $keychain
           & security unlock-keychain -p $keychainPassword $keychain
-          & security import $certificatePath -k $keychain -P $env:APPLE_CERTIFICATE_PASSWORD `
+          & security import $certificatePath -k $keychain -P $env:APPLE_APP_DEV_ID_APP_CERTIFICATE_PASSWORD `
             -T /usr/bin/codesign -T /usr/bin/security
           & security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k $keychainPassword $keychain
           & security list-keychain -d user -s $keychain login.keychain-db
@@ -521,17 +515,14 @@ jobs:
       - name: Sign, package, and notarize
         if: steps.signing-mode.outputs.should_sign == 'true'
         env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_NOTARIZATION_API_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_API_KEY_ID }}
-          APPLE_NOTARIZATION_API_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_API_ISSUER_ID }}
-          APPLE_NOTARIZATION_API_KEY_P8: ${{ secrets.APPLE_NOTARIZATION_API_KEY_P8 }}
+          APPLE_BOT_PASSWORD: ${{ secrets.APPLE_BOT_PASSWORD }}
           SOURCE_DATE_EPOCH: "1704067200"
         run: >
           pwsh -NoLogo -NoProfile -File scripts/Release-MacOsPackage.ps1 ${{ matrix.rid }}
           "${{ needs.release-metadata.outputs.release_version }}"
           artifacts/macos-packages
           artifacts/macos-signed-packages
-          "$APPLE_SIGNING_IDENTITY"
+          "Developer ID Application: Devolutions inc."
 
       - name: Package without notarization (dry run / forked PR)
         if: steps.signing-mode.outputs.should_sign != 'true'
