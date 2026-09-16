@@ -61,14 +61,18 @@ macOS NativeAOT app bundles (Darwin only):
 dotnet publish src/Devolutions.Terminal -c Release -r osx-arm64 --self-contained \
   -o artifacts/native/osx-arm64
 MACOS_PUBLISH_DIR="$PWD/artifacts/native/osx-arm64" \
-  bash scripts/Build-MacOsPackage.sh osx-arm64 2026.3.0 artifacts/packages
-bash scripts/Test-MacOsPackage.sh osx-arm64 artifacts/packages/*.zip
-bash scripts/Test-MacOsRuntime.sh artifacts/packages
+  pwsh scripts/Build-MacOsPackage.ps1 osx-arm64 2026.3.0 artifacts/packages
+pwsh scripts/Test-MacOsPackage.ps1 osx-arm64 artifacts/packages/*.zip
+pwsh scripts/Test-MacOsRuntime.ps1 artifacts/packages
 ```
 
 The staged `Devolutions Terminal.app` contains `Devolutions.Terminal`, `dt`,
 `dt-pty-host`, `libghostty-vt.dylib`, Skia, HarfBuzz, `Info.plist`, and an
-ad-hoc signed icon. Notarization, DMG, and Homebrew are not part of this gate.
+ad-hoc signed icon. This gate (`Build-MacOsPackage.ps1`) produces an unsigned,
+unnotarized zip for fast local iteration; the CI release pipeline additionally
+runs `scripts/Release-MacOsPackage.ps1` to sign the bundle with a Developer ID
+identity, notarize it, and produce a signed `.dmg`. Homebrew packaging is not
+part of this gate.
 
 Linux package formats:
 

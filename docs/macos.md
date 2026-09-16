@@ -1,8 +1,9 @@
 # macOS support
 
 macOS is a first-class host for the managed app, Unix PTY transport, built-in
-and Ghostty engines, and NativeAOT `.app` packaging. Global hotkeys, default
-terminal registration, notarization, DMG, and Homebrew remain out of scope.
+and Ghostty engines, and NativeAOT `.app` packaging (including signed,
+notarized `.dmg` release artifacts). Global hotkeys, default terminal
+registration, and Homebrew remain out of scope.
 
 ## What works
 
@@ -16,10 +17,13 @@ terminal registration, notarization, DMG, and Homebrew remain out of scope.
 - Notifications through `osascript` `display notification`
 - `dterm:` URL scheme declared in `macos/Info.plist`
 - NativeAOT `.app` + zip packaging on Darwin
+- Signed, notarized `.dmg` release artifacts via
+  `scripts/Release-MacOsPackage.ps1` (CI only; ad-hoc unsigned zip/dmg locally
+  or without Apple signing secrets)
 
 ## Not bundled yet
 
-- Notarization / DMG / Homebrew cask
+- Homebrew cask
 - Global hotkeys (broker / `dt -w` still work)
 - Default-terminal registration
 
@@ -32,12 +36,12 @@ link `libutil` from the SDK.
 ```bash
 dotnet test Devolutions.Terminal.slnx
 dotnet publish src/Devolutions.Terminal -c Release -r osx-arm64 --self-contained
-scripts/Build-MacOsPackage.sh osx-arm64 2026.3.0 artifacts/packages
-bash scripts/Test-MacOsPackage.sh osx-arm64 artifacts/packages/*.zip
-bash scripts/Test-MacOsRuntime.sh artifacts/packages
+pwsh scripts/Build-MacOsPackage.ps1 osx-arm64 2026.3.0 artifacts/packages
+pwsh scripts/Test-MacOsPackage.ps1 osx-arm64 artifacts/packages/*.zip
+pwsh scripts/Test-MacOsRuntime.ps1 artifacts/packages
 ```
 
-`Build-MacOsPackage.sh` publishes NativeAOT unless `MACOS_PUBLISH_DIR` is set,
+`Build-MacOsPackage.ps1` publishes NativeAOT unless `MACOS_PUBLISH_DIR` is set,
 stages `Devolutions Terminal.app` with `macos/Info.plist`, generates
 `DevolutionsTerminal.icns` from the hicolor PNGs, ad-hoc signs the bundle, and
 writes a zip plus SHA-256 manifest.

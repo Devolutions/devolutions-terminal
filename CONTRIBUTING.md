@@ -60,9 +60,12 @@ See [docs/macos.md](docs/macos.md). On a Mac:
 
 ```bash
 dotnet test Devolutions.Terminal.slnx
-scripts/Build-MacOsPackage.sh osx-arm64 2026.3.0 artifacts/packages
+dotnet test Devolutions.Terminal.slnx
+pwsh scripts/Build-MacOsPackage.ps1 osx-arm64 2026.3.0 artifacts/packages
 ```
 
 `dotnet build` restores Ghostty and `dt-pty-host` for `osx-arm64` / `osx-x64`.
 The PTY host is compiled with Apple clang against the macOS 13 SDK. App-bundle
-packaging is Darwin-only; notarization, DMG, and Homebrew are not included.
+packaging is Darwin-only; release builds are signed and notarized with a
+Developer ID identity (see [docs/macos.md](docs/macos.md) and
+[docs/release.md](docs/release.md)). Homebrew is not included.

@@ -31,8 +31,8 @@ The native executable is written to
 macOS NativeAOT app bundles (Darwin only):
 
 ```bash
-scripts/Build-MacOsPackage.sh osx-arm64 2026.3.0 artifacts/packages
-bash scripts/Test-MacOsPackage.sh osx-arm64 artifacts/packages/*.zip
+pwsh scripts/Build-MacOsPackage.ps1 osx-arm64 2026.3.0 artifacts/packages
+pwsh scripts/Test-MacOsPackage.ps1 osx-arm64 artifacts/packages/*.zip
 ```
 
 Linux x64 and ARM64 NativeAOT packages are built on Linux with:

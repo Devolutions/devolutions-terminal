@@ -279,14 +279,20 @@ jobs:
         run: dotnet test Devolutions.Terminal.slnx -c Release --no-restore -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
 
       - name: Validate macOS scripts and metadata
-        run: bash scripts/Test-MacOsPackagingMetadata.sh
+        run: pwsh -NoLogo -NoProfile -File scripts/Test-MacOsPackagingMetadata.ps1
 
   macos-native-aot:
-    name: macOS NativeAOT osx-arm64
+    name: macOS NativeAOT ${{ matrix.rid }}
     runs-on: macos-14
     needs:
       - macos-managed
       - release-metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        rid:
+          - osx-arm64
+          - osx-x64
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -311,34 +317,159 @@ jobs:
         run: >
           dotnet publish src/Devolutions.Terminal/Devolutions.Terminal.csproj
           -c Release
-          -r osx-arm64
+          -r ${{ matrix.rid }}
           --self-contained true
           -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
           -p:DebugSymbols=false
           -p:DebugType=None
           -p:NativeDebugSymbols=false
-          -o artifacts/publish/osx-arm64
+          -o artifacts/publish/${{ matrix.rid }}
 
       - name: Build app bundle and zip
         env:
-          MACOS_PUBLISH_DIR: ${{ github.workspace }}/artifacts/publish/osx-arm64
+          MACOS_PUBLISH_DIR: ${{ github.workspace }}/artifacts/publish/${{ matrix.rid }}
           SOURCE_DATE_EPOCH: "1704067200"
         run: >
-          bash scripts/Build-MacOsPackage.sh osx-arm64
+          pwsh -NoLogo -NoProfile -File scripts/Build-MacOsPackage.ps1 ${{ matrix.rid }}
           "${{ needs.release-metadata.outputs.release_version }}"
           artifacts/macos-packages
 
       - name: Validate package without launching UI
-        run: bash scripts/Test-MacOsPackage.sh osx-arm64 artifacts/macos-packages/*.zip
+        run: pwsh -NoLogo -NoProfile -File scripts/Test-MacOsPackage.ps1 ${{ matrix.rid }} artifacts/macos-packages/*.zip
 
       - name: Run native non-UI gates
-        run: bash scripts/Test-MacOsRuntime.sh artifacts/macos-packages
+        # NativeAOT osx-x64 binaries are cross-compiled on the arm64 runner and
+        # cannot be executed here (no Rosetta on Actions macOS images); only the
+        # host's own architecture gets the runtime smoke/unit test gates.
+        if: matrix.rid == 'osx-arm64'
+        run: pwsh -NoLogo -NoProfile -File scripts/Test-MacOsRuntime.ps1 artifacts/macos-packages
 
       - name: Upload macOS package artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: DevolutionsTerminal-osx-arm64-packages
+          name: DevolutionsTerminal-${{ matrix.rid }}-packages
           path: artifacts/macos-packages
+          if-no-files-found: error
+
+  macos-sign:
+    name: macOS sign and notarize ${{ matrix.rid }}
+    runs-on: macos-14
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
+    needs:
+      - macos-native-aot
+      - release-metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        rid:
+          - osx-arm64
+          - osx-x64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Download unsigned macOS package
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: DevolutionsTerminal-${{ matrix.rid }}-packages
+          path: artifacts/macos-packages
+
+      - name: Resolve signing mode
+        id: signing-mode
+        shell: pwsh
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_NOTARIZATION_API_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_API_KEY_ID }}
+          APPLE_NOTARIZATION_API_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_API_ISSUER_ID }}
+          APPLE_NOTARIZATION_API_KEY_P8: ${{ secrets.APPLE_NOTARIZATION_API_KEY_P8 }}
+        run: |
+          $dryRun = '${{ needs.release-metadata.outputs.dry_run }}'
+          $signDryRun = '${{ needs.release-metadata.outputs.sign_dry_run }}'
+          $required = @(
+            'APPLE_CERTIFICATE_BASE64',
+            'APPLE_CERTIFICATE_PASSWORD',
+            'APPLE_SIGNING_IDENTITY',
+            'APPLE_NOTARIZATION_API_KEY_ID',
+            'APPLE_NOTARIZATION_API_ISSUER_ID',
+            'APPLE_NOTARIZATION_API_KEY_P8'
+          )
+          $missing = @($required | Where-Object { [string]::IsNullOrEmpty([System.Environment]::GetEnvironmentVariable($_)) })
+
+          if ($dryRun -eq 'true' -and $signDryRun -ne 'true') {
+            Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value 'should_sign=false'
+            Write-Host 'Dry run will not sign or notarize macOS packages.'
+            exit 0
+          }
+
+          if ($missing.Count -gt 0) {
+            if ($dryRun -eq 'true') {
+              Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value 'should_sign=false'
+              Write-Host "::notice::Skipping dry-run macOS signing because these secrets are unavailable: $($missing -join ', ')"
+              exit 0
+            }
+            Write-Error "Missing Apple signing/notarization secrets: $($missing -join ', ')"
+            exit 1
+          }
+
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value 'should_sign=true'
+
+      - name: Import Developer ID certificate
+        if: steps.signing-mode.outputs.should_sign == 'true'
+        shell: pwsh
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          $keychain = Join-Path $env:RUNNER_TEMP 'macos-signing.keychain-db'
+          $keychainPassword = (& uuidgen)
+          $certificatePath = Join-Path $env:RUNNER_TEMP 'apple-certificate.p12'
+
+          [System.IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:APPLE_CERTIFICATE_BASE64))
+
+          & security create-keychain -p $keychainPassword $keychain
+          & security set-keychain-settings -lut 21600 $keychain
+          & security unlock-keychain -p $keychainPassword $keychain
+          & security import $certificatePath -k $keychain -P $env:APPLE_CERTIFICATE_PASSWORD `
+            -T /usr/bin/codesign -T /usr/bin/security
+          & security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k $keychainPassword $keychain
+          & security list-keychain -d user -s $keychain login.keychain-db
+          Remove-Item -LiteralPath $certificatePath -Force
+
+      - name: Sign, package, and notarize
+        if: steps.signing-mode.outputs.should_sign == 'true'
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_NOTARIZATION_API_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_API_KEY_ID }}
+          APPLE_NOTARIZATION_API_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_API_ISSUER_ID }}
+          APPLE_NOTARIZATION_API_KEY_P8: ${{ secrets.APPLE_NOTARIZATION_API_KEY_P8 }}
+          SOURCE_DATE_EPOCH: "1704067200"
+        run: >
+          pwsh -NoLogo -NoProfile -File scripts/Release-MacOsPackage.ps1 ${{ matrix.rid }}
+          "${{ needs.release-metadata.outputs.release_version }}"
+          artifacts/macos-packages
+          artifacts/macos-signed-packages
+          "$APPLE_SIGNING_IDENTITY"
+
+      - name: Package without notarization (dry run / forked PR)
+        if: steps.signing-mode.outputs.should_sign != 'true'
+        env:
+          SOURCE_DATE_EPOCH: "1704067200"
+        run: >
+          pwsh -NoLogo -NoProfile -File scripts/Release-MacOsPackage.ps1 ${{ matrix.rid }}
+          "${{ needs.release-metadata.outputs.release_version }}"
+          artifacts/macos-packages
+          artifacts/macos-signed-packages
+
+      - name: Validate final package
+        run: pwsh -NoLogo -NoProfile -File scripts/Test-MacOsPackage.ps1 ${{ matrix.rid }} artifacts/macos-signed-packages/*.zip
+
+      - name: Upload final macOS package artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: DevolutionsTerminal-${{ matrix.rid }}-signed-packages
+          path: artifacts/macos-signed-packages
           if-no-files-found: error
 
   linux-packages:
@@ -728,6 +859,7 @@ jobs:
       - linux-managed
       - macos-managed
       - macos-native-aot
+      - macos-sign
       - linux-packages
       - linux-arm64-hardware
       - msix
@@ -770,10 +902,16 @@ jobs:
           name: DevolutionsTerminal-linux-arm64-packages
           path: artifacts/linux-arm64
 
-      - name: Download macOS package artifacts
+      - name: Download macOS arm64 package artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: DevolutionsTerminal-osx-arm64-packages
+          name: DevolutionsTerminal-osx-arm64-signed-packages
+          path: artifacts/macos-packages
+
+      - name: Download macOS x64 package artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: DevolutionsTerminal-osx-x64-signed-packages
           path: artifacts/macos-packages
 
       - name: Resolve signing mode
