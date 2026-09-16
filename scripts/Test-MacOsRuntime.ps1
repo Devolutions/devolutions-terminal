@@ -59,12 +59,12 @@ Remove-Item Env:\WT_BASE_SETTINGS_PATH, Env:\DTERM_SETTINGS_PATH, Env:\WT_DOTNET
 try {
     function Get-OneArtifact {
         param([Parameter(Mandatory)][string]$Pattern)
-        $matches = Get-ChildItem -LiteralPath $PackageDir -Filter $Pattern -File |
-            Sort-Object -Property Name
-        if ($matches.Count -ne 1) {
-            throw "Expected exactly one $Pattern in $PackageDir; found $($matches.Count)."
+        $foundFiles = @(Get-ChildItem -LiteralPath $PackageDir -Filter $Pattern -File |
+            Sort-Object -Property Name)
+        if ($foundFiles.Count -ne 1) {
+            throw "Expected exactly one $Pattern in $PackageDir; found $($foundFiles.Count)."
         }
-        return $matches[0].FullName
+        return $foundFiles[0].FullName
     }
 
     $zipPackage = Get-OneArtifact -Pattern "*-$rid.zip"
