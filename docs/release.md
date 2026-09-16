@@ -71,9 +71,10 @@ The staged `Devolutions Terminal.app` contains `Devolutions.Terminal`, `dt`,
 `dt-pty-host`, `libghostty-vt.dylib`, Skia, HarfBuzz, `Info.plist`, and an
 ad-hoc signed icon. This gate (`Build-MacOsPackage.ps1`) produces an unsigned,
 unnotarized zip for fast local iteration; the CI release pipeline additionally
-runs `scripts/Release-MacOsPackage.ps1` to sign the bundle with a Developer ID
-identity, notarize it, and produce a signed `.dmg`. Homebrew packaging is not
-part of this gate.
+runs `scripts/Release-MacOsPackage.ps1` to sign every Mach-O with a Developer ID
+identity, submit the app as a ZIP for notarization, staple and assess it, and
+produce a separately signed, notarized, and stapled `.dmg`. Homebrew packaging
+is not part of this gate.
 
 Linux package formats:
 
