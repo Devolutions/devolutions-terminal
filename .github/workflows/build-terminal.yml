@@ -200,7 +200,7 @@ jobs:
 
   nuget-publish:
     name: Publish Devolutions.Terminal.Control to nuget.org
-    if: ${{ needs.release-metadata.outputs.dry_run != 'true' && (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')) }}
+    if: ${{ needs.release-metadata.outputs.dry_run != 'true' && startsWith(github.ref, 'refs/tags/') }}
     needs:
       - release-metadata
       - nuget-pack
