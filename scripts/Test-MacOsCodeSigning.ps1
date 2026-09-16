@@ -58,6 +58,21 @@ try {
 '@ | Set-Content -LiteralPath $entitlements -NoNewline -Encoding utf8
 
     $env:MACOS_ENTITLEMENTS = $entitlements
+    $invalidLayoutRejected = $false
+    try {
+        & (Join-Path $scriptDir 'Sign-MacOsPackage.ps1') $appPath '-'
+    }
+    catch {
+        if ($_.Exception.Message -notmatch 'Contents/MacOS may contain only Mach-O code') {
+            throw
+        }
+        $invalidLayoutRejected = $true
+    }
+    if (-not $invalidLayoutRejected) {
+        throw 'Sign-MacOsPackage.ps1 accepted a non-code runtime configuration file in Contents/MacOS.'
+    }
+
+    Remove-Item -LiteralPath (Join-Path $macosDir 'HelperTool.runtimeconfig.json') -Force
     & (Join-Path $scriptDir 'Sign-MacOsPackage.ps1') $appPath '-'
     if ($LASTEXITCODE -ne 0) {
         throw "Sign-MacOsPackage.ps1 failed with exit code $LASTEXITCODE."

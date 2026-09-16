@@ -135,6 +135,10 @@ function Test-MacOsAppBundle {
     if ($dsyms) {
         throw "$label contains dSYM bundles."
     }
+    $runtimeConfig = Get-ChildItem -LiteralPath $macosDir -File -Filter '*.runtimeconfig.json'
+    if ($runtimeConfig) {
+        throw "$label contains NativeAOT runtime configuration in Contents/MacOS."
+    }
 }
 
 try {

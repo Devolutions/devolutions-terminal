@@ -68,6 +68,16 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($mainExecutableName)) {
 }
 $mainExecutable = Join-Path $contents 'MacOS' $mainExecutableName
 
+$macosDirectory = Join-Path $contents 'MacOS'
+$invalidMacOsFiles = @(
+    Get-ChildItem -LiteralPath $macosDirectory -File |
+        Where-Object { -not (Test-MachO -Path $_.FullName) }
+)
+if ($invalidMacOsFiles.Count -gt 0) {
+    $invalidNames = ($invalidMacOsFiles.Name | Sort-Object) -join ', '
+    throw "Contents/MacOS may contain only Mach-O code; move or remove these data files before signing: $invalidNames"
+}
+
 $timestampArguments = if ($Identity -eq '-') { @() } else { @('--timestamp') }
 $signatureRequirements = @{
     RequireHardenedRuntime = $true
