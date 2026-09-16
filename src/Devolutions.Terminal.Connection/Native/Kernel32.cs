@@ -101,6 +101,9 @@ internal static partial class Kernel32
     internal static partial bool DeleteProcThreadAttributeList(nint lpAttributeList);
 
     [LibraryImport("kernel32.dll", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
+    internal static partial uint GetShortPathNameW(string lpszLongPath, ref char lpszShortPath, uint cchBuffer);
+
+    [LibraryImport("kernel32.dll", SetLastError = true, StringMarshalling = StringMarshalling.Utf16)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool CreateProcessW(
         string? lpApplicationName,

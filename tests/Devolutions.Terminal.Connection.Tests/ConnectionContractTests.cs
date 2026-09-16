@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -198,14 +199,199 @@ public sealed class ConnectionContractTests
             [
                 new("Path", @"C:\Users\test\AppData\Local\Programs", RegistryValueKind.String),
                 new("TOOLS_HOME", @"%SystemRoot%\Tools", RegistryValueKind.ExpandString),
+                new("PLAIN_TOOLS_HOME", @"%SystemRoot%\PlainTools", RegistryValueKind.String),
             ]);
 
         Assert.Equal(
             @"C:\Windows\System32;C:\Users\test\AppData\Local\Programs",
             variables["Path"]);
         Assert.Equal(@"C:\Windows\Tools", variables["TOOLS_HOME"]);
+        Assert.Equal(@"C:\Windows\PlainTools", variables["PLAIN_TOOLS_HOME"]);
     }
 
+    [Fact(Skip = "Windows environment regeneration is Windows-only.", SkipUnless = nameof(IsWindows))]
+    public void RegistryPathConcatenationRespectsTrailingSemicolon()
+    {
+        var variables = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Path"] = @"C:\Windows;",
+        };
+
+        WindowsEnvironment.ApplyRegistryVariables(
+            variables,
+            [new("Path", @"C:\Tools", RegistryValueKind.String)]);
+
+        Assert.Equal(@"C:\Windows;C:\Tools", variables["Path"]);
+    }
+
+    [Fact(Skip = "Windows environment regeneration is Windows-only.", SkipUnless = nameof(IsWindows))]
+    public void OverridesExpandAgainstConstructedEnvironment()
+    {
+        var variables = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Path"] = @"C:\Windows\System32",
+            ["SystemRoot"] = @"C:\Windows",
+        };
+
+        WindowsEnvironment.ApplyOverrides(
+            variables,
+            new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Path"] = @"%PATH%;C:\tools",
+                ["TOOLS_HOME"] = @"%systemroot%\Tools",
+            });
+
+        Assert.Equal(@"C:\Windows\System32;C:\tools", variables["Path"]);
+        Assert.Equal(@"C:\Windows\Tools", variables["TOOLS_HOME"]);
+    }
+
+    [Fact(Skip = "Windows environment regeneration is Windows-only.", SkipUnless = nameof(IsWindows))]
+    public void OverrideExpansionKeepsTrailingSemicolonAndUnknownReferences()
+    {
+        var variables = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Path"] = @"C:\Windows;",
+        };
+
+        WindowsEnvironment.ApplyOverrides(
+            variables,
+            new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Path"] = @"%PATH%C:\tools",
+                ["UNKNOWN"] = @"%NOT_DEFINED%\bin",
+                ["UNTERMINATED"] = "%NOT_CLOSED",
+            });
+
+        Assert.Equal(@"C:\Windows;C:\tools", variables["Path"]);
+        Assert.Equal(@"%NOT_DEFINED%\bin", variables["UNKNOWN"]);
+        Assert.Equal("%NOT_CLOSED", variables["UNTERMINATED"]);
+    }
+
+    [Fact(Skip = "Windows environment regeneration is Windows-only.", SkipUnless = nameof(IsWindows))]
+    public void OverrideNullDeletesAndEmptyValueIsIgnored()
+    {
+        var variables = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["KEEP"] = "existing",
+            ["DROP"] = "existing",
+        };
+
+        WindowsEnvironment.ApplyOverrides(
+            variables,
+            new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["keep"] = string.Empty,
+                ["drop"] = null,
+                ["LITERAL"] = "%NOT_DEFINED%",
+            });
+
+        Assert.Equal("existing", variables["KEEP"]);
+        Assert.False(variables.ContainsKey("DROP"));
+        Assert.Equal("%NOT_DEFINED%", variables["LITERAL"]);
+    }
+
+    [Fact(Skip = "Windows environment regeneration is Windows-only.", SkipUnless = nameof(IsWindows))]
+    public void TempOverrideFallsBackToOriginalPathWhenShorteningFails()
+    {
+        var variables = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var missing = Path.Combine(Path.GetTempPath(), "dt missing " + Guid.NewGuid().ToString("N"));
+
+        WindowsEnvironment.ApplyOverrides(
+            variables,
+            new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["TMP"] = missing,
+            });
+
+        Assert.Equal(missing, variables["TMP"]);
+    }
+
+    [Fact(Skip = "Windows environment regeneration is Windows-only.", SkipUnless = nameof(IsWindows))]
+    public void TempOverrideUsesShortPathWhenAvailable()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "dt short path " + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        File.WriteAllText(Path.Combine(directory, "marker.txt"), "marker");
+        try
+        {
+            var variables = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            WindowsEnvironment.ApplyOverrides(
+                variables,
+                new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["TEMP"] = directory,
+                });
+
+            var value = variables["TEMP"];
+            Assert.True(
+                value.Length <= directory.Length,
+                "Short path must not be longer than the original path.");
+            Assert.True(
+                File.Exists(Path.Combine(value, "marker.txt")),
+                "Shortened TEMP must still resolve to the original directory.");
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact(Skip = "Windows environment regeneration is Windows-only.", SkipUnless = nameof(IsWindows))]
+    public void ProgramFilesMappingsMatchProcessArchitecture()
+    {
+        var x86 = WindowsEnvironment.GetProgramFilesMappings(false, Architecture.X86);
+        Assert.Equal(
+            new[] { "ProgramFiles", "CommonProgramFiles" },
+            x86.Select(static mapping => mapping.VariableName));
+
+        var x64 = WindowsEnvironment.GetProgramFilesMappings(true, Architecture.X64)
+            .Select(static mapping => mapping.VariableName)
+            .ToArray();
+        Assert.Equal(
+            new[]
+            {
+                "ProgramFiles",
+                "CommonProgramFiles",
+                "ProgramFiles(x86)",
+                "CommonProgramFiles(x86)",
+                "ProgramW6432",
+                "CommonProgramW6432",
+            },
+            x64);
+
+        var arm64 = WindowsEnvironment.GetProgramFilesMappings(true, Architecture.Arm64);
+        Assert.Contains(arm64, mapping => mapping.VariableName == "ProgramFiles(Arm)");
+        Assert.Contains(arm64, mapping => mapping.ValueName == "CommonFilesDir (Arm)");
+        Assert.Contains(arm64, mapping => mapping.VariableName == "ProgramW6432");
+    }
+
+    [Fact(Skip = "Windows environment regeneration is Windows-only.", SkipUnless = nameof(IsWindows))]
+    public void ReloadedEnvironmentSourcesProgramFilesFromRegistry()
+    {
+        const string Marker = "WT_DOTNET_NEVER_INHERITED";
+        Environment.SetEnvironmentVariable(Marker, "host-value");
+        try
+        {
+            var variables = WindowsEnvironment.Create(new TerminalLaunchOptions
+            {
+                CommandLine = CommandPrompt(),
+                InheritEnvironment = true,
+                ReloadEnvironmentVariables = true,
+            });
+
+            Assert.True(variables.ContainsKey("ProgramFiles"));
+            Assert.True(variables.ContainsKey("CommonProgramFiles"));
+            Assert.True(variables.ContainsKey("Path"));
+
+            // ReloadEnvironmentVariables takes precedence over InheritEnvironment.
+            Assert.False(variables.ContainsKey(Marker));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(Marker, null);
+        }
+    }
     [Fact(Skip = "ConPTY is Windows-only.", SkipUnless = nameof(IsWindows))]
     public async Task ConPtyStandardHandlesAreConsoleHandles()
     {

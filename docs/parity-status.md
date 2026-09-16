@@ -70,6 +70,33 @@ architecture-matched native helpers with versioned, authenticated boundaries.
 The package gate validates helper PE architecture, SHA-256 manifests, Explorer
 registrations, and notices for both x64 and ARM64.
 
+## Windows environment construction
+
+`WindowsEnvironment` mirrors Windows Terminal `til::env` when building a child
+process environment block.
+
+- `reloadEnvironmentVariables` takes precedence over environment inheritance.
+  When it is set, the block is regenerated from identity/session variables and
+  the registry, and the host process environment is not inherited; inheriting
+  it would reintroduce the stale values the reload exists to discard.
+- Regeneration sources the `ProgramFiles`/`CommonProgramFiles` family from
+  `HKLM\Software\Microsoft\Windows\CurrentVersion` using the process-bitness
+  registry view, including the `(x86)`, `(Arm)`, and `W6432` variants that
+  apply to the running architecture, instead of copying the host values.
+- Machine, user, volatile, and session registry environment keys are applied in
+  Windows Terminal order, with environment-reference expansion and
+  `Path`/`LibPath`/`Os2LibPath` concatenation.
+- Profile `environment` overrides follow `set_user_environment_var`: values are
+  expanded against the already-constructed environment, so `%PATH%;C:\tools`
+  appends to the resolved `PATH`, and unknown `%VAR%` references are kept
+  verbatim. `TEMP` and `TMP` are shortened with `GetShortPathNameW`, falling
+  back to the original path when shortening is unavailable.
+- An empty override value is a no-op, matching Windows Terminal, which never
+  stores empty values. A `null` override value deletes the variable; this
+  deletion is a Devolutions Terminal extension.
+- Registry access is best-effort per key and per value: expected access and
+  data errors are contained so a locked or malformed key cannot prevent
+  terminal startup.
 ## Terminal protocol and rendering
 
 | Area | Status | Remaining acceptance |
