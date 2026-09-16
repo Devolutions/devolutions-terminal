@@ -130,15 +130,17 @@ foreach ($file in $files) {
 
     [void]$builder.AppendLine("      <Component Directory='$directoryId'>")
     [void]$builder.AppendLine("        <File Id='$componentId' Source='$([System.Security.SecurityElement]::Escape($file.FullName))' KeyPath='yes' />")
-    if ($relativePath -eq 'Devolutions.Terminal.exe') {
-        # A non-advertised shortcut with an explicit Target is used instead of Advertise="yes"
-        # so Windows Search can resolve the icon and target directly from the .lnk file without
-        # needing Windows Installer self-repair to resolve an advertised shortcut first.
-        [void]$builder.AppendLine('        <Shortcut Id="DevolutionsTerminalShortcut" Directory="ApplicationProgramsFolder" Name="Devolutions Terminal" Description="Open Devolutions Terminal" Target="[INSTALLLOCATION]Devolutions.Terminal.exe" WorkingDirectory="INSTALLLOCATION" Icon="DevolutionsTerminal.ico" />')
-        [void]$builder.AppendLine('        <RemoveFolder Id="RemoveApplicationProgramsFolder" Directory="ApplicationProgramsFolder" On="uninstall" />')
-    }
     [void]$builder.AppendLine('      </Component>')
 }
+
+# Non-advertised per-user shortcuts must use an HKCU registry value as their component key path.
+# Keeping this separate from the per-machine executable component also lets Windows Search resolve
+# the explicit target and icon without relying on Windows Installer advertised-shortcut metadata.
+[void]$builder.AppendLine('      <Component Id="cmp_DevolutionsTerminalShortcut" Directory="ApplicationProgramsFolder">')
+[void]$builder.AppendLine('        <Shortcut Id="DevolutionsTerminalShortcut" Name="Devolutions Terminal" Description="Open Devolutions Terminal" Target="[INSTALLLOCATION]Devolutions.Terminal.exe" WorkingDirectory="INSTALLLOCATION" Icon="DevolutionsTerminal.ico" />')
+[void]$builder.AppendLine('        <RemoveFolder Id="RemoveApplicationProgramsFolder" On="uninstall" />')
+[void]$builder.AppendLine('        <RegistryValue Root="HKCU" Key="Software\Devolutions\Devolutions Terminal" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />')
+[void]$builder.AppendLine('      </Component>')
 
 [void]$builder.AppendLine('    </ComponentGroup>')
 [void]$builder.AppendLine('  </Fragment>')
