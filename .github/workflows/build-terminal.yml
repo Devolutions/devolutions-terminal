@@ -56,7 +56,7 @@ jobs:
       publish_environment: ${{ steps.resolve.outputs.publish_environment }}
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@v4
 
       - name: Resolve tag, versions, and signing environment
         id: resolve
@@ -131,7 +131,7 @@ jobs:
     needs: release-metadata
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@v4
 
       - name: Cache native libraries
         uses: actions/cache@v4
@@ -146,7 +146,7 @@ jobs:
           key: native-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/**/*.ps1', 'native/ghostty/ghostty-upstream.json', 'native/linux-pty/dt-pty-host.c', 'native/noto-emoji/noto-emoji.json') }}
 
       - name: Set up .NET
-        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
 
@@ -171,7 +171,7 @@ jobs:
           - win-arm64
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@v4
 
       - name: Cache native libraries
         uses: actions/cache@v4
@@ -185,7 +185,7 @@ jobs:
           key: native-v2-${{ runner.os }}-${{ runner.arch }}-${{ matrix.rid }}-${{ hashFiles('native/**/*.ps1', 'native/ghostty/ghostty-upstream.json', 'native/linux-pty/dt-pty-host.c', 'native/noto-emoji/noto-emoji.json') }}
 
       - name: Set up .NET
-        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
 
@@ -199,7 +199,7 @@ jobs:
           -o artifacts/${{ matrix.rid }}
 
       - name: Upload native executable
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@v4
         with:
           name: DevolutionsTerminal-${{ matrix.rid }}
           path: artifacts/${{ matrix.rid }}
@@ -211,7 +211,7 @@ jobs:
     needs: release-metadata
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@v4
 
       - name: Cache native libraries
         uses: actions/cache@v4
@@ -225,7 +225,7 @@ jobs:
           key: native-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/**/*.ps1', 'native/ghostty/ghostty-upstream.json', 'native/linux-pty/dt-pty-host.c', 'native/noto-emoji/noto-emoji.json') }}
 
       - name: Set up .NET
-        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
 
@@ -244,7 +244,7 @@ jobs:
     needs: release-metadata
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@v4
 
       - name: Cache native libraries
         uses: actions/cache@v4
@@ -258,7 +258,7 @@ jobs:
           key: native-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/**/*.ps1', 'native/ghostty/ghostty-upstream.json', 'native/linux-pty/dt-pty-host.c', 'native/noto-emoji/noto-emoji.json') }}
 
       - name: Set up .NET
-        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
 
@@ -285,7 +285,7 @@ jobs:
           - osx-x64
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@v4
 
       - name: Cache native libraries
         uses: actions/cache@v4
@@ -299,7 +299,7 @@ jobs:
           key: native-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/**/*.ps1', 'native/ghostty/ghostty-upstream.json', 'native/linux-pty/dt-pty-host.c', 'native/noto-emoji/noto-emoji.json') }}
 
       - name: Set up .NET
-        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
 
@@ -316,7 +316,7 @@ jobs:
           -o artifacts/publish/${{ matrix.rid }}
 
       - name: Upload macOS NativeAOT publish
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@v4
         with:
           name: DevolutionsTerminal-${{ matrix.rid }}
           path: artifacts/publish/${{ matrix.rid }}
@@ -342,7 +342,7 @@ jobs:
         run: pwsh -NoLogo -NoProfile -File scripts/Test-MacOsRuntime.ps1 artifacts/macos-packages
 
       - name: Upload macOS package artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@v4
         with:
           name: DevolutionsTerminal-${{ matrix.rid }}-packages
           path: artifacts/macos-packages
@@ -363,10 +363,10 @@ jobs:
           - osx-x64
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@v4
 
       - name: Download unsigned macOS package
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@v4
         with:
           name: DevolutionsTerminal-${{ matrix.rid }}-packages
           path: artifacts/macos-packages
@@ -463,7 +463,7 @@ jobs:
         run: pwsh -NoLogo -NoProfile -File scripts/Test-MacOsPackage.ps1 ${{ matrix.rid }} artifacts/macos-signed-packages/*.zip
 
       - name: Upload final macOS package artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@v4
         with:
           name: DevolutionsTerminal-${{ matrix.rid }}-signed-packages
           path: artifacts/macos-signed-packages
@@ -487,10 +487,10 @@ jobs:
             runtime_sha256: 00cbdfcf917cc6c0ff6d3347d59e0ca1f7f45a6df1a428a0d6d8a78664d87444
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@v4
 
       - name: Set up .NET
-        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
 
@@ -542,7 +542,7 @@ jobs:
           dotnet publish @publishArgs
 
       - name: Upload Linux NativeAOT publish
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@v4
         with:
           name: DevolutionsTerminal-${{ matrix.rid }}
           path: artifacts/publish/${{ matrix.rid }}
@@ -580,7 +580,7 @@ jobs:
             artifacts/linux-packages-rebuilt/*-"${{ matrix.rid }}".sha256
 
       - name: Upload Linux package artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@v4
         with:
           name: DevolutionsTerminal-${{ matrix.rid }}-packages
           path: artifacts/linux-packages
@@ -592,7 +592,7 @@ jobs:
     needs: linux-packages
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@v4
 
       - name: Verify native ARM64 runner
         shell: pwsh
@@ -604,7 +604,7 @@ jobs:
           }
 
       - name: Set up .NET
-        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
 
@@ -615,7 +615,7 @@ jobs:
             appstream cpio desktop-file-utils rpm squashfs-tools
 
       - name: Download ARM64 packages
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@v4
         with:
           name: DevolutionsTerminal-linux-arm64-packages
           path: artifacts/linux-arm64-packages
@@ -632,21 +632,21 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@v4
 
       - name: Set up WinApp CLI
-        uses: microsoft/setup-WinAppCli@cc8ea9a08b3ee3db43d5aa6bddda4a0e87d800f7 # v0.1
+        uses: microsoft/setup-WinAppCli@v0.1
         with:
           version: v0.6.0
 
       - name: Download x64 publish
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@v4
         with:
           name: DevolutionsTerminal-win-x64
           path: artifacts/msix/layout/win-x64
 
       - name: Download arm64 publish
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@v4
         with:
           name: DevolutionsTerminal-win-arm64
           path: artifacts/msix/layout/win-arm64
@@ -668,7 +668,7 @@ jobs:
           ForEach-Object FullName)
 
       - name: Upload unsigned MSIX artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@v4
         with:
           name: DevolutionsTerminal-MSIX-unsigned
           path: artifacts/msix/packages
@@ -684,45 +684,45 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@v4
 
       - name: Set up .NET
-        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
 
       - name: Download Windows x64 publish
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@v4
         with:
           name: DevolutionsTerminal-win-x64
           path: artifacts/nuget/layout/win-x64
 
       - name: Download Windows arm64 publish
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@v4
         with:
           name: DevolutionsTerminal-win-arm64
           path: artifacts/nuget/layout/win-arm64
 
       - name: Download Linux x64 publish
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@v4
         with:
           name: DevolutionsTerminal-linux-x64
           path: artifacts/nuget/layout/linux-x64
 
       - name: Download Linux arm64 publish
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@v4
         with:
           name: DevolutionsTerminal-linux-arm64
           path: artifacts/nuget/layout/linux-arm64
 
       - name: Download macOS x64 publish
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@v4
         with:
           name: DevolutionsTerminal-osx-x64
           path: artifacts/nuget/layout/osx-x64
 
       - name: Download macOS arm64 publish
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@v4
         with:
           name: DevolutionsTerminal-osx-arm64
           path: artifacts/nuget/layout/osx-arm64
@@ -735,7 +735,7 @@ jobs:
           -Version "${{ needs.release-metadata.outputs.release_version }}"
 
       - name: Upload NuGet distribution package
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@v4
         with:
           name: DevolutionsTerminal-NuGet
           path: artifacts/nuget/packages/*.nupkg
@@ -757,16 +757,16 @@ jobs:
       name: ${{ (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')) && needs.release-metadata.outputs.publish_environment || 'publish-dry-run' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@v4
 
       - name: Download x64 publish
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@v4
         with:
           name: DevolutionsTerminal-win-x64
           path: artifacts/msi/layout/win-x64
 
       - name: Download arm64 publish
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@v4
         with:
           name: DevolutionsTerminal-win-arm64
           path: artifacts/msi/layout/win-arm64
@@ -851,7 +851,7 @@ jobs:
 
       - name: Azure login for Trusted Signing
         if: steps.signing-mode.outputs.should_sign == 'true'
-        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
+        uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -915,7 +915,7 @@ jobs:
           ./src/Devolutions.Terminal.Package/Scripts/Test-Packages.ps1 @arguments
 
       - name: Upload unsigned MSI artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@v4
         with:
           name: DevolutionsTerminal-MSI-unsigned
           path: artifacts/msi/packages
@@ -948,46 +948,46 @@ jobs:
       MSIX_VERSION: ${{ needs.release-metadata.outputs.msix_version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@v4
 
       - name: Download Windows unsigned MSIX
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@v4
         with:
           name: DevolutionsTerminal-MSIX-unsigned
           path: artifacts/msix-packages
 
       - name: Download Windows unsigned MSI
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@v4
         with:
           name: DevolutionsTerminal-MSI-unsigned
           path: artifacts/msi-packages
 
       - name: Download Linux x64 packages
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@v4
         with:
           name: DevolutionsTerminal-linux-x64-packages
           path: artifacts/linux-x64
 
       - name: Download Linux arm64 packages
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@v4
         with:
           name: DevolutionsTerminal-linux-arm64-packages
           path: artifacts/linux-arm64
 
       - name: Download macOS arm64 package artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@v4
         with:
           name: DevolutionsTerminal-osx-arm64-signed-packages
           path: artifacts/macos-packages
 
       - name: Download macOS x64 package artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@v4
         with:
           name: DevolutionsTerminal-osx-x64-signed-packages
           path: artifacts/macos-packages
 
       - name: Download NuGet distribution package
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@v4
         with:
           name: DevolutionsTerminal-NuGet
           path: artifacts/nuget
@@ -1103,7 +1103,7 @@ jobs:
 
       - name: Azure login for Trusted Signing
         if: steps.signing-mode.outputs.should_sign == 'true'
-        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
+        uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -1168,7 +1168,7 @@ jobs:
 
       - name: Upload dry-run release assets
         if: needs.release-metadata.outputs.dry_run == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@v4
         with:
           name: DevolutionsTerminal-${{ env.RELEASE_TAG }}-dry-run
           path: artifacts/release
