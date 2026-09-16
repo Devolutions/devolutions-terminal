@@ -1,8 +1,9 @@
 # macOS support
 
 macOS is a first-class host for the managed app, Unix PTY transport, built-in
-and Ghostty engines, and NativeAOT `.app` packaging. Global hotkeys, default
-terminal registration, notarization, DMG, and Homebrew remain out of scope.
+and Ghostty engines, and NativeAOT `.app` packaging (including signed,
+notarized `.dmg` release artifacts). Global hotkeys, default terminal
+registration, and Homebrew remain out of scope.
 
 ## What works
 
@@ -16,10 +17,13 @@ terminal registration, notarization, DMG, and Homebrew remain out of scope.
 - Notifications through `osascript` `display notification`
 - `dterm:` URL scheme declared in `macos/Info.plist`
 - NativeAOT `.app` + zip packaging on Darwin
+- Signed, notarized `.dmg` release artifacts via
+  `scripts/Release-MacOsPackage.sh` (CI only; ad-hoc unsigned zip/dmg locally
+  or without Apple signing secrets)
 
 ## Not bundled yet
 
-- Notarization / DMG / Homebrew cask
+- Homebrew cask
 - Global hotkeys (broker / `dt -w` still work)
 - Default-terminal registration
 

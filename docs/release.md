@@ -68,7 +68,11 @@ bash scripts/Test-MacOsRuntime.sh artifacts/packages
 
 The staged `Devolutions Terminal.app` contains `Devolutions.Terminal`, `dt`,
 `dt-pty-host`, `libghostty-vt.dylib`, Skia, HarfBuzz, `Info.plist`, and an
-ad-hoc signed icon. Notarization, DMG, and Homebrew are not part of this gate.
+ad-hoc signed icon. This gate (`Build-MacOsPackage.sh`) produces an unsigned,
+unnotarized zip for fast local iteration; the CI release pipeline additionally
+runs `scripts/Release-MacOsPackage.sh` to sign the bundle with a Developer ID
+identity, notarize it, and produce a signed `.dmg`. Homebrew packaging is not
+part of this gate.
 
 Linux package formats:
 
