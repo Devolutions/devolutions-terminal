@@ -48,7 +48,7 @@ jobs:
             os: macos-14
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@v4
 
       - name: Install llvm-strip
         if: runner.os == 'Linux'
@@ -65,7 +65,7 @@ jobs:
           -SkipHashCheck
 
       - name: Upload ${{ matrix.rid }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@v4
         with:
           name: libghostty-vt-${{ matrix.rid }}
           path: native/ghostty/${{ matrix.rid }}
@@ -77,7 +77,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Download RID artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@v4
         with:
           pattern: libghostty-vt-*
           path: artifacts/libghostty-vt
@@ -90,7 +90,7 @@ jobs:
             xargs -0 sha256sum > artifacts/libghostty-vt/SHA256SUMS
 
       - name: Upload combined natives
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@v4
         with:
           name: libghostty-vt
           path: artifacts/libghostty-vt

@@ -78,13 +78,19 @@ begin {
     }
 
     function Test-Signature {
-        param([string] $Path)
+        param(
+            [string] $Path,
+
+            [switch] $RequirePublisherSubject
+        )
 
         $signature = Get-AuthenticodeSignature -FilePath $Path
         Assert-Condition ($null -ne $signature.SignerCertificate) "No signature was found on '$Path'."
-        Assert-Condition (
-            $signature.SignerCertificate.Subject -eq "CN=Devolutions Inc."
-        ) "The signer for '$Path' does not match the package publisher."
+        if ($RequirePublisherSubject) {
+            Assert-Condition (
+                $signature.SignerCertificate.Subject -eq "CN=Devolutions Inc."
+            ) "The signer for '$Path' does not match the package publisher."
+        }
 
         $signatureOutput = & winapp tool signtool verify /pa /v $Path 2>&1
         if ($LASTEXITCODE -eq 0) {
@@ -189,7 +195,7 @@ begin {
             }
 
             if ($RequireSignature) {
-                Test-Signature $Path
+                Test-Signature $Path -RequirePublisherSubject
             }
 
             [pscustomobject]@{

@@ -30,7 +30,7 @@ registration.
 
 | Field | Value |
 | --- | --- |
-| Package name | `Devolutions.Terminal` |
+| NuGet distribution package | `Devolutions.Terminal.App` |
 | Publisher | `CN=Devolutions Inc.` |
 | Application ID | `Terminal` |
 | Execution aliases | `dt.exe`, `Devolutions.Terminal.exe` |

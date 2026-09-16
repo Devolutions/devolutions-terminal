@@ -259,6 +259,8 @@ Required environment secrets:
 - `TRUSTED_SIGNING_ENDPOINT`
 - `TRUSTED_SIGNING_ACCOUNT_NAME`
 - `TRUSTED_SIGNING_PROFILE_NAME`
+- `NUGET_BOT_USERNAME` — NuGet.org trusted-publishing identity for
+  `Devolutions.Terminal.App`
 
 Optional environment or repository variable:
 
@@ -267,6 +269,11 @@ Optional environment or repository variable:
 `psign-tool` portable Artifact Signing signs the per-architecture `.msix` and
 `.msi` files. The MSIX `Publisher` identity in `Package.appxmanifest` must
 match the Artifact Signing certificate subject.
+
+The release job publishes `Devolutions.Terminal.App` to NuGet.org through OIDC
+trusted publishing. Configure the `publish-test` and `publish-prod`
+environments as trusted publishers for the package on NuGet.org. Dry runs do
+not request a NuGet API key or publish the package.
 
 ## Release gates
 
