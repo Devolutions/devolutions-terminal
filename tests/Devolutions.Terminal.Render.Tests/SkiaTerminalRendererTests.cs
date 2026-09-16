@@ -130,6 +130,53 @@ public sealed class SkiaTerminalRendererTests
     }
 
     [Fact]
+    public void BuiltinBlockElementsSnapClaudeLogoToCellEdges()
+    {
+        using var renderer = new SkiaTerminalRenderer();
+        var frame = CreateFrame(
+            "\u001b[38;2;215;119;87m\u2590\u259B\u2588\u259D\u259C\u2580");
+        using var bitmap = NewBitmap(renderer, frame);
+        using var canvas = new SKCanvas(bitmap);
+
+        Draw(renderer, canvas, frame);
+
+        var orange = new SKColor(215, 119, 87);
+        var background = new SKColor(12, 12, 12);
+        var cellWidth = (int)renderer.CellSize.Width;
+        var cellHeight = (int)renderer.CellSize.Height;
+        var left = 8;
+        var top = 8;
+
+        Assert.Equal(background, bitmap.GetPixel(left, top + (cellHeight / 2)));
+        Assert.Equal(orange, bitmap.GetPixel(left + cellWidth - 1, top + (cellHeight / 2)));
+
+        left += cellWidth;
+        Assert.Equal(orange, bitmap.GetPixel(left, top));
+        Assert.Equal(orange, bitmap.GetPixel(left + cellWidth - 1, top));
+        Assert.Equal(orange, bitmap.GetPixel(left, top + cellHeight - 1));
+        Assert.Equal(background, bitmap.GetPixel(left + cellWidth - 1, top + cellHeight - 1));
+
+        left += cellWidth;
+        Assert.Equal(orange, bitmap.GetPixel(left, top));
+        Assert.Equal(orange, bitmap.GetPixel(left + cellWidth - 1, top + cellHeight - 1));
+
+        left += cellWidth;
+        Assert.Equal(background, bitmap.GetPixel(left, top));
+        Assert.Equal(orange, bitmap.GetPixel(left + cellWidth - 1, top));
+        Assert.Equal(background, bitmap.GetPixel(left + cellWidth - 1, top + cellHeight - 1));
+
+        left += cellWidth;
+        Assert.Equal(orange, bitmap.GetPixel(left, top));
+        Assert.Equal(background, bitmap.GetPixel(left, top + cellHeight - 1));
+        Assert.Equal(orange, bitmap.GetPixel(left + cellWidth - 1, top + cellHeight - 1));
+
+        left += cellWidth;
+        Assert.Equal(orange, bitmap.GetPixel(left, top));
+        Assert.Equal(background, bitmap.GetPixel(left, top + cellHeight - 1));
+        Assert.Equal(0, renderer.CacheStatistics.Count);
+    }
+
+    [Fact]
     public void EmojiUsesAnInstalledPlatformFallback()
     {
         using var renderer = new SkiaTerminalRenderer();

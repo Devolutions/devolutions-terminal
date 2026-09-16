@@ -16,6 +16,7 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
         IsAntialias = false,
         Style = SKPaintStyle.Stroke,
     };
+    private readonly SKPaint _blockPaint = new() { IsAntialias = false };
     private readonly SKPath _powerlineRight = CreatePowerlinePath(pointsRight: true);
     private readonly SKPath _powerlineLeft = CreatePowerlinePath(pointsRight: false);
     private TerminalRendererSettings _settings;
@@ -243,6 +244,7 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
             ReleaseResources();
             _paint.Dispose();
             _strokePaint.Dispose();
+            _blockPaint.Dispose();
             _powerlineRight.Dispose();
             _powerlineLeft.Dispose();
             _disposed = true;
@@ -648,6 +650,16 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
                 continue;
             }
 
+            if (TryDrawBlockElement(
+                canvas,
+                run.Text.AsSpan(cluster.TextOffset, cluster.TextLength),
+                cellLeft,
+                top,
+                cellWidth))
+            {
+                continue;
+            }
+
             if (TryDrawPowerline(
                 canvas,
                 run.Text.AsSpan(cluster.TextOffset, cluster.TextLength),
@@ -729,6 +741,113 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
 
         return true;
     }
+
+    private bool TryDrawBlockElement(
+        SKCanvas canvas,
+        ReadOnlySpan<char> text,
+        float left,
+        float top,
+        float width)
+    {
+        Rune.DecodeFromUtf16(text, out var rune, out var consumed);
+        if (consumed != text.Length)
+        {
+            return false;
+        }
+
+        var height = (float)CellSize.Height;
+        _blockPaint.Color = _paint.Color;
+        switch (rune.Value)
+        {
+            case 0x2580:
+                DrawBlock(canvas, left, top, width, height / 2);
+                return true;
+            case >= 0x2581 and <= 0x2588:
+            {
+                var fraction = rune.Value - 0x2580;
+                var blockHeight = height * fraction / 8;
+                DrawBlock(canvas, left, top + height - blockHeight, width, blockHeight);
+                return true;
+            }
+            case >= 0x2589 and <= 0x258F:
+            {
+                var fraction = 0x2590 - rune.Value;
+                DrawBlock(canvas, left, top, width * fraction / 8, height);
+                return true;
+            }
+            case 0x2590:
+                DrawBlock(canvas, left + (width / 2), top, width / 2, height);
+                return true;
+            case 0x2594:
+                DrawBlock(canvas, left, top, width, height / 8);
+                return true;
+            case 0x2595:
+                DrawBlock(canvas, left + (width * 7 / 8), top, width / 8, height);
+                return true;
+            case >= 0x2596 and <= 0x259F:
+                DrawQuadrantBlock(canvas, rune.Value, left, top, width, height);
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private void DrawQuadrantBlock(
+        SKCanvas canvas,
+        int value,
+        float left,
+        float top,
+        float width,
+        float height)
+    {
+        const int upperLeft = 1;
+        const int upperRight = 2;
+        const int lowerLeft = 4;
+        const int lowerRight = 8;
+        var quadrants = value switch
+        {
+            0x2596 => lowerLeft,
+            0x2597 => lowerRight,
+            0x2598 => upperLeft,
+            0x2599 => upperLeft | lowerLeft | lowerRight,
+            0x259A => upperLeft | lowerRight,
+            0x259B => upperLeft | upperRight | lowerLeft,
+            0x259C => upperLeft | upperRight | lowerRight,
+            0x259D => upperRight,
+            0x259E => upperRight | lowerLeft,
+            0x259F => upperRight | lowerLeft | lowerRight,
+            _ => 0,
+        };
+        var halfWidth = width / 2;
+        var halfHeight = height / 2;
+        if ((quadrants & upperLeft) != 0)
+        {
+            DrawBlock(canvas, left, top, halfWidth, halfHeight);
+        }
+
+        if ((quadrants & upperRight) != 0)
+        {
+            DrawBlock(canvas, left + halfWidth, top, halfWidth, halfHeight);
+        }
+
+        if ((quadrants & lowerLeft) != 0)
+        {
+            DrawBlock(canvas, left, top + halfHeight, halfWidth, halfHeight);
+        }
+
+        if ((quadrants & lowerRight) != 0)
+        {
+            DrawBlock(canvas, left + halfWidth, top + halfHeight, halfWidth, halfHeight);
+        }
+    }
+
+    private void DrawBlock(
+        SKCanvas canvas,
+        float left,
+        float top,
+        float width,
+        float height) =>
+        canvas.DrawRect(left, top, width, height, _blockPaint);
 
     private bool TryDrawPowerline(
         SKCanvas canvas,
