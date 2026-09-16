@@ -729,29 +729,9 @@ public sealed class ConPtyConnection : IRestartableTerminalConnection
 
     private static nint CreateEnvironmentBlock(TerminalLaunchOptions options)
     {
-        var variables = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        if (options.InheritEnvironment)
-        {
-            foreach (System.Collections.DictionaryEntry pair in Environment.GetEnvironmentVariables())
-            {
-                if (pair.Key is string key && pair.Value is string value)
-                {
-                    variables[key] = value;
-                }
-            }
-        }
-
-        foreach (var pair in options.EnvironmentVariables)
-        {
-            if (pair.Value is null)
-            {
-                variables.Remove(pair.Key);
-            }
-            else
-            {
-                variables[pair.Key] = pair.Value;
-            }
-        }
+        // WindowsEnvironment.Create applies the profile overrides with Windows
+        // Terminal's expansion, deletion, and TEMP/TMP shortening semantics.
+        var variables = WindowsEnvironment.Create(options);
 
         var builder = new StringBuilder();
         foreach (var pair in variables)

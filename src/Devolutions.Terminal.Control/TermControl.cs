@@ -287,7 +287,7 @@ public sealed class TermControl : Avalonia.Controls.Control
                     WorkingDirectory = profile.ExpandStartingDirectory(),
                     Columns = columns,
                     Rows = rows,
-                    InheritEnvironment = profile.ReloadEnvironmentVariables,
+                    ReloadEnvironmentVariables = profile.ReloadEnvironmentVariables,
                     EnvironmentVariables = BuildTerminalEnvironment(profile),
                     CloseOnExit = ToConnectionPolicy(profile.CloseOnExit),
                 }).ConfigureAwait(true);
