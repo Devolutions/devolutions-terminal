@@ -734,6 +734,13 @@ jobs:
           -SkipPublish
           -Version "${{ needs.release-metadata.outputs.release_version }}"
 
+      - name: Smoke test NuGet package import
+        shell: pwsh
+        run: >
+          ./src/Devolutions.Terminal.Package/Scripts/Test-NuGetDistribution.ps1
+          -PackagePath ./artifacts/nuget/packages/Devolutions.Terminal.App.${{ needs.release-metadata.outputs.release_version }}.nupkg
+          -Version "${{ needs.release-metadata.outputs.release_version }}"
+
       - name: Upload NuGet distribution package
         uses: actions/upload-artifact@v4
         with:
