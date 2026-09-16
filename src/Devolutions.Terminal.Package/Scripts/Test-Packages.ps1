@@ -6,6 +6,11 @@ param(
 
     [switch] $RequireSignature,
 
+    # For .msi packages, verifies only that the bundled application binaries (Devolutions.Terminal.exe,
+    # dt.exe) are Authenticode-signed, without requiring the .msi container itself to be signed yet.
+    # Useful right after binaries are signed but before the final MSI container is signed.
+    [switch] $RequireBinarySignature,
+
     [switch] $AllowUntrustedRoot
 )
 
@@ -198,16 +203,64 @@ begin {
             Remove-Item -Recurse -Force -LiteralPath $extractPath
         }
     }
+    function Test-Msi {
+        param([string] $Path)
+
+        if ($RequireSignature) {
+            Test-Signature $Path
+        }
+
+        $extractPath = Join-Path ([IO.Path]::GetTempPath()) ("wt-msi-" + [guid]::NewGuid())
+        New-Item -ItemType Directory -Path $extractPath | Out-Null
+        try {
+            $logPath = Join-Path ([IO.Path]::GetTempPath()) ("wt-msi-" + [guid]::NewGuid() + ".log")
+            $arguments = @(
+                "/a", "`"$Path`"",
+                "/qn",
+                "TARGETDIR=`"$extractPath`"",
+                "/log", "`"$logPath`""
+            )
+            $process = Start-Process -FilePath msiexec.exe -ArgumentList $arguments -Wait -PassThru -NoNewWindow
+            if ($process.ExitCode -ne 0) {
+                if (Test-Path -LiteralPath $logPath) {
+                    Get-Content -LiteralPath $logPath | Out-Host
+                }
+                throw "Administrative extraction of '$Path' failed with exit code $($process.ExitCode)."
+            }
+            Remove-Item -LiteralPath $logPath -ErrorAction SilentlyContinue
+
+            $payloadRoot = Get-ChildItem -LiteralPath $extractPath -Directory -Recurse |
+                Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName "Devolutions.Terminal.exe") } |
+                Select-Object -First 1
+            Assert-Condition ($null -ne $payloadRoot) "Devolutions.Terminal.exe was not found in the extracted contents of '$Path'."
+
+            $hostExePath = Join-Path $payloadRoot.FullName "Devolutions.Terminal.exe"
+            $cliExePath = Join-Path $payloadRoot.FullName "dt.exe"
+            Assert-Condition (Test-Path -LiteralPath $cliExePath -PathType Leaf) "dt.exe is missing from '$Path'."
+
+            if ($RequireSignature -or $RequireBinarySignature) {
+                Test-Signature $hostExePath
+                Test-Signature $cliExePath
+            }
+
+            [pscustomobject]@{
+                Path = $Path
+                Signed = $RequireSignature.IsPresent
+            }
+        }
+        finally {
+            Remove-Item -Recurse -Force -LiteralPath $extractPath -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 process {
     foreach ($path in $PackagePath) {
         $resolvedPath = [IO.Path]::GetFullPath($path)
-        if ([IO.Path]::GetExtension($resolvedPath) -eq ".msix") {
-            Test-Msix $resolvedPath
-        }
-        else {
-            throw "Unsupported package extension for '$resolvedPath'."
+        switch ([IO.Path]::GetExtension($resolvedPath)) {
+            ".msix" { Test-Msix $resolvedPath }
+            ".msi" { Test-Msi $resolvedPath }
+            default { throw "Unsupported package extension for '$resolvedPath'." }
         }
     }
 }

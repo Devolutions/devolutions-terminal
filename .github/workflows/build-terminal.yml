@@ -545,6 +545,14 @@ jobs:
       - native-aot
       - release-metadata
     runs-on: windows-latest
+    permissions:
+      contents: read
+      id-token: write
+    environment:
+      # Ordinary (non-release) builds are bound to the low-stakes dry-run environment so they never
+      # wait on approval/protection rules meant for real signing releases; only an actual release
+      # trigger (workflow_dispatch or a tag push) is bound to the real signing environment.
+      name: ${{ (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')) && needs.release-metadata.outputs.publish_environment || 'publish-dry-run' }}
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -561,6 +569,123 @@ jobs:
           name: DevolutionsTerminal-win-arm64
           path: artifacts/msi/layout/win-arm64
 
+      - name: Resolve binary signing mode
+        id: signing-mode
+        shell: pwsh
+        env:
+          IS_RELEASE_EVENT: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          TRUSTED_SIGNING_ENDPOINT: ${{ secrets.TRUSTED_SIGNING_ENDPOINT }}
+          TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.TRUSTED_SIGNING_ACCOUNT_NAME }}
+          TRUSTED_SIGNING_PROFILE_NAME: ${{ secrets.TRUSTED_SIGNING_PROFILE_NAME }}
+        run: |
+          # Ordinary (non-release) CI runs never attempt binary signing: they are not gated on
+          # signing secrets being configured, so they must not fail when those secrets are absent.
+          if ($env:IS_RELEASE_EVENT -ne "true") {
+            "should_sign=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            Write-Host "Not a release build; skipping binary signing."
+            exit 0
+          }
+
+          $dryRun = [System.Boolean]::Parse('${{ needs.release-metadata.outputs.dry_run }}')
+          $signDryRun = [System.Boolean]::Parse('${{ needs.release-metadata.outputs.sign_dry_run }}')
+          $required = @(
+            "AZURE_CLIENT_ID",
+            "AZURE_TENANT_ID",
+            "AZURE_SUBSCRIPTION_ID",
+            "TRUSTED_SIGNING_ENDPOINT",
+            "TRUSTED_SIGNING_ACCOUNT_NAME",
+            "TRUSTED_SIGNING_PROFILE_NAME"
+          )
+          $missing = @($required | Where-Object { [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_)) })
+
+          if ($dryRun -and -not $signDryRun) {
+            "should_sign=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            Write-Host "Dry run will not sign the application binaries bundled in the MSI."
+            exit 0
+          }
+
+          if ($missing.Count -gt 0) {
+            if ($dryRun) {
+              "should_sign=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+              Write-Host "::notice::Skipping dry-run binary signing because these secrets are unavailable: $($missing -join ', ')"
+              exit 0
+            }
+
+            throw "Missing Azure Artifact Signing secrets: $($missing -join ', ')"
+          }
+
+          "should_sign=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Install Windows psign-tool
+        if: steps.signing-mode.outputs.should_sign == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $toolRoot = Join-Path $env:RUNNER_TEMP "psign-tool"
+          if (Test-Path -LiteralPath $toolRoot) {
+            Remove-Item -LiteralPath $toolRoot -Recurse -Force
+          }
+
+          New-Item -Path $toolRoot -ItemType Directory -Force | Out-Null
+          gh release download --repo Devolutions/psign --pattern "psign-tool-windows-x64.zip" --dir $toolRoot --clobber
+
+          $toolArchivePath = Join-Path $toolRoot "psign-tool-windows-x64.zip"
+          if (-not (Test-Path -LiteralPath $toolArchivePath -PathType Leaf)) {
+            throw "psign-tool archive was not found at $toolArchivePath"
+          }
+
+          Expand-Archive -Path $toolArchivePath -DestinationPath $toolRoot -Force
+          $toolPath = Join-Path $toolRoot "psign-tool.exe"
+          if (-not (Test-Path -LiteralPath $toolPath -PathType Leaf)) {
+            throw "psign-tool executable was not found at $toolPath"
+          }
+
+          $toolRoot | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          & $toolPath --version
+
+      - name: Azure login for Trusted Signing
+        if: steps.signing-mode.outputs.should_sign == 'true'
+        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign application binaries bundled in the MSI
+        if: steps.signing-mode.outputs.should_sign == 'true'
+        shell: pwsh
+        env:
+          TRUSTED_SIGNING_ENDPOINT: ${{ secrets.TRUSTED_SIGNING_ENDPOINT }}
+          TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.TRUSTED_SIGNING_ACCOUNT_NAME }}
+          TRUSTED_SIGNING_PROFILE_NAME: ${{ secrets.TRUSTED_SIGNING_PROFILE_NAME }}
+          TRUSTED_SIGNING_TIMESTAMP_SERVER: ${{ vars.TRUSTED_SIGNING_TIMESTAMP_SERVER }}
+        run: |
+          $timestampServer = $env:TRUSTED_SIGNING_TIMESTAMP_SERVER
+          if ([string]::IsNullOrWhiteSpace($timestampServer)) {
+            $timestampServer = "http://timestamp.acs.microsoft.com/"
+          }
+
+          $accessToken = az account get-access-token `
+            --scope https://codesigning.azure.net/.default `
+            --query accessToken `
+            --output tsv
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($accessToken)) {
+            throw "Failed to acquire an Azure Trusted Signing access token."
+          }
+
+          ./src/Devolutions.Terminal.Package/Scripts/Sign-Packages.ps1 `
+            -BinaryDirectory artifacts/msi/layout/win-x64, artifacts/msi/layout/win-arm64 `
+            -Version "${{ needs.release-metadata.outputs.msix_version }}" `
+            -ArtifactSigningEndpoint $env:TRUSTED_SIGNING_ENDPOINT `
+            -ArtifactSigningAccountName $env:TRUSTED_SIGNING_ACCOUNT_NAME `
+            -ArtifactSigningProfileName $env:TRUSTED_SIGNING_PROFILE_NAME `
+            -ArtifactSigningAccessToken $accessToken `
+            -TimestampServer $timestampServer
+
       - name: Build MSI packages
         shell: pwsh
         run: >
@@ -568,6 +693,24 @@ jobs:
           -SkipPublish
           -OutputDirectory ./artifacts/msi
           -Version "${{ needs.release-metadata.outputs.msix_version }}"
+
+      - name: Validate MSI package structure
+        shell: pwsh
+        env:
+          SHOULD_SIGN: ${{ steps.signing-mode.outputs.should_sign }}
+        run: |
+          $packagePaths = Get-ChildItem ./artifacts/msi/packages -File |
+            Where-Object Extension -eq ".msi" |
+            ForEach-Object FullName
+
+          $arguments = @{
+            PackagePath = $packagePaths
+          }
+          if ($env:SHOULD_SIGN -eq "true") {
+            $arguments["RequireBinarySignature"] = $true
+          }
+
+          ./src/Devolutions.Terminal.Package/Scripts/Test-Packages.ps1 @arguments
 
       - name: Upload unsigned MSI artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

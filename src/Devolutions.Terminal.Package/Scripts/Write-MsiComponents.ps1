@@ -131,7 +131,10 @@ foreach ($file in $files) {
     [void]$builder.AppendLine("      <Component Directory='$directoryId'>")
     [void]$builder.AppendLine("        <File Id='$componentId' Source='$([System.Security.SecurityElement]::Escape($file.FullName))' KeyPath='yes' />")
     if ($relativePath -eq 'Devolutions.Terminal.exe') {
-        [void]$builder.AppendLine('        <Shortcut Id="DevolutionsTerminalShortcut" Directory="ApplicationProgramsFolder" Name="Devolutions Terminal" Description="Open Devolutions Terminal" Advertise="yes" WorkingDirectory="INSTALLLOCATION" Icon="DevolutionsTerminal.ico" />')
+        # A non-advertised shortcut with an explicit Target is used instead of Advertise="yes"
+        # so Windows Search can resolve the icon and target directly from the .lnk file without
+        # needing Windows Installer self-repair to resolve an advertised shortcut first.
+        [void]$builder.AppendLine('        <Shortcut Id="DevolutionsTerminalShortcut" Directory="ApplicationProgramsFolder" Name="Devolutions Terminal" Description="Open Devolutions Terminal" Target="[INSTALLLOCATION]Devolutions.Terminal.exe" WorkingDirectory="INSTALLLOCATION" Icon="DevolutionsTerminal.ico" />')
         [void]$builder.AppendLine('        <RemoveFolder Id="RemoveApplicationProgramsFolder" Directory="ApplicationProgramsFolder" On="uninstall" />')
     }
     [void]$builder.AppendLine('      </Component>')

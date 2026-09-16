@@ -1,8 +1,14 @@
 [CmdletBinding(DefaultParameterSetName = "ArtifactSigningClientSecret")]
 param(
-    [Parameter(Mandatory)]
     [ValidateScript({ Test-Path -LiteralPath $_ -PathType Container })]
     [string] $PackageDirectory,
+
+    # Directories of unpacked application binaries (for example an MSI publish layout) whose
+    # *.exe/*.dll files should be Authenticode-signed directly, in addition to (or instead of)
+    # the packaged .msi/.msix files in $PackageDirectory. This allows the files bundled inside
+    # an MSI to be signed before the installer is built, since signing the .msi container alone
+    # does not sign the executables it installs.
+    [string[]] $BinaryDirectory,
 
     [Parameter(Mandatory)]
     [ValidatePattern("^\d{1,5}\.\d{1,5}\.\d{1,5}\.\d{1,5}$")]
@@ -49,13 +55,42 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$PackageDirectory = [IO.Path]::GetFullPath($PackageDirectory)
+if ([string]::IsNullOrWhiteSpace($PackageDirectory) -and (-not $BinaryDirectory -or $BinaryDirectory.Count -eq 0)) {
+    throw "Either -PackageDirectory or -BinaryDirectory must be specified."
+}
+
+if (-not [string]::IsNullOrWhiteSpace($PackageDirectory)) {
+    $PackageDirectory = [IO.Path]::GetFullPath($PackageDirectory)
+}
+
 $useArtifactSigning = $PSCmdlet.ParameterSetName -in @("ArtifactSigningClientSecret", "ArtifactSigningAccessToken")
+
+function Get-BinaryFiles {
+    param(
+        [string[]] $Directories
+    )
+
+    $binaries = @()
+    foreach ($directory in @($Directories | Where-Object { $_ })) {
+        $fullDirectory = [IO.Path]::GetFullPath($directory)
+        if (-not (Test-Path -LiteralPath $fullDirectory -PathType Container)) {
+            throw "Binary directory '$fullDirectory' does not exist."
+        }
+
+        $binaries += @(Get-ChildItem -LiteralPath $fullDirectory -Recurse -File -Include "*.exe", "*.dll")
+    }
+
+    return $binaries
+}
 
 function Get-ExpectedPackages {
     param(
         [string[]] $Names
     )
+
+    if ([string]::IsNullOrWhiteSpace($PackageDirectory)) {
+        return @()
+    }
 
     $matches = @()
     foreach ($name in $Names) {
@@ -202,9 +237,10 @@ $msiPackages = @(Get-ExpectedPackages -Names @(
     "Devolutions.Terminal_${Version}_x64.msi",
     "Devolutions.Terminal_${Version}_arm64.msi"
 ))
+$binaryFiles = @(Get-BinaryFiles -Directories $BinaryDirectory)
 
-if ($msixPackages.Count -eq 0 -and $msiPackages.Count -eq 0) {
-    throw "No release packages for version '$Version' were found in '$PackageDirectory'."
+if ($msixPackages.Count -eq 0 -and $msiPackages.Count -eq 0 -and $binaryFiles.Count -eq 0) {
+    throw "No release packages for version '$Version' were found in '$PackageDirectory', and no binaries were found in the specified -BinaryDirectory paths."
 }
 
 $pointer = $null
@@ -217,6 +253,9 @@ try {
         }
         if ($msiPackages.Count -gt 0) {
             $filesToSign += @($msiPackages.FullName)
+        }
+        if ($binaryFiles.Count -gt 0) {
+            $filesToSign += @($binaryFiles.FullName)
         }
 
         Invoke-PsignArtifactSign -ToolPath $PsignTool -Files $filesToSign -AccessToken $ArtifactSigningAccessToken
@@ -232,6 +271,10 @@ try {
 
     foreach ($package in $msiPackages) {
         Invoke-LocalSign -Package $package -PlainTextPassword $plainTextPassword
+    }
+
+    foreach ($binary in $binaryFiles) {
+        Invoke-LocalSign -Package $binary -PlainTextPassword $plainTextPassword
     }
 }
 finally {

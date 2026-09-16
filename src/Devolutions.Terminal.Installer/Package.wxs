@@ -15,6 +15,7 @@
     <Feature Id="MainFeature" Title="Devolutions Terminal" Level="1">
       <ComponentGroupRef Id="ProductComponents" />
       <ComponentRef Id="DtAppPath" />
+      <ComponentRef Id="DevolutionsTerminalAppPath" />
     </Feature>
   </Package>
 
@@ -33,6 +34,12 @@
     <Component Id="DtAppPath" Directory="INSTALLLOCATION">
       <RegistryKey Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\App Paths\dt.exe">
         <RegistryValue Type="string" Value="[INSTALLLOCATION]dt.exe" />
+        <RegistryValue Name="Path" Type="string" Value="[INSTALLLOCATION]" />
+      </RegistryKey>
+    </Component>
+    <Component Id="DevolutionsTerminalAppPath" Directory="INSTALLLOCATION">
+      <RegistryKey Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\App Paths\Devolutions.Terminal.exe">
+        <RegistryValue Type="string" Value="[INSTALLLOCATION]Devolutions.Terminal.exe" />
         <RegistryValue Name="Path" Type="string" Value="[INSTALLLOCATION]" />
       </RegistryKey>
     </Component>
