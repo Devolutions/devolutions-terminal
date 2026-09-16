@@ -282,11 +282,17 @@ jobs:
         run: bash scripts/Test-MacOsPackagingMetadata.sh
 
   macos-native-aot:
-    name: macOS NativeAOT osx-arm64
+    name: macOS NativeAOT ${{ matrix.rid }}
     runs-on: macos-14
     needs:
       - macos-managed
       - release-metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        rid:
+          - osx-arm64
+          - osx-x64
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -311,34 +317,159 @@ jobs:
         run: >
           dotnet publish src/Devolutions.Terminal/Devolutions.Terminal.csproj
           -c Release
-          -r osx-arm64
+          -r ${{ matrix.rid }}
           --self-contained true
           -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
           -p:DebugSymbols=false
           -p:DebugType=None
           -p:NativeDebugSymbols=false
-          -o artifacts/publish/osx-arm64
+          -o artifacts/publish/${{ matrix.rid }}
 
       - name: Build app bundle and zip
         env:
-          MACOS_PUBLISH_DIR: ${{ github.workspace }}/artifacts/publish/osx-arm64
+          MACOS_PUBLISH_DIR: ${{ github.workspace }}/artifacts/publish/${{ matrix.rid }}
           SOURCE_DATE_EPOCH: "1704067200"
         run: >
-          bash scripts/Build-MacOsPackage.sh osx-arm64
+          bash scripts/Build-MacOsPackage.sh ${{ matrix.rid }}
           "${{ needs.release-metadata.outputs.release_version }}"
           artifacts/macos-packages
 
       - name: Validate package without launching UI
-        run: bash scripts/Test-MacOsPackage.sh osx-arm64 artifacts/macos-packages/*.zip
+        run: bash scripts/Test-MacOsPackage.sh ${{ matrix.rid }} artifacts/macos-packages/*.zip
 
       - name: Run native non-UI gates
+        # NativeAOT osx-x64 binaries are cross-compiled on the arm64 runner and
+        # cannot be executed here (no Rosetta on Actions macOS images); only the
+        # host's own architecture gets the runtime smoke/unit test gates.
+        if: matrix.rid == 'osx-arm64'
         run: bash scripts/Test-MacOsRuntime.sh artifacts/macos-packages
 
       - name: Upload macOS package artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: DevolutionsTerminal-osx-arm64-packages
+          name: DevolutionsTerminal-${{ matrix.rid }}-packages
           path: artifacts/macos-packages
+          if-no-files-found: error
+
+  macos-sign:
+    name: macOS sign and notarize ${{ matrix.rid }}
+    runs-on: macos-14
+    needs:
+      - macos-native-aot
+      - release-metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        rid:
+          - osx-arm64
+          - osx-x64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Download unsigned macOS package
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: DevolutionsTerminal-${{ matrix.rid }}-packages
+          path: artifacts/macos-packages
+
+      - name: Resolve signing mode
+        id: signing-mode
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_NOTARIZATION_API_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_API_KEY_ID }}
+          APPLE_NOTARIZATION_API_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_API_ISSUER_ID }}
+          APPLE_NOTARIZATION_API_KEY_P8: ${{ secrets.APPLE_NOTARIZATION_API_KEY_P8 }}
+        run: |
+          dry_run='${{ needs.release-metadata.outputs.dry_run }}'
+          sign_dry_run='${{ needs.release-metadata.outputs.sign_dry_run }}'
+          required=(
+            APPLE_CERTIFICATE_BASE64
+            APPLE_CERTIFICATE_PASSWORD
+            APPLE_SIGNING_IDENTITY
+            APPLE_NOTARIZATION_API_KEY_ID
+            APPLE_NOTARIZATION_API_ISSUER_ID
+            APPLE_NOTARIZATION_API_KEY_P8
+          )
+          missing=()
+          for name in "${required[@]}"; do
+            [[ -n "${!name:-}" ]] || missing+=("$name")
+          done
+
+          if [[ "$dry_run" == "true" && "$sign_dry_run" != "true" ]]; then
+            echo "should_sign=false" >>"$GITHUB_OUTPUT"
+            echo "Dry run will not sign or notarize macOS packages."
+            exit 0
+          fi
+
+          if ((${#missing[@]} > 0)); then
+            if [[ "$dry_run" == "true" ]]; then
+              echo "should_sign=false" >>"$GITHUB_OUTPUT"
+              echo "::notice::Skipping dry-run macOS signing because these secrets are unavailable: ${missing[*]}"
+              exit 0
+            fi
+            echo "Missing Apple signing/notarization secrets: ${missing[*]}" >&2
+            exit 1
+          fi
+
+          echo "should_sign=true" >>"$GITHUB_OUTPUT"
+
+      - name: Import Developer ID certificate
+        if: steps.signing-mode.outputs.should_sign == 'true'
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/macos-signing.keychain-db"
+          keychain_password="$(uuidgen)"
+          certificate_path="$RUNNER_TEMP/apple-certificate.p12"
+
+          base64 --decode <<<"$APPLE_CERTIFICATE_BASE64" >"$certificate_path"
+
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$certificate_path" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain"
+          security list-keychain -d user -s "$keychain" login.keychain-db
+          rm -f -- "$certificate_path"
+
+      - name: Sign, package, and notarize
+        if: steps.signing-mode.outputs.should_sign == 'true'
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_NOTARIZATION_API_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_API_KEY_ID }}
+          APPLE_NOTARIZATION_API_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_API_ISSUER_ID }}
+          APPLE_NOTARIZATION_API_KEY_P8: ${{ secrets.APPLE_NOTARIZATION_API_KEY_P8 }}
+          SOURCE_DATE_EPOCH: "1704067200"
+        run: >
+          bash scripts/Release-MacOsPackage.sh ${{ matrix.rid }}
+          "${{ needs.release-metadata.outputs.release_version }}"
+          artifacts/macos-packages
+          artifacts/macos-signed-packages
+          "$APPLE_SIGNING_IDENTITY"
+
+      - name: Package without notarization (dry run / forked PR)
+        if: steps.signing-mode.outputs.should_sign != 'true'
+        env:
+          SOURCE_DATE_EPOCH: "1704067200"
+        run: >
+          bash scripts/Release-MacOsPackage.sh ${{ matrix.rid }}
+          "${{ needs.release-metadata.outputs.release_version }}"
+          artifacts/macos-packages
+          artifacts/macos-signed-packages
+
+      - name: Validate final package
+        run: bash scripts/Test-MacOsPackage.sh ${{ matrix.rid }} artifacts/macos-signed-packages/*.zip
+
+      - name: Upload final macOS package artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: DevolutionsTerminal-${{ matrix.rid }}-signed-packages
+          path: artifacts/macos-signed-packages
           if-no-files-found: error
 
   linux-packages:
@@ -585,6 +716,7 @@ jobs:
       - linux-managed
       - macos-managed
       - macos-native-aot
+      - macos-sign
       - linux-packages
       - linux-arm64-hardware
       - msix
@@ -627,10 +759,16 @@ jobs:
           name: DevolutionsTerminal-linux-arm64-packages
           path: artifacts/linux-arm64
 
-      - name: Download macOS package artifacts
+      - name: Download macOS arm64 package artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: DevolutionsTerminal-osx-arm64-packages
+          name: DevolutionsTerminal-osx-arm64-signed-packages
+          path: artifacts/macos-packages
+
+      - name: Download macOS x64 package artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: DevolutionsTerminal-osx-x64-signed-packages
           path: artifacts/macos-packages
 
       - name: Resolve signing mode

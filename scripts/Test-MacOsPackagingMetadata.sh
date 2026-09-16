@@ -10,7 +10,11 @@ for script in \
     "$script_dir/Build-MacOsPackage.sh" \
     "$script_dir/Stage-MacOsApp.sh" \
     "$script_dir/Test-MacOsPackage.sh" \
-    "$script_dir/Test-MacOsRuntime.sh"; do
+    "$script_dir/Test-MacOsRuntime.sh" \
+    "$script_dir/Sign-MacOsPackage.sh" \
+    "$script_dir/Build-MacOsDmg.sh" \
+    "$script_dir/Notarize-MacOsPackage.sh" \
+    "$script_dir/Release-MacOsPackage.sh"; do
     bash -n "$script"
 done
 
