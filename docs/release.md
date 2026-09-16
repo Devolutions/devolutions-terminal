@@ -209,7 +209,9 @@ application version remain `2026.3.0`.
 
 Never commit PFX files, passwords, certificate private keys, or signed internal
 artifacts. CI produces unsigned packages unless a protected release environment
-injects signing credentials.
+injects signing credentials. macOS release packaging likewise falls back to
+unsigned, unnotarized archives when its Apple signing or notarization
+credentials are unavailable.
 
 ## GitHub Release automation
 
