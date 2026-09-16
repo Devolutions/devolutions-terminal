@@ -60,7 +60,8 @@ See [docs/macos.md](docs/macos.md). On a Mac:
 
 ```bash
 dotnet test Devolutions.Terminal.slnx
-scripts/Build-MacOsPackage.sh osx-arm64 2026.3.0 artifacts/packages
+dotnet test Devolutions.Terminal.slnx
+pwsh scripts/Build-MacOsPackage.ps1 osx-arm64 2026.3.0 artifacts/packages
 ```
 
 `dotnet build` restores Ghostty and `dt-pty-host` for `osx-arm64` / `osx-x64`.

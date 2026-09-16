@@ -33,11 +33,12 @@ already the primary scripting language for Windows packaging in this repo
 
 - Write new scripts as `.ps1` and invoke them with `pwsh` (not `powershell.exe`),
   so they run identically in CI (Windows/Linux/macOS runners) and locally.
-- Existing Bash (`scripts/*.sh`) and Python (`scripts/*.py`) scripts for Linux
-  and macOS packaging are not being rewritten wholesale; keep them working and
-  match their existing style when making small, targeted edits. Prefer
-  PowerShell for any new script, and consider migrating a Bash/Python script to
-  PowerShell only when a change already requires substantial rework of it.
+- The macOS packaging scripts (`scripts/*MacOs*.ps1`) have been rewritten to
+  PowerShell and are the canonical implementation; do not reintroduce Bash or
+  Python for them. Linux packaging scripts (`scripts/*Linux*.sh`,
+  `scripts/*.py`) have not been converted yet — that's a known follow-up.
+  Prefer PowerShell for any new script, and migrate an existing Bash/Python
+  script to PowerShell when a change already requires substantial rework of it.
 - Bash is still acceptable where a step is inherently platform-specific and
   wraps a Unix-only tool (e.g. `codesign`, `hdiutil`, `iconutil`, `sips` for
   macOS packaging) — the surrounding orchestration script itself can still be
@@ -56,5 +57,5 @@ already the primary scripting language for Windows packaging in this repo
 
 - Windows: `src/Devolutions.Terminal.Package/Scripts/Build-Packages.ps1` (MSIX/MSI)
 - Linux: `scripts/Build-LinuxPackage.sh` (tar/DEB/RPM/AppImage)
-- macOS: `scripts/Build-MacOsPackage.sh`, `scripts/Release-MacOsPackage.sh`
+- macOS: `scripts/Build-MacOsPackage.ps1`, `scripts/Release-MacOsPackage.ps1`
   (app bundle, zip, signed/notarized `.dmg`) — see [docs/macos.md](docs/macos.md)

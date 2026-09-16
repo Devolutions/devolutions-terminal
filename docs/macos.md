@@ -18,7 +18,7 @@ registration, and Homebrew remain out of scope.
 - `dterm:` URL scheme declared in `macos/Info.plist`
 - NativeAOT `.app` + zip packaging on Darwin
 - Signed, notarized `.dmg` release artifacts via
-  `scripts/Release-MacOsPackage.sh` (CI only; ad-hoc unsigned zip/dmg locally
+  `scripts/Release-MacOsPackage.ps1` (CI only; ad-hoc unsigned zip/dmg locally
   or without Apple signing secrets)
 
 ## Not bundled yet
@@ -36,12 +36,12 @@ link `libutil` from the SDK.
 ```bash
 dotnet test Devolutions.Terminal.slnx
 dotnet publish src/Devolutions.Terminal -c Release -r osx-arm64 --self-contained
-scripts/Build-MacOsPackage.sh osx-arm64 2026.3.0 artifacts/packages
-bash scripts/Test-MacOsPackage.sh osx-arm64 artifacts/packages/*.zip
-bash scripts/Test-MacOsRuntime.sh artifacts/packages
+pwsh scripts/Build-MacOsPackage.ps1 osx-arm64 2026.3.0 artifacts/packages
+pwsh scripts/Test-MacOsPackage.ps1 osx-arm64 artifacts/packages/*.zip
+pwsh scripts/Test-MacOsRuntime.ps1 artifacts/packages
 ```
 
-`Build-MacOsPackage.sh` publishes NativeAOT unless `MACOS_PUBLISH_DIR` is set,
+`Build-MacOsPackage.ps1` publishes NativeAOT unless `MACOS_PUBLISH_DIR` is set,
 stages `Devolutions Terminal.app` with `macos/Info.plist`, generates
 `DevolutionsTerminal.icns` from the hicolor PNGs, ad-hoc signs the bundle, and
 writes a zip plus SHA-256 manifest.
