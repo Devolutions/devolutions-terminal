@@ -43,10 +43,9 @@ pwsh scripts/Test-MacOsRuntime.ps1 artifacts/packages
 
 `Build-MacOsPackage.ps1` publishes NativeAOT unless `MACOS_PUBLISH_DIR` is set,
 stages `Devolutions Terminal.app` with `macos/Info.plist`, generates
-`DevolutionsTerminal.icns` from the transparent macOS-specific
-`macos/DevolutionsTerminal.svg` source (rasterized as
-`macos/DevolutionsTerminal.png` for packaging), ad-hoc signs the bundle, and
-writes a zip plus SHA-256 manifest.
+`DevolutionsTerminal.icns` directly from the original transparent
+`assets/icons/terminal.png` artwork, ad-hoc signs the bundle, and writes a zip
+plus SHA-256 manifest.
 
 ```bash
 open "artifacts/packages/Devolutions Terminal.app"
