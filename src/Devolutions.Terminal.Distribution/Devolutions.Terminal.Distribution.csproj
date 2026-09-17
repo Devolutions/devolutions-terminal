@@ -3,10 +3,12 @@
     <TargetFramework>netstandard2.0</TargetFramework>
     <IncludeBuildOutput>false</IncludeBuildOutput>
     <IncludeSymbols>false</IncludeSymbols>
-    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <SuppressDependenciesWhenPacking Condition="'$(DevolutionsTerminalPackageRuntimeIdentifier)' != ''">true</SuppressDependenciesWhenPacking>
     <IsAotCompatible>false</IsAotCompatible>
     <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
-    <PackageId>Devolutions.Terminal.App</PackageId>
+    <NoPackageAnalysis>true</NoPackageAnalysis>
+    <PackageId Condition="'$(DevolutionsTerminalPackageRuntimeIdentifier)' == ''">Devolutions.Terminal.App</PackageId>
+    <PackageId Condition="'$(DevolutionsTerminalPackageRuntimeIdentifier)' != ''">Devolutions.Terminal.App.$(DevolutionsTerminalPackageRuntimeIdentifier)</PackageId>
     <PackageTitle>Devolutions Terminal application</PackageTitle>
     <Description>Standalone NativeAOT Devolutions Terminal distributions for Windows, Linux, and macOS.</Description>
     <PackageTags>Devolutions;Terminal;Windows;Linux;macOS;NativeAOT;dt</PackageTags>
@@ -16,54 +18,35 @@
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
   </PropertyGroup>
 
-  <ItemGroup>
-    <Content Include="$(MSBuildThisFileDirectory)..\..\artifacts\nuget\layout\win-x64\**\*"
-             Pack="true"
-             PackagePath="runtimes\win-x64\native\payload\" />
-    <Content Include="$(MSBuildThisFileDirectory)..\..\artifacts\nuget\layout\win-arm64\**\*"
-             Pack="true"
-             PackagePath="runtimes\win-arm64\native\payload\" />
-    <Content Include="$(MSBuildThisFileDirectory)..\..\artifacts\nuget\layout\linux-x64\**\*"
-             Exclude="$(MSBuildThisFileDirectory)..\..\artifacts\nuget\layout\linux-x64\dt;$(MSBuildThisFileDirectory)..\..\artifacts\nuget\layout\linux-x64\Devolutions.Terminal"
-             Pack="true"
-             PackagePath="runtimes\linux-x64\native\payload\" />
-    <Content Include="$(MSBuildThisFileDirectory)..\..\artifacts\nuget\layout\linux-x64\dt"
-             Pack="true"
-             PackagePath="runtimes\linux-x64\native\payload\" />
-    <Content Include="$(MSBuildThisFileDirectory)..\..\artifacts\nuget\layout\linux-x64\Devolutions.Terminal"
-             Pack="true"
-             PackagePath="runtimes\linux-x64\native\payload\" />
-    <Content Include="$(MSBuildThisFileDirectory)..\..\artifacts\nuget\layout\linux-arm64\**\*"
-             Exclude="$(MSBuildThisFileDirectory)..\..\artifacts\nuget\layout\linux-arm64\dt;$(MSBuildThisFileDirectory)..\..\artifacts\nuget\layout\linux-arm64\Devolutions.Terminal"
-             Pack="true"
-             PackagePath="runtimes\linux-arm64\native\payload\" />
-    <Content Include="$(MSBuildThisFileDirectory)..\..\artifacts\nuget\layout\linux-arm64\dt"
-             Pack="true"
-             PackagePath="runtimes\linux-arm64\native\payload\" />
-    <Content Include="$(MSBuildThisFileDirectory)..\..\artifacts\nuget\layout\linux-arm64\Devolutions.Terminal"
-             Pack="true"
-             PackagePath="runtimes\linux-arm64\native\payload\" />
-    <Content Include="$(MSBuildThisFileDirectory)..\..\artifacts\nuget\layout\osx-x64\**\*"
-             Exclude="$(MSBuildThisFileDirectory)..\..\artifacts\nuget\layout\osx-x64\dt;$(MSBuildThisFileDirectory)..\..\artifacts\nuget\layout\osx-x64\Devolutions.Terminal"
-             Pack="true"
-             PackagePath="runtimes\osx-x64\native\payload\" />
-    <Content Include="$(MSBuildThisFileDirectory)..\..\artifacts\nuget\layout\osx-x64\dt"
-             Pack="true"
-             PackagePath="runtimes\osx-x64\native\payload\" />
-    <Content Include="$(MSBuildThisFileDirectory)..\..\artifacts\nuget\layout\osx-x64\Devolutions.Terminal"
-             Pack="true"
-             PackagePath="runtimes\osx-x64\native\payload\" />
-    <Content Include="$(MSBuildThisFileDirectory)..\..\artifacts\nuget\layout\osx-arm64\**\*"
-             Exclude="$(MSBuildThisFileDirectory)..\..\artifacts\nuget\layout\osx-arm64\dt;$(MSBuildThisFileDirectory)..\..\artifacts\nuget\layout\osx-arm64\Devolutions.Terminal"
-             Pack="true"
-             PackagePath="runtimes\osx-arm64\native\payload\" />
-    <Content Include="$(MSBuildThisFileDirectory)..\..\artifacts\nuget\layout\osx-arm64\dt"
-             Pack="true"
-             PackagePath="runtimes\osx-arm64\native\payload\" />
-    <Content Include="$(MSBuildThisFileDirectory)..\..\artifacts\nuget\layout\osx-arm64\Devolutions.Terminal"
-             Pack="true"
-             PackagePath="runtimes\osx-arm64\native\payload\" />
-    <None Include="Devolutions.Terminal.App.targets" Pack="true" PackagePath="build\Devolutions.Terminal.App.targets" />
+  <PropertyGroup>
+    <DevolutionsTerminalNugetLayoutRoot Condition="'$(DevolutionsTerminalNugetLayoutRoot)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\nuget\layout</DevolutionsTerminalNugetLayoutRoot>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(DevolutionsTerminalPackageRuntimeIdentifier)' != ''">
+    <None Include="$(DevolutionsTerminalNugetLayoutRoot)\$(DevolutionsTerminalPackageRuntimeIdentifier)\**\*"
+          Pack="true"
+          PackagePath="runtimes\$(DevolutionsTerminalPackageRuntimeIdentifier)\native\payload"
+          Visible="false" />
+    <None Include="Devolutions.Terminal.App.targets"
+          Pack="true"
+          PackagePath="buildTransitive\$(PackageId).targets" />
     <None Include="README.md" Pack="true" PackagePath="README.md" />
   </ItemGroup>
+
+  <Target Name="ValidateDevolutionsTerminalPackageLayout"
+          BeforeTargets="GenerateNuspec"
+          Condition="'$(DevolutionsTerminalPackageRuntimeIdentifier)' != ''">
+    <PropertyGroup>
+      <_DevolutionsTerminalExecutableName Condition="$([System.String]::Copy('$(DevolutionsTerminalPackageRuntimeIdentifier)').StartsWith('win-'))">dt.exe</_DevolutionsTerminalExecutableName>
+      <_DevolutionsTerminalExecutableName Condition="'$(_DevolutionsTerminalExecutableName)' == ''">dt</_DevolutionsTerminalExecutableName>
+      <_DevolutionsTerminalHostName Condition="$([System.String]::Copy('$(DevolutionsTerminalPackageRuntimeIdentifier)').StartsWith('win-'))">Devolutions.Terminal.exe</_DevolutionsTerminalHostName>
+      <_DevolutionsTerminalHostName Condition="'$(_DevolutionsTerminalHostName)' == ''">Devolutions.Terminal</_DevolutionsTerminalHostName>
+      <_DevolutionsTerminalRuntimeLayout>$(DevolutionsTerminalNugetLayoutRoot)\$(DevolutionsTerminalPackageRuntimeIdentifier)</_DevolutionsTerminalRuntimeLayout>
+    </PropertyGroup>
+
+    <Error Condition="!Exists('$(_DevolutionsTerminalRuntimeLayout)\$(_DevolutionsTerminalExecutableName)')"
+           Text="Missing staged dt executable for RuntimeIdentifier '$(DevolutionsTerminalPackageRuntimeIdentifier)': $(_DevolutionsTerminalRuntimeLayout)\$(_DevolutionsTerminalExecutableName)" />
+    <Error Condition="!Exists('$(_DevolutionsTerminalRuntimeLayout)\$(_DevolutionsTerminalHostName)')"
+           Text="Missing staged Devolutions Terminal host for RuntimeIdentifier '$(DevolutionsTerminalPackageRuntimeIdentifier)': $(_DevolutionsTerminalRuntimeLayout)\$(_DevolutionsTerminalHostName)" />
+  </Target>
 </Project>

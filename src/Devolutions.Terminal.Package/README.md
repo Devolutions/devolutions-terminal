@@ -8,8 +8,8 @@ Devolutions Terminal Start Menu shortcut, and registers `dt.exe` through
 Windows App Paths. It does not install `wt.exe` or claim Windows Terminal
 drop-in compatibility.
 
-Build the NuGet distribution, which contains the same self-contained Windows
-payloads used by the MSI:
+Build the NuGet distribution packages, which contain the same self-contained
+payloads used by the native platform packages:
 
 ```powershell
 .\src\Devolutions.Terminal.Package\Scripts\Build-NuGet.ps1

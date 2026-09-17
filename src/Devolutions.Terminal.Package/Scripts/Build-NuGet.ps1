@@ -21,6 +21,7 @@ $packageRoot = Split-Path -Parent $PSScriptRoot
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $packageRoot "..\.."))
 $hostProject = Join-Path $repoRoot "src\Devolutions.Terminal\Devolutions.Terminal.csproj"
 $distributionProject = Join-Path $repoRoot "src\Devolutions.Terminal.Distribution\Devolutions.Terminal.Distribution.csproj"
+$distributionNuspec = Join-Path $repoRoot "src\Devolutions.Terminal.Distribution\Devolutions.Terminal.App.nuspec"
 
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = Join-Path $repoRoot "artifacts\nuget"
@@ -70,12 +71,42 @@ foreach ($runtimeIdentifier in $RuntimeIdentifiers) {
     }
 }
 
+Get-ChildItem -LiteralPath $packageOutput -File -Filter "Devolutions.Terminal.App*.nupkg" |
+    Remove-Item -Force
+
+foreach ($runtimeIdentifier in $RuntimeIdentifiers) {
+    Invoke-Checked dotnet @(
+        "pack", $distributionProject,
+        "-c", $Configuration,
+        "-p:PackageVersion=$Version",
+        "-p:PackageOutputPath=$packageOutput\",
+        "-p:DevolutionsTerminalPackageRuntimeIdentifier=$runtimeIdentifier"
+    )
+}
+
 Invoke-Checked dotnet @(
     "pack", $distributionProject,
     "-c", $Configuration,
-    "-p:PackageVersion=$Version",
-    "-p:PackageOutputPath=$packageOutput\"
+    "-p:NuspecFile=$distributionNuspec",
+    "-p:NuspecProperties=version=$Version",
+    "-p:PackageOutputPath=$packageOutput\",
+    "--no-restore"
 )
 
-Get-ChildItem -LiteralPath $packageOutput -File -Filter "*.nupkg" |
-    Sort-Object Name
+$expectedPackageNames = @(
+    "Devolutions.Terminal.App.$Version.nupkg"
+    "Devolutions.Terminal.App.win-x64.$Version.nupkg"
+    "Devolutions.Terminal.App.win-arm64.$Version.nupkg"
+    "Devolutions.Terminal.App.linux-x64.$Version.nupkg"
+    "Devolutions.Terminal.App.linux-arm64.$Version.nupkg"
+    "Devolutions.Terminal.App.osx-x64.$Version.nupkg"
+    "Devolutions.Terminal.App.osx-arm64.$Version.nupkg"
+) | Sort-Object
+$packages = @(Get-ChildItem -LiteralPath $packageOutput -File -Filter "*.nupkg" | Sort-Object Name)
+$actualPackageNames = @($packages.Name)
+$packageDifference = Compare-Object -ReferenceObject $expectedPackageNames -DifferenceObject $actualPackageNames
+if ($packageDifference) {
+    throw "Unexpected NuGet package set. Expected: $($expectedPackageNames -join ', '). Actual: $($actualPackageNames -join ', ')."
+}
+
+$packages
