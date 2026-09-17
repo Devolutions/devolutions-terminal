@@ -844,21 +844,21 @@ jobs:
           name: DevolutionsTerminal-osx-arm64
           path: artifacts/nuget/layout/osx-arm64
 
-      - name: Build NuGet distribution package
+      - name: Build NuGet distribution packages
         shell: pwsh
         run: >
           ./src/Devolutions.Terminal.Package/Scripts/Build-NuGet.ps1
           -SkipPublish
           -Version "${{ needs.release-metadata.outputs.release_version }}"
 
-      - name: Smoke test NuGet package import
+      - name: Smoke test NuGet tool installation
         shell: pwsh
         run: >
           ./src/Devolutions.Terminal.Package/Scripts/Test-NuGetDistribution.ps1
-          -PackagePath ./artifacts/nuget/packages/Devolutions.Terminal.App.${{ needs.release-metadata.outputs.release_version }}.nupkg
+          -PackageDirectory ./artifacts/nuget/packages
           -Version "${{ needs.release-metadata.outputs.release_version }}"
 
-      - name: Upload NuGet distribution package
+      - name: Upload NuGet distribution packages
         uses: actions/upload-artifact@v4
         with:
           name: DevolutionsTerminal-NuGet
@@ -1115,7 +1115,7 @@ jobs:
           name: DevolutionsTerminal-osx-x64-signed-packages
           path: artifacts/macos-packages
 
-      - name: Download NuGet distribution package
+      - name: Download NuGet distribution packages
         uses: actions/download-artifact@v4
         with:
           name: DevolutionsTerminal-NuGet
@@ -1128,7 +1128,7 @@ jobs:
         with:
           user: ${{ secrets.NUGET_BOT_USERNAME }}
 
-      - name: Publish NuGet distribution package
+      - name: Publish NuGet distribution packages
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -1136,18 +1136,25 @@ jobs:
           $dryRun = [System.Boolean]::Parse('${{ needs.release-metadata.outputs.dry_run }}')
           $publishNuget = [System.Boolean]::Parse('${{ needs.release-metadata.outputs.publish_nuget }}')
           $packages = @(Get-ChildItem -LiteralPath artifacts/nuget -Filter "*.nupkg" -File | Sort-Object Name)
-          if ($packages.Count -ne 1) {
-            throw "Expected exactly one NuGet package, found $($packages.Count)."
+          if ($packages.Count -ne 8) {
+            throw "Expected eight NuGet packages, found $($packages.Count)."
           }
 
-          $packagePath = $packages[0].FullName
+          $pointerPackageName = 'Devolutions.Terminal.App.${{ needs.release-metadata.outputs.release_version }}.nupkg'
+          $pointerPackages = @($packages | Where-Object Name -eq $pointerPackageName)
+          if ($pointerPackages.Count -ne 1) {
+            throw "Expected one NuGet pointer package named '$pointerPackageName', found $($pointerPackages.Count)."
+          }
+
+          $runtimePackages = @($packages | Where-Object Name -ne $pointerPackageName)
+          $orderedPackages = @($runtimePackages) + @($pointerPackages[0])
           if ($dryRun) {
-            Write-Host "Dry run: skipping NuGet.org publication of $packagePath."
+            Write-Host "Dry run: skipping NuGet.org publication of $($orderedPackages.Count) packages."
             exit 0
           }
 
           if (-not $publishNuget) {
-            Write-Host "NuGet.org publication is disabled; the package will remain available as a GitHub release asset."
+            Write-Host "NuGet.org publication is disabled; the packages will remain available as GitHub release assets."
             exit 0
           }
 
@@ -1156,13 +1163,15 @@ jobs:
             throw "NuGet/login did not provide a NuGet API key."
           }
 
-          & dotnet nuget push $packagePath `
-            --api-key $nugetApiKey `
-            --source $env:NUGET_PACKAGE_SOURCE `
-            --skip-duplicate `
-            --no-symbols
-          if ($LASTEXITCODE -ne 0) {
-            throw "dotnet nuget push failed for '$packagePath' with exit code $LASTEXITCODE."
+          foreach ($package in $orderedPackages) {
+            & dotnet nuget push $package.FullName `
+              --api-key $nugetApiKey `
+              --source $env:NUGET_PACKAGE_SOURCE `
+              --skip-duplicate `
+              --no-symbols
+            if ($LASTEXITCODE -ne 0) {
+              throw "dotnet nuget push failed for '$($package.FullName)' with exit code $LASTEXITCODE."
+            }
           }
 
       - name: Resolve signing mode

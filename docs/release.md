@@ -282,11 +282,18 @@ match the Artifact Signing certificate subject.
 
 The release job publishes `Devolutions.Terminal.App` to NuGet.org through OIDC
 trusted publishing when `publish_nuget` is enabled; tag-triggered releases
-enable it automatically. Configure the `publish-test` and `publish-prod`
-environments as trusted publishers for the package on NuGet.org, and bootstrap
-the package before enabling publication for a manual release. Dry runs and
-manual releases with `publish_nuget` disabled do not request a NuGet API key or
-publish the package; the `.nupkg` remains included in the GitHub Release assets.
+enable it automatically. The .NET 10 RID-specific tool format produces a small
+pointer package, six platform packages, and an `any` fallback package. The
+release publishes the runtime packages before the pointer so clients never
+resolve a pointer whose dependencies are not yet available. Splitting the
+NativeAOT payloads keeps each package below NuGet.org's 250 MB package-size
+limit.
+
+Configure the `publish-test` and `publish-prod` environments as trusted
+publishers for the package IDs on NuGet.org, and bootstrap the RID and pointer
+packages before enabling publication for a manual release. Dry runs and manual
+releases with `publish_nuget` disabled do not request a NuGet API key or publish
+the packages; all `.nupkg` files remain included in the GitHub Release assets.
 
 ## NuGet package (`Devolutions.Terminal.Control`)
 

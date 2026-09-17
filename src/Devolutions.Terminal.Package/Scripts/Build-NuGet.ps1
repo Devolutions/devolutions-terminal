@@ -70,6 +70,9 @@ foreach ($runtimeIdentifier in $RuntimeIdentifiers) {
     }
 }
 
+Get-ChildItem -LiteralPath $packageOutput -File -Filter "Devolutions.Terminal.App*.nupkg" |
+    Remove-Item -Force
+
 Invoke-Checked dotnet @(
     "pack", $distributionProject,
     "-c", $Configuration,
@@ -77,5 +80,21 @@ Invoke-Checked dotnet @(
     "-p:PackageOutputPath=$packageOutput\"
 )
 
-Get-ChildItem -LiteralPath $packageOutput -File -Filter "*.nupkg" |
-    Sort-Object Name
+$expectedPackageNames = @(
+    "Devolutions.Terminal.App.$Version.nupkg"
+    "Devolutions.Terminal.App.any.$Version.nupkg"
+    "Devolutions.Terminal.App.win-x64.$Version.nupkg"
+    "Devolutions.Terminal.App.win-arm64.$Version.nupkg"
+    "Devolutions.Terminal.App.linux-x64.$Version.nupkg"
+    "Devolutions.Terminal.App.linux-arm64.$Version.nupkg"
+    "Devolutions.Terminal.App.osx-x64.$Version.nupkg"
+    "Devolutions.Terminal.App.osx-arm64.$Version.nupkg"
+) | Sort-Object
+$packages = @(Get-ChildItem -LiteralPath $packageOutput -File -Filter "*.nupkg" | Sort-Object Name)
+$actualPackageNames = @($packages.Name)
+$packageDifference = Compare-Object -ReferenceObject $expectedPackageNames -DifferenceObject $actualPackageNames
+if ($packageDifference) {
+    throw "Unexpected NuGet package set. Expected: $($expectedPackageNames -join ', '). Actual: $($actualPackageNames -join ', ')."
+}
+
+$packages
