@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>Devolutions.Terminal.App</id>
+    <version>$version$</version>
+    <title>Devolutions Terminal application</title>
+    <authors>Devolutions Inc.</authors>
+    <owners>Devolutions Inc.</owners>
+    <description>Standalone NativeAOT Devolutions Terminal distributions for Windows, Linux, and macOS.</description>
+    <tags>Devolutions Terminal Windows Linux macOS NativeAOT dt</tags>
+    <readme>README.md</readme>
+    <license type="expression">MIT</license>
+    <repository type="git" url="https://github.com/Devolutions/devolutions-terminal" />
+    <dependencies>
+      <group targetFramework="netstandard2.0">
+        <dependency id="Devolutions.Terminal.App.win-x64" version="[$version$]" />
+        <dependency id="Devolutions.Terminal.App.win-arm64" version="[$version$]" />
+        <dependency id="Devolutions.Terminal.App.linux-x64" version="[$version$]" />
+        <dependency id="Devolutions.Terminal.App.linux-arm64" version="[$version$]" />
+        <dependency id="Devolutions.Terminal.App.osx-x64" version="[$version$]" />
+        <dependency id="Devolutions.Terminal.App.osx-arm64" version="[$version$]" />
+      </group>
+    </dependencies>
+  </metadata>
+  <files>
+    <file src="README.md" target="" />
+  </files>
+</package>

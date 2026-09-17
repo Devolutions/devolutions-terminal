@@ -22,16 +22,6 @@
     <DevolutionsTerminalNugetLayoutRoot Condition="'$(DevolutionsTerminalNugetLayoutRoot)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\nuget\layout</DevolutionsTerminalNugetLayoutRoot>
   </PropertyGroup>
 
-  <ItemGroup Condition="'$(DevolutionsTerminalPackageRuntimeIdentifier)' == ''">
-    <PackageReference Include="Devolutions.Terminal.App.win-x64" VersionOverride="[$(PackageVersion)]" ExcludeAssets="compile" PrivateAssets="none" />
-    <PackageReference Include="Devolutions.Terminal.App.win-arm64" VersionOverride="[$(PackageVersion)]" ExcludeAssets="compile" PrivateAssets="none" />
-    <PackageReference Include="Devolutions.Terminal.App.linux-x64" VersionOverride="[$(PackageVersion)]" ExcludeAssets="compile" PrivateAssets="none" />
-    <PackageReference Include="Devolutions.Terminal.App.linux-arm64" VersionOverride="[$(PackageVersion)]" ExcludeAssets="compile" PrivateAssets="none" />
-    <PackageReference Include="Devolutions.Terminal.App.osx-x64" VersionOverride="[$(PackageVersion)]" ExcludeAssets="compile" PrivateAssets="none" />
-    <PackageReference Include="Devolutions.Terminal.App.osx-arm64" VersionOverride="[$(PackageVersion)]" ExcludeAssets="compile" PrivateAssets="none" />
-    <None Include="README.md" Pack="true" PackagePath="README.md" />
-  </ItemGroup>
-
   <ItemGroup Condition="'$(DevolutionsTerminalPackageRuntimeIdentifier)' != ''">
     <None Include="$(DevolutionsTerminalNugetLayoutRoot)\$(DevolutionsTerminalPackageRuntimeIdentifier)\**\*"
           Pack="true"

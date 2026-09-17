@@ -21,6 +21,7 @@ $packageRoot = Split-Path -Parent $PSScriptRoot
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $packageRoot "..\.."))
 $hostProject = Join-Path $repoRoot "src\Devolutions.Terminal\Devolutions.Terminal.csproj"
 $distributionProject = Join-Path $repoRoot "src\Devolutions.Terminal.Distribution\Devolutions.Terminal.Distribution.csproj"
+$distributionNuspec = Join-Path $repoRoot "src\Devolutions.Terminal.Distribution\Devolutions.Terminal.App.nuspec"
 
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = Join-Path $repoRoot "artifacts\nuget"
@@ -86,9 +87,10 @@ foreach ($runtimeIdentifier in $RuntimeIdentifiers) {
 Invoke-Checked dotnet @(
     "pack", $distributionProject,
     "-c", $Configuration,
-    "-p:PackageVersion=$Version",
+    "-p:NuspecFile=$distributionNuspec",
+    "-p:NuspecProperties=version=$Version",
     "-p:PackageOutputPath=$packageOutput\",
-    "-p:RestoreAdditionalProjectSources=$packageOutput"
+    "--no-restore"
 )
 
 $expectedPackageNames = @(
