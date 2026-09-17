@@ -73,16 +73,26 @@ foreach ($runtimeIdentifier in $RuntimeIdentifiers) {
 Get-ChildItem -LiteralPath $packageOutput -File -Filter "Devolutions.Terminal.App*.nupkg" |
     Remove-Item -Force
 
+foreach ($runtimeIdentifier in $RuntimeIdentifiers) {
+    Invoke-Checked dotnet @(
+        "pack", $distributionProject,
+        "-c", $Configuration,
+        "-p:PackageVersion=$Version",
+        "-p:PackageOutputPath=$packageOutput\",
+        "-p:DevolutionsTerminalPackageRuntimeIdentifier=$runtimeIdentifier"
+    )
+}
+
 Invoke-Checked dotnet @(
     "pack", $distributionProject,
     "-c", $Configuration,
     "-p:PackageVersion=$Version",
-    "-p:PackageOutputPath=$packageOutput\"
+    "-p:PackageOutputPath=$packageOutput\",
+    "-p:RestoreAdditionalProjectSources=$packageOutput"
 )
 
 $expectedPackageNames = @(
     "Devolutions.Terminal.App.$Version.nupkg"
-    "Devolutions.Terminal.App.any.$Version.nupkg"
     "Devolutions.Terminal.App.win-x64.$Version.nupkg"
     "Devolutions.Terminal.App.win-arm64.$Version.nupkg"
     "Devolutions.Terminal.App.linux-x64.$Version.nupkg"

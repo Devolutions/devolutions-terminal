@@ -1,19 +1,16 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
     <IncludeSymbols>false</IncludeSymbols>
+    <SuppressDependenciesWhenPacking Condition="'$(DevolutionsTerminalPackageRuntimeIdentifier)' != ''">true</SuppressDependenciesWhenPacking>
     <IsAotCompatible>false</IsAotCompatible>
     <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
     <NoPackageAnalysis>true</NoPackageAnalysis>
-    <PackAsTool>true</PackAsTool>
-    <ToolCommandName>dt</ToolCommandName>
-    <ToolPackageRuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64;osx-x64;osx-arm64;any</ToolPackageRuntimeIdentifiers>
-    <RuntimeIdentifiers>win-x64;win-arm64;linux-x64;linux-arm64;osx-x64;osx-arm64;any</RuntimeIdentifiers>
-    <RollForward>Major</RollForward>
-    <PackageId>Devolutions.Terminal.App</PackageId>
+    <PackageId Condition="'$(DevolutionsTerminalPackageRuntimeIdentifier)' == ''">Devolutions.Terminal.App</PackageId>
+    <PackageId Condition="'$(DevolutionsTerminalPackageRuntimeIdentifier)' != ''">Devolutions.Terminal.App.$(DevolutionsTerminalPackageRuntimeIdentifier)</PackageId>
     <PackageTitle>Devolutions Terminal application</PackageTitle>
-    <Description>RID-specific .NET tool packages for the NativeAOT Devolutions Terminal application.</Description>
+    <Description>Standalone NativeAOT Devolutions Terminal distributions for Windows, Linux, and macOS.</Description>
     <PackageTags>Devolutions;Terminal;Windows;Linux;macOS;NativeAOT;dt</PackageTags>
     <Authors>Devolutions Inc.</Authors>
     <Company>Devolutions Inc.</Company>
@@ -25,32 +22,41 @@
     <DevolutionsTerminalNugetLayoutRoot Condition="'$(DevolutionsTerminalNugetLayoutRoot)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\nuget\layout</DevolutionsTerminalNugetLayoutRoot>
   </PropertyGroup>
 
-  <ItemGroup Condition="'$(RuntimeIdentifier)' != '' and '$(RuntimeIdentifier)' != 'any'">
-    <None Include="$(DevolutionsTerminalNugetLayoutRoot)\$(RuntimeIdentifier)\**\*"
+  <ItemGroup Condition="'$(DevolutionsTerminalPackageRuntimeIdentifier)' == ''">
+    <PackageReference Include="Devolutions.Terminal.App.win-x64" VersionOverride="[$(PackageVersion)]" ExcludeAssets="compile" PrivateAssets="none" />
+    <PackageReference Include="Devolutions.Terminal.App.win-arm64" VersionOverride="[$(PackageVersion)]" ExcludeAssets="compile" PrivateAssets="none" />
+    <PackageReference Include="Devolutions.Terminal.App.linux-x64" VersionOverride="[$(PackageVersion)]" ExcludeAssets="compile" PrivateAssets="none" />
+    <PackageReference Include="Devolutions.Terminal.App.linux-arm64" VersionOverride="[$(PackageVersion)]" ExcludeAssets="compile" PrivateAssets="none" />
+    <PackageReference Include="Devolutions.Terminal.App.osx-x64" VersionOverride="[$(PackageVersion)]" ExcludeAssets="compile" PrivateAssets="none" />
+    <PackageReference Include="Devolutions.Terminal.App.osx-arm64" VersionOverride="[$(PackageVersion)]" ExcludeAssets="compile" PrivateAssets="none" />
+    <None Include="README.md" Pack="true" PackagePath="README.md" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(DevolutionsTerminalPackageRuntimeIdentifier)' != ''">
+    <None Include="$(DevolutionsTerminalNugetLayoutRoot)\$(DevolutionsTerminalPackageRuntimeIdentifier)\**\*"
           Pack="true"
-          PackagePath="tools\net10.0\$(RuntimeIdentifier)\payload"
+          PackagePath="runtimes\$(DevolutionsTerminalPackageRuntimeIdentifier)\native\payload"
           Visible="false" />
+    <None Include="Devolutions.Terminal.App.targets"
+          Pack="true"
+          PackagePath="buildTransitive\$(PackageId).targets" />
     <None Include="README.md" Pack="true" PackagePath="README.md" />
   </ItemGroup>
 
-  <ItemGroup Condition="'$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'any'">
-    <None Include="README.md" Pack="true" PackagePath="README.md" />
-  </ItemGroup>
-
-  <Target Name="ValidateDevolutionsTerminalToolLayout"
+  <Target Name="ValidateDevolutionsTerminalPackageLayout"
           BeforeTargets="GenerateNuspec"
-          Condition="'$(RuntimeIdentifier)' != '' and '$(RuntimeIdentifier)' != 'any'">
+          Condition="'$(DevolutionsTerminalPackageRuntimeIdentifier)' != ''">
     <PropertyGroup>
-      <_DevolutionsTerminalExecutableName Condition="$([System.String]::Copy('$(RuntimeIdentifier)').StartsWith('win-'))">dt.exe</_DevolutionsTerminalExecutableName>
+      <_DevolutionsTerminalExecutableName Condition="$([System.String]::Copy('$(DevolutionsTerminalPackageRuntimeIdentifier)').StartsWith('win-'))">dt.exe</_DevolutionsTerminalExecutableName>
       <_DevolutionsTerminalExecutableName Condition="'$(_DevolutionsTerminalExecutableName)' == ''">dt</_DevolutionsTerminalExecutableName>
-      <_DevolutionsTerminalHostName Condition="$([System.String]::Copy('$(RuntimeIdentifier)').StartsWith('win-'))">Devolutions.Terminal.exe</_DevolutionsTerminalHostName>
+      <_DevolutionsTerminalHostName Condition="$([System.String]::Copy('$(DevolutionsTerminalPackageRuntimeIdentifier)').StartsWith('win-'))">Devolutions.Terminal.exe</_DevolutionsTerminalHostName>
       <_DevolutionsTerminalHostName Condition="'$(_DevolutionsTerminalHostName)' == ''">Devolutions.Terminal</_DevolutionsTerminalHostName>
-      <_DevolutionsTerminalRuntimeLayout>$(DevolutionsTerminalNugetLayoutRoot)\$(RuntimeIdentifier)</_DevolutionsTerminalRuntimeLayout>
+      <_DevolutionsTerminalRuntimeLayout>$(DevolutionsTerminalNugetLayoutRoot)\$(DevolutionsTerminalPackageRuntimeIdentifier)</_DevolutionsTerminalRuntimeLayout>
     </PropertyGroup>
 
     <Error Condition="!Exists('$(_DevolutionsTerminalRuntimeLayout)\$(_DevolutionsTerminalExecutableName)')"
-           Text="Missing staged dt executable for RuntimeIdentifier '$(RuntimeIdentifier)': $(_DevolutionsTerminalRuntimeLayout)\$(_DevolutionsTerminalExecutableName)" />
+           Text="Missing staged dt executable for RuntimeIdentifier '$(DevolutionsTerminalPackageRuntimeIdentifier)': $(_DevolutionsTerminalRuntimeLayout)\$(_DevolutionsTerminalExecutableName)" />
     <Error Condition="!Exists('$(_DevolutionsTerminalRuntimeLayout)\$(_DevolutionsTerminalHostName)')"
-           Text="Missing staged Devolutions Terminal host for RuntimeIdentifier '$(RuntimeIdentifier)': $(_DevolutionsTerminalRuntimeLayout)\$(_DevolutionsTerminalHostName)" />
+           Text="Missing staged Devolutions Terminal host for RuntimeIdentifier '$(DevolutionsTerminalPackageRuntimeIdentifier)': $(_DevolutionsTerminalRuntimeLayout)\$(_DevolutionsTerminalHostName)" />
   </Target>
 </Project>

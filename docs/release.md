@@ -282,12 +282,12 @@ match the Artifact Signing certificate subject.
 
 The release job publishes `Devolutions.Terminal.App` to NuGet.org through OIDC
 trusted publishing when `publish_nuget` is enabled; tag-triggered releases
-enable it automatically. The .NET 10 RID-specific tool format produces a small
-pointer package, six platform packages, and an `any` fallback package. The
-release publishes the runtime packages before the pointer so clients never
-resolve a pointer whose dependencies are not yet available. Splitting the
-NativeAOT payloads keeps each package below NuGet.org's 250 MB package-size
-limit.
+enable it automatically. The distribution consists of a small meta-package and
+six RID-specific payload packages. The release publishes the runtime packages
+before the meta-package so clients never resolve dependencies that are not yet
+available. Splitting the NativeAOT payloads keeps each package below
+NuGet.org's 250 MB package-size limit while preserving the existing
+`PackageReference` and MSBuild import behavior.
 
 Configure the `publish-test` and `publish-prod` environments as trusted
 publishers for the package IDs on NuGet.org, and bootstrap the RID and pointer

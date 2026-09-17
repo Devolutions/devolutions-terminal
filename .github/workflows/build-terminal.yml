@@ -851,7 +851,7 @@ jobs:
           -SkipPublish
           -Version "${{ needs.release-metadata.outputs.release_version }}"
 
-      - name: Smoke test NuGet tool installation
+      - name: Smoke test NuGet package import
         shell: pwsh
         run: >
           ./src/Devolutions.Terminal.Package/Scripts/Test-NuGetDistribution.ps1
@@ -1136,8 +1136,8 @@ jobs:
           $dryRun = [System.Boolean]::Parse('${{ needs.release-metadata.outputs.dry_run }}')
           $publishNuget = [System.Boolean]::Parse('${{ needs.release-metadata.outputs.publish_nuget }}')
           $packages = @(Get-ChildItem -LiteralPath artifacts/nuget -Filter "*.nupkg" -File | Sort-Object Name)
-          if ($packages.Count -ne 8) {
-            throw "Expected eight NuGet packages, found $($packages.Count)."
+          if ($packages.Count -ne 7) {
+            throw "Expected seven NuGet packages, found $($packages.Count)."
           }
 
           $pointerPackageName = 'Devolutions.Terminal.App.${{ needs.release-metadata.outputs.release_version }}.nupkg'

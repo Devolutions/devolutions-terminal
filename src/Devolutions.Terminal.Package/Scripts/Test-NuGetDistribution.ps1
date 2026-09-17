@@ -14,7 +14,6 @@ $ErrorActionPreference = "Stop"
 $packageSource = [IO.Path]::GetFullPath($PackageDirectory)
 $expectedPackageNames = @(
     "Devolutions.Terminal.App.$Version.nupkg"
-    "Devolutions.Terminal.App.any.$Version.nupkg"
     "Devolutions.Terminal.App.win-x64.$Version.nupkg"
     "Devolutions.Terminal.App.win-arm64.$Version.nupkg"
     "Devolutions.Terminal.App.linux-x64.$Version.nupkg"
@@ -30,12 +29,12 @@ foreach ($packageName in $expectedPackageNames) {
 }
 
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ("devolutions-terminal-nuget-" + [guid]::NewGuid())
+$projectPath = Join-Path $testRoot "Consumer.csproj"
 $nuGetConfigPath = Join-Path $testRoot "NuGet.Config"
-$toolDirectory = Join-Path $testRoot "tools"
 $originalNugetPackages = $env:NUGET_PACKAGES
 
 try {
-    New-Item -ItemType Directory -Force -Path $testRoot, $toolDirectory | Out-Null
+    New-Item -ItemType Directory -Force -Path $testRoot | Out-Null
     $env:NUGET_PACKAGES = Join-Path $testRoot "packages"
     @"
 <?xml version="1.0" encoding="utf-8"?>
@@ -47,28 +46,68 @@ try {
 </configuration>
 "@ | Set-Content -LiteralPath $nuGetConfigPath -Encoding utf8NoBOM
 
-    & dotnet tool install Devolutions.Terminal.App `
-        --version $Version `
-        --tool-path $toolDirectory `
-        --configfile $nuGetConfigPath `
-        --no-cache
-    if ($LASTEXITCODE -ne 0) {
-        throw "dotnet tool install failed with exit code $LASTEXITCODE."
+    $runtimeIdentifiers = @("win-x64", "win-arm64", "linux-x64", "linux-arm64", "osx-x64", "osx-arm64")
+    foreach ($runtimeIdentifier in $runtimeIdentifiers) {
+        @"
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RuntimeIdentifier>$runtimeIdentifier</RuntimeIdentifier>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Devolutions.Terminal.App" Version="$Version" />
+  </ItemGroup>
+</Project>
+"@ | Set-Content -LiteralPath $projectPath -Encoding utf8NoBOM
+
+        & dotnet restore $projectPath --configfile $nuGetConfigPath --no-cache --force
+        if ($LASTEXITCODE -ne 0) {
+            throw "dotnet restore failed for '$runtimeIdentifier' with exit code $LASTEXITCODE."
+        }
+
+        & dotnet build $projectPath -c Release --no-restore
+        if ($LASTEXITCODE -ne 0) {
+            throw "dotnet build failed for '$runtimeIdentifier' with exit code $LASTEXITCODE."
+        }
+
+        $outputDirectory = Join-Path $testRoot "bin\Release\net10.0\$runtimeIdentifier"
+        $executableName = if ($runtimeIdentifier.StartsWith("win-", [StringComparison]::Ordinal)) { "dt.exe" } else { "dt" }
+        $payloadPath = Join-Path $outputDirectory "runtimes\$runtimeIdentifier\native\payload\$executableName"
+        if (-not (Test-Path -LiteralPath $payloadPath -PathType Leaf)) {
+            throw "Package payload '$payloadPath' was not copied to the consumer output."
+        }
+
+        $otherPayloads = @(Get-ChildItem -LiteralPath (Join-Path $outputDirectory "runtimes") -Directory |
+            Where-Object Name -ne $runtimeIdentifier)
+        if ($otherPayloads.Count -ne 0) {
+            throw "Unexpected runtime payloads were copied for '$runtimeIdentifier': $($otherPayloads.Name -join ', ')."
+        }
     }
 
-    $toolPath = @(
-        Join-Path $toolDirectory "dt"
-        Join-Path $toolDirectory "dt.exe"
-        Join-Path $toolDirectory "dt.cmd"
-    ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
-    if ([string]::IsNullOrWhiteSpace($toolPath)) {
-        $installedFiles = @(Get-ChildItem -LiteralPath $toolDirectory -File | Select-Object -ExpandProperty Name)
-        throw "Installed dt command was not found in '$toolDirectory'. Files: $($installedFiles -join ', ')."
+    @"
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Devolutions.Terminal.App" Version="$Version" />
+  </ItemGroup>
+</Project>
+"@ | Set-Content -LiteralPath $projectPath -Encoding utf8NoBOM
+
+    & dotnet restore $projectPath --configfile $nuGetConfigPath --no-cache --force
+    if ($LASTEXITCODE -ne 0) {
+        throw "dotnet restore failed for the default runtime with exit code $LASTEXITCODE."
     }
 
-    & $toolPath --version
+    & dotnet build $projectPath -c Release --no-restore
     if ($LASTEXITCODE -ne 0) {
-        throw "Installed dt command failed with exit code $LASTEXITCODE."
+        throw "dotnet build failed for the default runtime with exit code $LASTEXITCODE."
+    }
+
+    $defaultPayloadPath = Join-Path $testRoot "bin\Release\net10.0\runtimes\win-x64\native\payload\dt.exe"
+    if (-not (Test-Path -LiteralPath $defaultPayloadPath -PathType Leaf)) {
+        throw "Default win-x64 package payload '$defaultPayloadPath' was not copied to the consumer output."
     }
 }
 finally {

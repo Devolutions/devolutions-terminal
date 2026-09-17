@@ -1,19 +1,21 @@
 # Devolutions Terminal NuGet distribution
 
-`Devolutions.Terminal.App` is a .NET 10 RID-specific tool package containing
-self-contained NativeAOT distributions for Windows (`win-x64`, `win-arm64`),
-Linux (`linux-x64`, `linux-arm64`), and macOS (`osx-x64`, `osx-arm64`). The
-package is a distribution artifact rather than a managed API package.
+`Devolutions.Terminal.App` contains self-contained NativeAOT distributions for
+Windows (`win-x64`, `win-arm64`), Linux (`linux-x64`, `linux-arm64`), and macOS
+(`osx-x64`, `osx-arm64`). The package is a distribution artifact rather than a
+managed API package.
 
-Install the tool using the .NET 10 SDK or newer:
+Reference the package from an SDK-style project:
 
-```powershell
-dotnet tool install --global Devolutions.Terminal.App
-dt --help
+```xml
+<PackageReference Include="Devolutions.Terminal.App" Version="2026.3.0" />
 ```
 
-NuGet first restores a small pointer package, then selects the package matching
-the current runtime identifier. Each RID package contains only its own
-application payload, keeping every package below NuGet.org's package-size
-limit. The installed command is `dt`; no `wt.exe` alias or Windows Terminal
-compatibility shim is installed.
+The main package depends on one payload package per supported RID so that each
+published package remains below NuGet.org's package-size limit. Build-transitive
+MSBuild targets copy only the payload matching the consuming project's
+`RuntimeIdentifier` into its output. Projects without a `RuntimeIdentifier`
+continue to receive the `win-x64` payload by default.
+
+The command-line executable is `dt.exe` on Windows and `dt` on Linux and macOS;
+no `wt.exe` alias or Windows Terminal compatibility shim is installed.
