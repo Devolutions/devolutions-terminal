@@ -234,6 +234,9 @@ Manual dispatch provides these inputs:
 - `dry_run` — build, package, and validate artifacts without creating or
   updating a GitHub Release. The combined release assets are uploaded as a
   workflow artifact.
+- `publish_nuget` — publish `Devolutions.Terminal.App` to NuGet.org. This is
+  disabled by default for manual releases so a missing or not-yet-activated
+  trusted-publishing policy does not block the GitHub Release.
 - `sign_dry_run` — with `dry_run`, sign Windows packages using the selected
   signing environment when all signing secrets are available. This validates
   the real `psign-tool` and Azure Artifact Signing path without publishing.
@@ -264,7 +267,7 @@ Required environment secrets:
 - `TRUSTED_SIGNING_ACCOUNT_NAME`
 - `TRUSTED_SIGNING_PROFILE_NAME`
 - `NUGET_BOT_USERNAME` — NuGet.org trusted-publishing identity for
-  `Devolutions.Terminal.App`
+  `Devolutions.Terminal.App`; required only when NuGet publication is enabled
 - `APPLE_APP_DEV_ID_APP_CERTIFICATE` — base64-encoded Developer ID certificate
 - `APPLE_APP_DEV_ID_APP_CERTIFICATE_PASSWORD` — Developer ID certificate password
 - `APPLE_BOT_PASSWORD` — app-specific password for macOS notarization
@@ -278,9 +281,12 @@ Optional environment or repository variable:
 match the Artifact Signing certificate subject.
 
 The release job publishes `Devolutions.Terminal.App` to NuGet.org through OIDC
-trusted publishing. Configure the `publish-test` and `publish-prod`
-environments as trusted publishers for the package on NuGet.org. Dry runs do
-not request a NuGet API key or publish the package.
+trusted publishing when `publish_nuget` is enabled; tag-triggered releases
+enable it automatically. Configure the `publish-test` and `publish-prod`
+environments as trusted publishers for the package on NuGet.org, and bootstrap
+the package before enabling publication for a manual release. Dry runs and
+manual releases with `publish_nuget` disabled do not request a NuGet API key or
+publish the package; the `.nupkg` remains included in the GitHub Release assets.
 
 ## NuGet package (`Devolutions.Terminal.Control`)
 
