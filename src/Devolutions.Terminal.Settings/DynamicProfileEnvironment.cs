@@ -40,7 +40,13 @@ public sealed class DynamicProfileEnvironment
             return File.Exists(executable) ? executable : null;
         }
 
-        foreach (var directory in (Environment.GetEnvironmentVariable("PATH") ?? string.Empty)
+        var path = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+        if (OperatingSystem.IsMacOS())
+        {
+            path = UnixShellCommandline.AugmentMacOsPath(path);
+        }
+
+        foreach (var directory in path
                      .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             var candidate = Path.Combine(directory.Trim('"'), executable);

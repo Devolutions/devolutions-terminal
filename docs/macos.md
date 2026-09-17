@@ -13,11 +13,21 @@ registration, and Homebrew remain out of scope.
 - Settings at `~/Library/Application Support/Devolutions/Terminal/`
 - Native Command-key defaults for clipboard, tabs, windows, search, settings,
   selection, font sizing, full screen, and quit actions
+- Native macOS application and window menus, Hide, and Dock reopen after the
+  last window is closed
+- Login-shell commandlines (`/bin/zsh -l`) so Dock launches pick up `~/.zprofile`
+  and Homebrew `PATH`
+- `TERM_PROGRAM=Devolutions.Terminal` and extra Homebrew/MacPorts `PATH` entries
+  on the PTY host
+- Command-click hyperlinks, Command-scroll zoom, Option-as-Meta, Kitty Super
+- `public.html` / `public.rtf` clipboard formats, Menlo/Apple Color Emoji
+  fallbacks, and file-drop path pasting
 - Generated zsh/bash/fish/pwsh/sh profiles (`Devolutions.Terminal.macOS`)
 - Hidden Windows inbox profiles that use `%SystemRoot%`
 - Opening files and URIs with `open(1)`
 - Notifications through `osascript` `display notification`
-- `dterm:` URL scheme declared in `macos/Info.plist`
+- `dterm:` URL scheme declared in `macos/Info.plist` (argv and Apple Event
+  protocol activation)
 - NativeAOT `.app` + zip packaging on Darwin
 - Signed, notarized `.dmg` release artifacts via
   `scripts/Release-MacOsPackage.ps1` (CI only; ad-hoc unsigned zip/dmg locally

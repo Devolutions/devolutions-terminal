@@ -292,7 +292,7 @@ jobs:
 
   macos-managed:
     name: macOS managed and metadata tests
-    runs-on: macos-14
+    runs-on: macos-26
     needs: release-metadata
     steps:
       - name: Checkout
@@ -328,7 +328,7 @@ jobs:
 
   macos-native-aot:
     name: macOS NativeAOT ${{ matrix.rid }}
-    runs-on: macos-14
+    runs-on: macos-26
     needs:
       - macos-managed
       - release-metadata
@@ -405,7 +405,7 @@ jobs:
 
   macos-sign:
     name: macOS sign and notarize ${{ matrix.rid }}
-    runs-on: macos-14
+    runs-on: macos-26
     if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
     needs:
       - macos-native-aot

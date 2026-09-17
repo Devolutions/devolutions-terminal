@@ -29,8 +29,15 @@ $oldEntitlements = $env:MACOS_ENTITLEMENTS
 
 try {
     New-Item -ItemType Directory -Force -Path $macosDir | Out-Null
-    Invoke-Native -FilePath cp -ArgumentList '-p', '/usr/bin/true', (Join-Path $macosDir 'MainTool')
-    Invoke-Native -FilePath cp -ArgumentList '-p', '/usr/bin/true', (Join-Path $macosDir 'HelperTool')
+    # Do not use cp -p: /usr/bin/true is SIP-protected, and preserving flags
+    # fails with "chflags: Operation not permitted" on macos-26 runners.
+    Invoke-Native -FilePath cp -ArgumentList '/usr/bin/true', (Join-Path $macosDir 'MainTool')
+    Invoke-Native -FilePath cp -ArgumentList '/usr/bin/true', (Join-Path $macosDir 'HelperTool')
+    Invoke-Native -FilePath chmod -ArgumentList @(
+        '0755',
+        (Join-Path $macosDir 'MainTool'),
+        (Join-Path $macosDir 'HelperTool')
+    )
     Set-Content -LiteralPath (Join-Path $macosDir 'HelperTool.runtimeconfig.json') `
         -Value '{"runtimeOptions":{}}' -NoNewline -Encoding utf8
 
@@ -81,7 +88,7 @@ try {
     Invoke-Native -FilePath codesign -ArgumentList '--verify', '--deep', '--strict', '--verbose=2', $appPath
 
     $isolatedHelper = Join-Path $work 'HelperTool'
-    Invoke-Native -FilePath cp -ArgumentList '-p', (Join-Path $macosDir 'HelperTool'), $isolatedHelper
+    Invoke-Native -FilePath cp -ArgumentList (Join-Path $macosDir 'HelperTool'), $isolatedHelper
     Assert-MacOsCodeSignature -Path $isolatedHelper -RequireHardenedRuntime
 
     Write-Host 'macOS standalone auxiliary-code signing regression test passed.'

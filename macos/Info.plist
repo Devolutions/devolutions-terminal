@@ -32,6 +32,8 @@
   <true/>
   <key>NSSupportsAutomaticGraphicsSwitching</key>
   <true/>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Devolutions Terminal uses Apple Events to show desktop notifications.</string>
   <key>CFBundleURLTypes</key>
   <array>
     <dict>

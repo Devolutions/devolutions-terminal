@@ -3,6 +3,8 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Devolutions.Terminal.Cli;
+using Devolutions.Terminal.Settings;
+using Devolutions.Terminal.App.Platform;
 using Devolutions.Terminal.App.Views;
 
 namespace Devolutions.Terminal;
@@ -30,10 +32,32 @@ public partial class TerminalApp : Application
             _desktop = desktop;
             _router = new TerminalWindowRouter(desktop, ConfigureWindow);
             BrokerHandler?.SetHandler(_router);
+            if (OperatingSystem.IsMacOS())
+            {
+                desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
+                NativeMenu.SetMenu(
+                    this,
+                    MacOsNativeMenu.CreateApplicationMenu(
+                        about: () => DispatchToActiveWindow(ShortcutAction.OpenAbout),
+                        settings: () => DispatchToActiveWindow(ShortcutAction.OpenSettings),
+                        hide: () => (desktop as IActivatableLifetime)?.TryEnterBackground(),
+                        quit: () => desktop.Shutdown()));
+            }
+
             desktop.MainWindow = _router.CreateInitial(
                 InitialInvocation ?? new CliParser().Parse([]).Invocation!);
+            if (desktop is IActivatableLifetime activatable)
+            {
+                activatable.Activated += OnActivated;
+            }
+
             desktop.Exit += (_, _) =>
             {
+                if (desktop is IActivatableLifetime lifetime)
+                {
+                    lifetime.Activated -= OnActivated;
+                }
+
                 _router?.Dispose();
                 _router = null;
             };
@@ -111,4 +135,76 @@ public partial class TerminalApp : Application
     }
 
     private void Exit_OnClick(object? sender, EventArgs e) => _desktop?.Shutdown();
+
+    private void OnActivated(object? sender, ActivatedEventArgs e)
+    {
+        if (e is ProtocolActivatedEventArgs protocol)
+        {
+            HandleProtocol(protocol.Uri);
+            return;
+        }
+
+        if (e.Kind == ActivationKind.Reopen)
+        {
+            EnsureWindow();
+        }
+    }
+
+    private void HandleProtocol(Uri uri)
+    {
+        if (!LinuxDesktopIntegration.TryNormalizeProtocolActivation(
+                [uri.OriginalString],
+                out _,
+                out var error) ||
+            error is not null)
+        {
+            return;
+        }
+
+        var action = string.IsNullOrWhiteSpace(uri.Host)
+            ? uri.AbsolutePath.Trim('/')
+            : uri.Host;
+        if (action.Equals("new-tab", StringComparison.OrdinalIgnoreCase) ||
+            _desktop?.Windows.Count == 0)
+        {
+            EnsureWindow();
+            return;
+        }
+
+        var window = _desktop?.Windows.OfType<Window>().LastOrDefault();
+        window?.Show();
+        window?.Activate();
+        (_desktop as IActivatableLifetime)?.TryLeaveBackground();
+    }
+
+    private void DispatchToActiveWindow(ShortcutAction action)
+    {
+        var window = _desktop?.Windows.OfType<MainWindow>().LastOrDefault(static item => item.IsActive)
+            ?? _desktop?.Windows.OfType<MainWindow>().LastOrDefault()
+            ?? EnsureWindow();
+        window?.DispatchMenuAction(action);
+    }
+
+    private MainWindow? EnsureWindow()
+    {
+        if (_router is null || _desktop is null)
+        {
+            return null;
+        }
+
+        var existing = _desktop.Windows.OfType<MainWindow>().LastOrDefault();
+        if (existing is not null)
+        {
+            existing.Show();
+            existing.Activate();
+            (_desktop as IActivatableLifetime)?.TryLeaveBackground();
+            return existing;
+        }
+
+        var window = _router.CreateInitial(
+            InitialInvocation ?? new CliParser().Parse([]).Invocation!);
+        _desktop.MainWindow = window;
+        window.Show();
+        return window;
+    }
 }

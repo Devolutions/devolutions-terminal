@@ -354,4 +354,41 @@ public sealed class KeyMapperTests
             "\u001b[186;0;58;1;16;1_",
             KeyMapper.ToVt(Key.OemSemicolon, KeyModifiers.Shift, PhysicalKey.Semicolon, ":", win32));
     }
+
+    [Fact]
+    public void OptionAsMetaUsesUncomposedLetterInsteadOfDeadKey()
+    {
+        var symbol = KeyMapper.NormalizeOptionAsMetaSymbol(
+            Key.E,
+            KeyModifiers.Alt,
+            "é",
+            optionAsMeta: true);
+
+        Assert.Equal("e", symbol);
+        Assert.Equal(
+            "\u001be",
+            KeyMapper.ToVt(Key.E, KeyModifiers.Alt, PhysicalKey.E, symbol, applicationCursorKeys: false));
+        Assert.Equal(
+            "é",
+            KeyMapper.NormalizeOptionAsMetaSymbol(Key.E, KeyModifiers.Alt, "é", optionAsMeta: false));
+    }
+
+    [Fact]
+    public void KittyReportsSuperForMetaModifier()
+    {
+        var sequence = KeyMapper.ToVt(
+            Key.A,
+            KeyModifiers.Meta,
+            PhysicalKey.A,
+            "a",
+            new TerminalInputMode(
+                true,
+                false,
+                false,
+                KittyKeyboardFlags.DisambiguateEscapeCodes,
+                0,
+                false));
+
+        Assert.Equal("\u001b[97;9u", sequence);
+    }
 }

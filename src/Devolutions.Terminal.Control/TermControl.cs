@@ -10,6 +10,7 @@ using Avalonia.Input.TextInput;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Platform;
+using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Devolutions.Terminal.Connection;
 using Devolutions.Terminal.Core;
@@ -31,9 +32,11 @@ public enum TerminalControlCapabilities
 public sealed class TermControl : Avalonia.Controls.Control
 {
     private static readonly DataFormat<byte[]> HtmlClipboardFormat =
-        DataFormat.CreateBytesPlatformFormat("HTML Format");
+        DataFormat.CreateBytesPlatformFormat(
+            OperatingSystem.IsMacOS() ? "public.html" : "HTML Format");
     private static readonly DataFormat<byte[]> RtfClipboardFormat =
-        DataFormat.CreateBytesPlatformFormat("Rich Text Format");
+        DataFormat.CreateBytesPlatformFormat(
+            OperatingSystem.IsMacOS() ? "public.rtf" : "Rich Text Format");
     private readonly DispatcherTimer _blinkTimer;
     private readonly object _outputLock = new();
     private bool _acceptOutput;
@@ -60,6 +63,7 @@ public sealed class TermControl : Avalonia.Controls.Control
     private readonly HashSet<(int Line, TerminalScrollMarkKind Kind)> _clearedScrollMarks = [];
     private readonly HashSet<Key> _pressedKeys = [];
     private string? _pendingEncodedTextInput;
+    private bool _suppressOptionTextInput;
     private TerminalCompositionOverlay? _composition;
     private readonly TerminalTextInputMethodClient _textInputMethodClient;
     private Point? _touchPoint;
@@ -101,6 +105,9 @@ public sealed class TermControl : Avalonia.Controls.Control
         };
         Focusable = true;
         ClipToBounds = true;
+        DragDrop.SetAllowDrop(this, true);
+        AddHandler(DragDrop.DragOverEvent, OnDragOver);
+        AddHandler(DragDrop.DropEvent, OnDrop);
         TextInputMethodClientRequested += OnTextInputMethodClientRequested;
         GotFocus += (_, _) => SendFocusChanged(focused: true);
         LostFocus += (_, _) =>
@@ -416,7 +423,7 @@ public sealed class TermControl : Avalonia.Controls.Control
         var item = DataTransferItem.CreateText(payload.Text);
         if (payload.Html is not null)
         {
-            item.Set(HtmlClipboardFormat, Encoding.UTF8.GetBytes(payload.Html));
+            item.Set(HtmlClipboardFormat, Encoding.UTF8.GetBytes(ToPlatformHtmlClipboard(payload.Html)));
         }
 
         if (payload.Rtf is not null)
@@ -1103,6 +1110,11 @@ public sealed class TermControl : Avalonia.Controls.Control
         TerminalInputMode mode)
     {
         _pendingEncodedTextInput = null;
+        _suppressOptionTextInput = false;
+        var optionAsMeta = OperatingSystem.IsMacOS() &&
+                           mode.KittyFlags == KittyKeyboardFlags.None &&
+                           !mode.Win32InputMode;
+        keySymbol = KeyMapper.NormalizeOptionAsMetaSymbol(key, modifiers, keySymbol, optionAsMeta);
         var eventType = _pressedKeys.Add(key)
             ? TerminalKeyEventType.Press
             : TerminalKeyEventType.Repeat;
@@ -1120,6 +1132,16 @@ public sealed class TermControl : Avalonia.Controls.Control
 
         TryWriteInput(vt);
         SetScrollOffset(0);
+        if (optionAsMeta &&
+            modifiers.HasFlag(KeyModifiers.Alt) &&
+            !modifiers.HasFlag(KeyModifiers.Control) &&
+            !modifiers.HasFlag(KeyModifiers.Meta) &&
+            vt.Length > 1 &&
+            vt[0] == '\u001b')
+        {
+            _suppressOptionTextInput = true;
+        }
+
         if (IsTextInputCandidate(keySymbol) &&
             (mode.Win32InputMode ||
              mode.ModifyOtherKeys > 0 ||
@@ -1134,6 +1156,12 @@ public sealed class TermControl : Avalonia.Controls.Control
 
     internal string? ProcessTextInput(string? text, TerminalInputMode mode)
     {
+        if (_suppressOptionTextInput)
+        {
+            _suppressOptionTextInput = false;
+            return null;
+        }
+
         if (string.IsNullOrEmpty(text) || text is "\r" or "\n" or "\t")
         {
             return null;
@@ -1208,7 +1236,7 @@ public sealed class TermControl : Avalonia.Controls.Control
         }
 
         if (point.Properties.IsLeftButtonPressed &&
-            (e.KeyModifiers & KeyModifiers.Control) != 0 &&
+            HasCommandModifier(e.KeyModifiers) &&
             hyperlink is not null)
         {
             ObserveInteractionAsync("open hyperlink", OpenHyperlinkAsync(hyperlink));
@@ -1326,7 +1354,7 @@ public sealed class TermControl : Avalonia.Controls.Control
 
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
     {
-        if ((e.KeyModifiers & KeyModifiers.Control) != 0 && InteractionOptions.ScrollToZoom)
+        if (HasCommandModifier(e.KeyModifiers) && InteractionOptions.ScrollToZoom)
         {
             AdjustFontSize(e.Delta.Y > 0 ? 1 : -1);
             e.Handled = true;
@@ -1348,6 +1376,58 @@ public sealed class TermControl : Avalonia.Controls.Control
         SetScrollOffset(Engine.ScrollOffset + delta);
         e.Handled = true;
         base.OnPointerWheelChanged(e);
+    }
+
+    private void OnDragOver(object? sender, DragEventArgs e)
+    {
+        e.DragEffects = e.DataTransfer.Contains(DataFormat.File)
+            ? DragDropEffects.Copy
+            : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void OnDrop(object? sender, DragEventArgs e)
+    {
+        var files = e.DataTransfer.TryGetFiles();
+        if (files is null)
+        {
+            return;
+        }
+
+        var text = TerminalInteractionModel.FormatDroppedPaths(
+            files.Select(static file => file.TryGetLocalPath())
+                .Where(static path => !string.IsNullOrWhiteSpace(path))
+                .Select(static path => path!),
+            Profile?.DragDropDelimiter ?? " ");
+        if (string.IsNullOrEmpty(text) || !TryWriteInput(text))
+        {
+            return;
+        }
+
+        e.Handled = true;
+    }
+
+    internal static KeyModifiers CommandModifier { get; } =
+        OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control;
+
+    internal static bool HasCommandModifier(KeyModifiers modifiers) =>
+        (modifiers & CommandModifier) != 0;
+
+    internal static string ToPlatformHtmlClipboard(string html)
+    {
+        ArgumentNullException.ThrowIfNull(html);
+        if (!OperatingSystem.IsMacOS())
+        {
+            return html;
+        }
+
+        const string start = "<!--StartFragment-->";
+        const string end = "<!--EndFragment-->";
+        var startIndex = html.IndexOf(start, StringComparison.Ordinal);
+        var endIndex = html.IndexOf(end, StringComparison.Ordinal);
+        return startIndex >= 0 && endIndex > startIndex
+            ? html[(startIndex + start.Length)..endIndex]
+            : html;
     }
 
     private void OnOutput(object? sender, ReadOnlyMemory<byte> data)
@@ -1844,13 +1924,22 @@ public sealed class TermControl : Avalonia.Controls.Control
             FontFamily = profile.FontFace,
             FontSize = (float)fontSize,
             FontWeight = profile.FontWeight,
-            FallbackFontFamilies =
-            [
-                "Cascadia Mono",
-                "Consolas",
-                "Noto Color Emoji",
-                "Segoe UI Emoji",
-            ],
+            FallbackFontFamilies = OperatingSystem.IsMacOS()
+                ?
+                [
+                    "Cascadia Mono",
+                    "Menlo",
+                    "Monaco",
+                    "Noto Color Emoji",
+                    "Apple Color Emoji",
+                ]
+                :
+                [
+                    "Cascadia Mono",
+                    "Consolas",
+                    "Noto Color Emoji",
+                    "Segoe UI Emoji",
+                ],
             Effect = profile.RetroTerminalEffect && shaderEffectsEnabled
                 ? TerminalRenderEffect.RetroScanlines
                 : TerminalRenderEffect.None,
@@ -2021,10 +2110,10 @@ public sealed class TermControl : Avalonia.Controls.Control
             case Key.Space:
                 SwitchSelectionEndpoint();
                 return true;
-            case Key.A when (e.KeyModifiers & KeyModifiers.Control) != 0:
+            case Key.A when HasCommandModifier(e.KeyModifiers):
                 SelectAll();
                 return true;
-            case Key.W when (e.KeyModifiers & KeyModifiers.Control) != 0:
+            case Key.W when HasCommandModifier(e.KeyModifiers):
                 ExpandSelectionToWord();
                 return true;
             case Key.Enter:
