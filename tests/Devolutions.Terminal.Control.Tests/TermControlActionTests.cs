@@ -159,4 +159,35 @@ public sealed class TermControlActionTests
             normal));
         Assert.Equal("a", control.ProcessTextInput("a", normal));
     }
+
+    [Fact]
+    public void OptionAsMetaSuppressesOnlyTheImmediateTextInput()
+    {
+        var control = new TermControl();
+        var mode = new TerminalInputMode(
+            true,
+            false,
+            false,
+            KittyKeyboardFlags.None,
+            0,
+            false);
+
+        Assert.NotNull(control.ProcessKeyDownInput(
+            Key.A,
+            KeyModifiers.Alt,
+            PhysicalKey.A,
+            "å",
+            mode));
+
+        if (OperatingSystem.IsMacOS())
+        {
+            Assert.Null(control.ProcessTextInput("å", mode));
+        }
+        else
+        {
+            Assert.Equal("å", control.ProcessTextInput("å", mode));
+        }
+
+        Assert.Equal("b", control.ProcessTextInput("b", mode));
+    }
 }

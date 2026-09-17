@@ -1110,6 +1110,7 @@ public sealed class TermControl : Avalonia.Controls.Control
         TerminalInputMode mode)
     {
         _pendingEncodedTextInput = null;
+        _suppressOptionTextInput = false;
         var optionAsMeta = OperatingSystem.IsMacOS() &&
                            mode.KittyFlags == KittyKeyboardFlags.None &&
                            !mode.Win32InputMode;
