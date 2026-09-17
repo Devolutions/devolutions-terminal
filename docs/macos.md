@@ -46,8 +46,10 @@ stages `Devolutions Terminal.app` with `macos/Info.plist`, generates
 `DevolutionsTerminal.icns` from the original WT Distro vector artwork in
 `macos/DevolutionsTerminal.svg`. Its librsvg-rendered 1024px transparent master,
 `macos/DevolutionsTerminal.png`, is committed so packaging does not depend on
-an additional SVG renderer. The script then ad-hoc signs the bundle and writes
-a zip plus SHA-256 manifest.
+an additional SVG renderer. Xcode compiles that same master through
+`macos/AppIcon.icon` for the native macOS 26 appearance system; the `.icns`
+remains the fallback on earlier releases. The script then ad-hoc signs the
+bundle and writes a zip plus SHA-256 manifest.
 
 ```bash
 open "artifacts/packages/Devolutions Terminal.app"

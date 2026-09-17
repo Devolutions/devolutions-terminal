@@ -54,6 +54,8 @@ function Test-MacOsAppBundle {
     $macosDir = Join-Path $App 'Contents/MacOS'
     $plist = Join-Path $App 'Contents/Info.plist'
     $icns = Join-Path $App "Contents/Resources/$($metadata.ICON_NAME).icns"
+    $assetCatalog = Join-Path $App 'Contents/Resources/Assets.car'
+    $appearanceIcon = Join-Path $App 'Contents/Resources/AppIcon.icns'
 
     $requiredPaths = @(
         (Join-Path $macosDir $metadata.EXECUTABLE_NAME),
@@ -66,7 +68,9 @@ function Test-MacOsAppBundle {
         (Join-Path $App 'Contents/Resources/THIRD-PARTY-NOTICES-NOTO-EMOJI.txt'),
         (Join-Path $App 'Contents/Resources/LICENSE'),
         $plist,
-        $icns
+        $icns,
+        $assetCatalog,
+        $appearanceIcon
     )
     foreach ($path in $requiredPaths) {
         if (-not (Test-Path -LiteralPath $path)) {
@@ -109,6 +113,9 @@ function Test-MacOsAppBundle {
     }
     if ($plistData.CFBundleIconFile -ne $metadata.ICON_NAME) {
         throw "$label CFBundleIconFile does not match $($metadata.ICON_NAME)."
+    }
+    if ($plistData.CFBundleIconName -ne 'AppIcon') {
+        throw "$label CFBundleIconName is not AppIcon."
     }
 
     $iconset = Join-Path $work "$([guid]::NewGuid()).iconset"

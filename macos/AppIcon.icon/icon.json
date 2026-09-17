@@ -1,0 +1,52 @@
+{
+  "fill" : {
+    "linear-gradient" : [
+      "display-p3:0.00000,0.61176,1.00000,1.00000",
+      "display-p3:0.00000,0.30980,0.56863,1.00000"
+    ],
+    "orientation" : {
+      "start" : {
+        "x" : 0,
+        "y" : 0
+      },
+      "stop" : {
+        "x" : 1,
+        "y" : 1
+      }
+    }
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "blend-mode" : "normal",
+          "glass" : false,
+          "hidden" : false,
+          "image-name" : "DevolutionsTerminal.png",
+          "name" : "Devolutions Terminal",
+          "position" : {
+            "scale" : 0.78,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.3
+      },
+      "translucency" : {
+        "enabled" : false,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}

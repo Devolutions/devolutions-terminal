@@ -51,7 +51,7 @@ if (-not (Test-Path -LiteralPath $PublishDirectory -PathType Container)) {
 $publishDir = (Resolve-Path -LiteralPath $PublishDirectory).ProviderPath
 
 Assert-MacOsVersion -Version $Version
-Assert-Command -Name 'sips', 'iconutil', 'plutil'
+Assert-Command -Name 'sips', 'iconutil', 'plutil', 'xcrun'
 
 $metadata = Import-MacOsPackageEnv -Path $metadataPath
 
@@ -123,6 +123,19 @@ try {
     }
     Invoke-Native -FilePath iconutil -ArgumentList @(
         '-c', 'icns', $iconset, '-o', (Join-Path $resources "$($metadata.ICON_NAME).icns")
+    )
+
+    $partialPlist = Join-Path $iconWork 'app-icon-partial.plist'
+    Invoke-Native -FilePath xcrun -ArgumentList @(
+        'actool',
+        (Join-Path $repoRoot 'macos/AppIcon.icon'),
+        '--compile', $resources,
+        '--app-icon', 'AppIcon',
+        '--output-partial-info-plist', $partialPlist,
+        '--platform', 'macosx',
+        '--minimum-deployment-target', $metadata.MACOS_DEPLOYMENT_TARGET,
+        '--errors',
+        '--warnings'
     )
 }
 finally {
