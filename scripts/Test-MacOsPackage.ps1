@@ -34,7 +34,7 @@ Import-Module (Join-Path $scriptDir 'MacOsPackagingCommon.psm1') -Force
 
 $expectedArch = Get-MacOsExpectedArch -Rid $Rid
 Assert-Darwin -Message 'macOS package validation requires Darwin.'
-Assert-Command -Name 'ditto', 'file', 'lipo', 'plutil'
+Assert-Command -Name 'ditto', 'file', 'iconutil', 'lipo', 'plutil', 'sips'
 
 $metadata = Import-MacOsPackageEnv -Path $metadataPath
 
@@ -54,6 +54,8 @@ function Test-MacOsAppBundle {
     $macosDir = Join-Path $App 'Contents/MacOS'
     $plist = Join-Path $App 'Contents/Info.plist'
     $icns = Join-Path $App "Contents/Resources/$($metadata.ICON_NAME).icns"
+    $assetCatalog = Join-Path $App 'Contents/Resources/Assets.car'
+    $appearanceIcon = Join-Path $App 'Contents/Resources/AppIcon.icns'
 
     $requiredPaths = @(
         (Join-Path $macosDir $metadata.EXECUTABLE_NAME),
@@ -66,7 +68,9 @@ function Test-MacOsAppBundle {
         (Join-Path $App 'Contents/Resources/THIRD-PARTY-NOTICES-NOTO-EMOJI.txt'),
         (Join-Path $App 'Contents/Resources/LICENSE'),
         $plist,
-        $icns
+        $icns,
+        $assetCatalog,
+        $appearanceIcon
     )
     foreach ($path in $requiredPaths) {
         if (-not (Test-Path -LiteralPath $path)) {
@@ -109,6 +113,26 @@ function Test-MacOsAppBundle {
     }
     if ($plistData.CFBundleIconFile -ne $metadata.ICON_NAME) {
         throw "$label CFBundleIconFile does not match $($metadata.ICON_NAME)."
+    }
+    if ($plistData.CFBundleIconName -ne 'AppIcon') {
+        throw "$label CFBundleIconName is not AppIcon."
+    }
+
+    $iconset = Join-Path $work "$([guid]::NewGuid()).iconset"
+    Invoke-Native -FilePath iconutil -ArgumentList '-c', 'iconset', $icns, '-o', $iconset
+    $largestIcon = Join-Path $iconset 'icon_512x512@2x.png'
+    if (-not (Test-Path -LiteralPath $largestIcon -PathType Leaf)) {
+        throw "$label app icon does not contain a 1024px representation."
+    }
+    $iconProperties = & sips -g pixelWidth -g pixelHeight -g hasAlpha $largestIcon
+    if ($LASTEXITCODE -ne 0) {
+        throw "$label app icon could not be inspected."
+    }
+    $iconDescription = $iconProperties | Out-String
+    if ($iconDescription -notmatch '(?m)^\s*pixelWidth:\s+1024\s*$' -or
+        $iconDescription -notmatch '(?m)^\s*pixelHeight:\s+1024\s*$' -or
+        $iconDescription -notmatch '(?m)^\s*hasAlpha:\s+yes\s*$') {
+        throw "$label app icon does not contain a transparent 1024px representation."
     }
 
     foreach ($binary in @(

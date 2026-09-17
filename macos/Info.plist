@@ -16,6 +16,8 @@
   <string>Devolutions Terminal</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
+  <key>CFBundleIconName</key>
+  <string>AppIcon</string>
   <key>CFBundleIconFile</key>
   <string>DevolutionsTerminal</string>
   <key>CFBundleShortVersionString</key>

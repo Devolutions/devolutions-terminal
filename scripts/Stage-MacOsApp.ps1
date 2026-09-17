@@ -51,7 +51,7 @@ if (-not (Test-Path -LiteralPath $PublishDirectory -PathType Container)) {
 $publishDir = (Resolve-Path -LiteralPath $PublishDirectory).ProviderPath
 
 Assert-MacOsVersion -Version $Version
-Assert-Command -Name 'sips', 'iconutil', 'plutil'
+Assert-Command -Name 'sips', 'iconutil', 'plutil', 'xcrun'
 
 $metadata = Import-MacOsPackageEnv -Path $metadataPath
 
@@ -101,29 +101,41 @@ $iconWork = Join-Path ([System.IO.Path]::GetTempPath()) "devolutions-terminal-ic
 $iconset = Join-Path $iconWork 'DevolutionsTerminal.iconset'
 New-Item -ItemType Directory -Force -Path $iconset | Out-Null
 try {
-    $icons = Join-Path $repoRoot 'linux/icons'
-    $appId = $metadata.APP_ID
+    $iconSource = Join-Path $repoRoot 'macos/DevolutionsTerminal.png'
     $sipsJobs = @(
-        @{ Size = 16; Source = "$appId-16.png"; Out = 'icon_16x16.png' },
-        @{ Size = 32; Source = "$appId-32.png"; Out = 'icon_16x16@2x.png' },
-        @{ Size = 32; Source = "$appId-32.png"; Out = 'icon_32x32.png' },
-        @{ Size = 64; Source = "$appId-64.png"; Out = 'icon_32x32@2x.png' },
-        @{ Size = 128; Source = "$appId-256.png"; Out = 'icon_128x128.png' },
-        @{ Size = 256; Source = "$appId-256.png"; Out = 'icon_128x128@2x.png' },
-        @{ Size = 256; Source = "$appId-256.png"; Out = 'icon_256x256.png' },
-        @{ Size = 512; Source = "$appId-256.png"; Out = 'icon_256x256@2x.png' },
-        @{ Size = 512; Source = "$appId-256.png"; Out = 'icon_512x512.png' },
-        @{ Size = 1024; Source = "$appId-256.png"; Out = 'icon_512x512@2x.png' }
+        @{ Size = 16; Out = 'icon_16x16.png' },
+        @{ Size = 32; Out = 'icon_16x16@2x.png' },
+        @{ Size = 32; Out = 'icon_32x32.png' },
+        @{ Size = 64; Out = 'icon_32x32@2x.png' },
+        @{ Size = 128; Out = 'icon_128x128.png' },
+        @{ Size = 256; Out = 'icon_128x128@2x.png' },
+        @{ Size = 256; Out = 'icon_256x256.png' },
+        @{ Size = 512; Out = 'icon_256x256@2x.png' },
+        @{ Size = 512; Out = 'icon_512x512.png' },
+        @{ Size = 1024; Out = 'icon_512x512@2x.png' }
     )
     foreach ($job in $sipsJobs) {
         Invoke-Native -FilePath sips -ArgumentList @(
             '-z', $job.Size, $job.Size,
-            (Join-Path $icons $job.Source),
+            $iconSource,
             '--out', (Join-Path $iconset $job.Out)
         ) | Out-Null
     }
     Invoke-Native -FilePath iconutil -ArgumentList @(
         '-c', 'icns', $iconset, '-o', (Join-Path $resources "$($metadata.ICON_NAME).icns")
+    )
+
+    $partialPlist = Join-Path $iconWork 'app-icon-partial.plist'
+    Invoke-Native -FilePath xcrun -ArgumentList @(
+        'actool',
+        (Join-Path $repoRoot 'macos/AppIcon.icon'),
+        '--compile', $resources,
+        '--app-icon', 'AppIcon',
+        '--output-partial-info-plist', $partialPlist,
+        '--platform', 'macosx',
+        '--minimum-deployment-target', $metadata.MACOS_DEPLOYMENT_TARGET,
+        '--errors',
+        '--warnings'
     )
 }
 finally {

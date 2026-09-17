@@ -94,6 +94,9 @@ if ($plist.LSMinimumSystemVersion -ne $metadata.MACOS_DEPLOYMENT_TARGET) {
 if ($plist.CFBundleIconFile -ne 'DevolutionsTerminal') {
     throw "Info.plist CFBundleIconFile must be DevolutionsTerminal."
 }
+if ($plist.CFBundleIconName -ne 'AppIcon') {
+    throw "Info.plist CFBundleIconName must be AppIcon."
+}
 if ($plist.NSHighResolutionCapable -ne $true) {
     throw "Info.plist NSHighResolutionCapable must be true."
 }

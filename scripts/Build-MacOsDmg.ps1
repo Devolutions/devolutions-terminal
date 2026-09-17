@@ -3,9 +3,9 @@
 <#
     .SYNOPSIS
     Builds a distributable .dmg for a (signed or ad-hoc-signed) Devolutions
-    Terminal .app bundle: a compressed UDZO disk image containing the app
-    and an /Applications symlink for drag-to-install. If a signing identity
-    is supplied, the disk image itself is codesigned as well.
+    Terminal .app bundle: a compressed UDZO disk image with a Finder layout,
+    branded background, app icon, and /Applications symlink for drag-to-install.
+    If a signing identity is supplied, the disk image itself is codesigned as well.
 
     .PARAMETER AppPath
     Path to the .app bundle to package.
@@ -58,7 +58,7 @@ if (-not (Test-Path -LiteralPath $AppPath -PathType Container)) {
     throw "App bundle not found: $AppPath"
 }
 Assert-MacOsVersion -Version $Version
-Assert-Command -Name 'hdiutil', 'shasum'
+Assert-Command -Name 'hdiutil', 'osascript', 'shasum'
 
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 $OutputDir = (Resolve-Path -LiteralPath $OutputDir).ProviderPath
@@ -69,15 +69,17 @@ if (Test-Path -LiteralPath $dmgPath) {
 }
 
 $work = Join-Path $repoRoot "artifacts/macos-dmg-staging/$Rid-$PID"
-$staging = Join-Path $work 'staging'
+$writableDmgPath = Join-Path $work "$base-rw.dmg"
 if (Test-Path -LiteralPath $work) {
     Remove-Item -LiteralPath $work -Recurse -Force
 }
-New-Item -ItemType Directory -Force -Path $staging | Out-Null
+New-Item -ItemType Directory -Force -Path $work | Out-Null
 
 try {
-    Invoke-Native -FilePath cp -ArgumentList '-a', $AppPath, (Join-Path $staging $metadata.BUNDLE_NAME)
-    Invoke-Native -FilePath ln -ArgumentList '-s', '/Applications', (Join-Path $staging 'Applications')
+    $background = Join-Path $repoRoot 'macos/InstallerBackground.png'
+    if (-not (Test-Path -LiteralPath $background -PathType Leaf)) {
+        throw "DMG background asset not found: $background"
+    }
 
     # Computed for parity with the other reproducible-build gates; hdiutil
     # itself does not consume SOURCE_DATE_EPOCH.
@@ -85,13 +87,74 @@ try {
 
     Invoke-Native -FilePath hdiutil -ArgumentList @(
         'create',
-        '-volname', $metadata.DISPLAY_NAME,
-        '-srcfolder', $staging,
+        '-size', '32m',
         '-fs', 'HFS+',
+        '-type', 'UDIF',
+        '-volname', $metadata.DISPLAY_NAME,
+        '-ov',
+        $writableDmgPath
+    )
+
+    $attachOutput = & hdiutil @(
+        'attach',
+        '-readwrite',
+        '-noverify',
+        '-noautoopen',
+        $writableDmgPath
+    )
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to attach the writable disk image."
+    }
+    $mountLine = $attachOutput |
+        Where-Object { $_ -match 'Apple_HFS\s+/Volumes/' } |
+        Select-Object -Last 1
+    if (-not $mountLine -or $mountLine -notmatch '(/Volumes/.+)$') {
+        throw "Unable to determine the writable disk image mount point."
+    }
+    $mountPoint = $Matches[1]
+    try {
+        Invoke-Native -FilePath cp -ArgumentList '-a', $AppPath, (Join-Path $mountPoint $metadata.BUNDLE_NAME)
+        Invoke-Native -FilePath ln -ArgumentList '-s', '/Applications', (Join-Path $mountPoint 'Applications')
+        $backgroundDirectory = Join-Path $mountPoint '.background'
+        New-Item -ItemType Directory -Force -Path $backgroundDirectory | Out-Null
+        Copy-Item -LiteralPath $background -Destination (Join-Path $backgroundDirectory 'background.png')
+
+        $finderScript = @"
+tell application "Finder"
+    tell disk "$($metadata.DISPLAY_NAME)"
+        open
+        set current view of container window to icon view
+        set toolbar visible of container window to false
+        set statusbar visible of container window to false
+        set bounds of container window to {180, 160, 1100, 712}
+        set viewOptions to the icon view options of container window
+        set arrangement of viewOptions to not arranged
+        set icon size of viewOptions to 96
+        set background picture of viewOptions to (POSIX file "$backgroundDirectory/background.png" as alias)
+        set position of item "$($metadata.BUNDLE_NAME)" to {250, 314}
+        set position of item "Applications" to {670, 314}
+        update without registering applications
+        close
+        delay 3
+    end tell
+end tell
+"@
+        $finderScript | & osascript
+        if ($LASTEXITCODE -ne 0) {
+            throw "Unable to configure the Finder layout for the disk image."
+        }
+        Invoke-Native -FilePath sync
+    }
+    finally {
+        Invoke-Native -FilePath hdiutil -ArgumentList 'detach', $mountPoint
+    }
+
+    Invoke-Native -FilePath hdiutil -ArgumentList @(
+        'convert', $writableDmgPath,
         '-format', 'UDZO',
         '-imagekey', 'zlib-level=9',
         '-ov',
-        $dmgPath
+        '-o', $dmgPath
     )
 
     if ($Identity) {
