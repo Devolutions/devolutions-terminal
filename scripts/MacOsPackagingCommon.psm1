@@ -148,6 +148,39 @@ function Invoke-Native {
     }
 }
 
+function Assert-MacOsCodeSignature {
+    <#
+        .SYNOPSIS
+        Verifies a code signature and optionally requires Developer ID team,
+        secure timestamp, and Hardened Runtime metadata.
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path,
+        [string]$TeamIdentifier,
+        [switch]$RequireTimestamp,
+        [switch]$RequireHardenedRuntime
+    )
+
+    Invoke-Native -FilePath codesign -ArgumentList '--verify', '--strict', '--verbose=2', $Path
+
+    $details = (& codesign '--display' '--verbose=4' $Path 2>&1 | Out-String)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to inspect the code signature for $Path."
+    }
+    Write-Host $details.TrimEnd()
+
+    if ($TeamIdentifier -and $details -notmatch "(?m)^TeamIdentifier=$([regex]::Escape($TeamIdentifier))\s*$") {
+        throw "$Path is not signed by Apple team $TeamIdentifier."
+    }
+    if ($RequireTimestamp -and $details -notmatch '(?m)^Timestamp=.+$') {
+        throw "$Path does not have a secure signing timestamp."
+    }
+    if ($RequireHardenedRuntime -and $details -notmatch '(?m)^CodeDirectory .*\bflags=.*\bruntime\b') {
+        throw "$Path does not enable the Hardened Runtime."
+    }
+}
+
 function Get-Sha256Manifest {
     <#
         .SYNOPSIS
@@ -212,5 +245,6 @@ Export-ModuleMember -Function `
     Assert-MacOsVersion, `
     Get-MacOsExpectedArch, `
     Invoke-Native, `
+    Assert-MacOsCodeSignature, `
     Get-Sha256Manifest, `
     Set-MacOsReproducibleTimestamps

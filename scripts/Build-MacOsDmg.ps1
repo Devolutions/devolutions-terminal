@@ -96,7 +96,7 @@ try {
 
     if ($Identity) {
         Invoke-Native -FilePath codesign -ArgumentList '--force', '--timestamp', '--sign', $Identity, $dmgPath
-        Invoke-Native -FilePath codesign -ArgumentList '--verify', '--verbose=2', $dmgPath
+        Assert-MacOsCodeSignature -Path $dmgPath -TeamIdentifier $metadata.APPLE_TEAM_ID -RequireTimestamp
     }
 
     $manifest = Get-Sha256Manifest -WorkingDirectory $OutputDir -Path @("$base.dmg")

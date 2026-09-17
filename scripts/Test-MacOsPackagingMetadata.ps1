@@ -24,6 +24,7 @@ $scripts = @(
     'Stage-MacOsApp.ps1',
     'Test-MacOsPackage.ps1',
     'Test-MacOsRuntime.ps1',
+    'Test-MacOsCodeSigning.ps1',
     'Sign-MacOsPackage.ps1',
     'Build-MacOsDmg.ps1',
     'Notarize-MacOsPackage.ps1',
@@ -54,6 +55,7 @@ function Assert-Equal {
 
 Assert-Equal -Actual $metadata.PACKAGE_NAME -Expected 'devolutions-terminal' -Name 'PACKAGE_NAME'
 Assert-Equal -Actual $metadata.APP_ID -Expected 'com.devolutions.Terminal' -Name 'APP_ID'
+Assert-Equal -Actual $metadata.APPLE_TEAM_ID -Expected 'N592S9ASDB' -Name 'APPLE_TEAM_ID'
 Assert-Equal -Actual $metadata.EXECUTABLE_NAME -Expected 'Devolutions.Terminal' -Name 'EXECUTABLE_NAME'
 Assert-Equal -Actual $metadata.CLI_NAME -Expected 'dt' -Name 'CLI_NAME'
 Assert-Equal -Actual $metadata.PTY_HOST_NAME -Expected 'dt-pty-host' -Name 'PTY_HOST_NAME'

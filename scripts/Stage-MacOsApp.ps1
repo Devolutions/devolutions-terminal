@@ -84,6 +84,11 @@ Get-ChildItem -LiteralPath $macosDir -Recurse -Filter '*.pdb' | Remove-Item -For
 Get-ChildItem -LiteralPath $macosDir -Recurse -Filter '*.dbg' | Remove-Item -Force
 Get-ChildItem -LiteralPath $macosDir -Recurse -Directory -Filter '*.dSYM' |
     Remove-Item -Recurse -Force
+# NativeAOT compiles runtime configuration into the executable. Leaving this
+# build-time sidecar in Contents/MacOS makes Developer ID bundle signing treat
+# it as unsigned nested code.
+Get-ChildItem -LiteralPath $macosDir -File -Filter '*.runtimeconfig.json' |
+    Remove-Item -Force
 
 $sourcePlist = Join-Path $repoRoot 'macos/Info.plist'
 $destinationPlist = Join-Path $contents 'Info.plist'
