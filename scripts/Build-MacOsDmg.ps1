@@ -95,16 +95,23 @@ try {
         $writableDmgPath
     )
 
-    $mountPoint = Join-Path $work 'mount'
-    New-Item -ItemType Directory -Force -Path $mountPoint | Out-Null
-    Invoke-Native -FilePath hdiutil -ArgumentList @(
+    $attachOutput = & hdiutil @(
         'attach',
         '-readwrite',
         '-noverify',
         '-noautoopen',
-        '-mountpoint', $mountPoint,
         $writableDmgPath
     )
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to attach the writable disk image."
+    }
+    $mountLine = $attachOutput |
+        Where-Object { $_ -match 'Apple_HFS\s+/Volumes/' } |
+        Select-Object -Last 1
+    if (-not $mountLine -or $mountLine -notmatch '(/Volumes/.+)$') {
+        throw "Unable to determine the writable disk image mount point."
+    }
+    $mountPoint = $Matches[1]
     try {
         Invoke-Native -FilePath cp -ArgumentList '-a', $AppPath, (Join-Path $mountPoint $metadata.BUNDLE_NAME)
         Invoke-Native -FilePath ln -ArgumentList '-s', '/Applications', (Join-Path $mountPoint 'Applications')
@@ -126,10 +133,9 @@ tell application "Finder"
         set background picture of viewOptions to (POSIX file "$backgroundDirectory/background.png" as alias)
         set position of item "$($metadata.BUNDLE_NAME)" to {250, 314}
         set position of item "Applications" to {670, 314}
-        close
-        open
         update without registering applications
-        delay 2
+        close
+        delay 3
     end tell
 end tell
 "@
@@ -137,6 +143,7 @@ end tell
         if ($LASTEXITCODE -ne 0) {
             throw "Unable to configure the Finder layout for the disk image."
         }
+        Invoke-Native -FilePath sync
     }
     finally {
         Invoke-Native -FilePath hdiutil -ArgumentList 'detach', $mountPoint
