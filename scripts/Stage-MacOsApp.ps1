@@ -101,7 +101,7 @@ $iconWork = Join-Path ([System.IO.Path]::GetTempPath()) "devolutions-terminal-ic
 $iconset = Join-Path $iconWork 'DevolutionsTerminal.iconset'
 New-Item -ItemType Directory -Force -Path $iconset | Out-Null
 try {
-    $iconSource = Join-Path $repoRoot 'assets/icons/terminal.png'
+    $iconSource = Join-Path $repoRoot 'macos/DevolutionsTerminal.png'
     $sipsJobs = @(
         @{ Size = 16; Out = 'icon_16x16.png' },
         @{ Size = 32; Out = 'icon_16x16@2x.png' },
