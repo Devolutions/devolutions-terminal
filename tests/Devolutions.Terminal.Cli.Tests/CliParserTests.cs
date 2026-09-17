@@ -203,6 +203,22 @@ public sealed class CliParserTests
         Assert.Equal(new CliSaveRequest("List", "", "git status"), restored.SaveRequest);
     }
 
+    [Theory]
+    [InlineData("-v")]
+    [InlineData("--version")]
+    public void VersionFlagsReportAssemblyVersion(string flag)
+    {
+        var result = new CliParser().Parse([flag]);
+        var version = typeof(CliParser).Assembly.GetName().Version!;
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.True(result.ShouldExit);
+        Assert.Null(result.Invocation);
+        Assert.StartsWith("Devolutions Terminal ", result.Message);
+        Assert.DoesNotContain("0.1.0", result.Message, StringComparison.Ordinal);
+        Assert.Contains($"{version.Major}.{version.Minor}.{version.Build}", result.Message);
+    }
+
     private static CliInvocation Parse(params string[] args)
     {
         var result = new CliParser().Parse(args);

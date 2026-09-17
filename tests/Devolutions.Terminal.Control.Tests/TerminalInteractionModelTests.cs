@@ -254,6 +254,82 @@ public sealed class TerminalInteractionModelTests
     }
 
     [Fact]
+    public void PlainTextUrlDetectionHonorsSettingAndPrefersOsc8()
+    {
+        var engine = new TerminalEngine(40, 2);
+        engine.Feed("see https://example.test/path.\r\n");
+        var snapshot = engine.CreateSnapshot(includeHistory: true).Buffer;
+        var schemes = new HashSet<string>(["http", "https"], StringComparer.OrdinalIgnoreCase);
+
+        var detected = TerminalInteractionModel.HitTestHyperlink(
+            snapshot,
+            new TerminalSelectionPoint(10, 0),
+            schemes,
+            detectUrls: true);
+        var ignored = TerminalInteractionModel.HitTestHyperlink(
+            snapshot,
+            new TerminalSelectionPoint(10, 0),
+            schemes,
+            detectUrls: false);
+
+        Assert.Equal("https://example.test/path", detected?.Uri);
+        Assert.True(detected?.CanOpen);
+        Assert.Null(ignored);
+
+        engine.Feed("\u001b]8;;https://explicit.test\u0007https://plain.test\u001b]8;;\u0007");
+        snapshot = engine.CreateSnapshot(includeHistory: true).Buffer;
+        var osc = TerminalInteractionModel.HitTestHyperlink(
+            snapshot,
+            new TerminalSelectionPoint(2, 1),
+            schemes,
+            detectUrls: true);
+        Assert.Equal("https://explicit.test", osc?.Uri);
+    }
+
+    [Fact]
+    public void PlainTextWwwUrlsAreNormalizedToHttps()
+    {
+        var engine = new TerminalEngine(30, 1);
+        engine.Feed("www.example.test/docs");
+        var snapshot = engine.CreateSnapshot(includeHistory: true).Buffer;
+
+        var hyperlink = TerminalInteractionModel.HitTestHyperlink(
+            snapshot,
+            new TerminalSelectionPoint(0, 0),
+            new HashSet<string>(["https"], StringComparer.OrdinalIgnoreCase),
+            detectUrls: true);
+
+        Assert.Equal("https://www.example.test/docs", hyperlink?.Uri);
+        Assert.True(hyperlink?.CanOpen);
+    }
+
+    [Fact]
+    public void PlainTextUrlsAreDetectedAcrossSoftWrap()
+    {
+        var engine = new TerminalEngine(8, 4);
+        engine.Feed("https://example.test/path");
+        var snapshot = engine.CreateSnapshot().Buffer;
+        var schemes = new HashSet<string>(["https"], StringComparer.OrdinalIgnoreCase);
+
+        Assert.True(snapshot.Lines[0].Wrapped);
+        var hyperlink = TerminalInteractionModel.HitTestHyperlink(
+            snapshot,
+            new TerminalSelectionPoint(0, 1),
+            schemes,
+            detectUrls: true);
+
+        Assert.Equal("https://example.test/path", hyperlink?.Uri);
+        Assert.Equal(0, hyperlink?.Start.Line);
+        Assert.Equal(0, hyperlink?.Start.Column);
+        Assert.True(hyperlink!.End.Line > 0);
+
+        var ranges = TerminalInteractionModel.GetHyperlinkOverlayRanges(hyperlink, snapshot.Columns);
+        Assert.True(ranges.Count > 1);
+        Assert.Equal(0, ranges[0].StartColumn);
+        Assert.Equal(hyperlink.End.Column, ranges[^1].EndColumn);
+    }
+
+    [Fact]
     public void CursorAndMouseSequencesUseTerminalCoordinates()
     {
         Assert.Equal(

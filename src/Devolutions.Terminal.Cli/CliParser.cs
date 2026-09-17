@@ -1,6 +1,7 @@
 using System.CommandLine;
 using System.CommandLine.Parsing;
 using System.Globalization;
+using System.Reflection;
 using System.Text;
 using Devolutions.Terminal.Settings;
 
@@ -42,7 +43,7 @@ public sealed class CliParser
 
         if (args.Count == 1 && args[0] is "-v" or "--version")
         {
-            return new(0, "Devolutions Terminal 0.1.0", true, null);
+            return new(0, FormatVersionMessage(), true, null);
         }
 
         try
@@ -611,6 +612,22 @@ public sealed class CliParser
     }
 
     private static bool IsHelp(string value) => value is "-h" or "--help" or "-?" or "/?";
+
+    private static string FormatVersionMessage()
+    {
+        var informational = typeof(CliParser).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion;
+        if (!string.IsNullOrWhiteSpace(informational))
+        {
+            var plus = informational.IndexOf('+');
+            var version = plus >= 0 ? informational[..plus] : informational;
+            return $"Devolutions Terminal {version}";
+        }
+
+        var assemblyVersion = typeof(CliParser).Assembly.GetName().Version?.ToString();
+        return $"Devolutions Terminal {assemblyVersion ?? "Development build"}";
+    }
 
     private static bool IsHelpRequest(IReadOnlyList<string> args)
     {

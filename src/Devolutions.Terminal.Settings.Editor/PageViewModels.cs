@@ -55,9 +55,10 @@ public sealed class StartupSettingsViewModel(AppSettings settings, Action change
     public LaunchMode LaunchMode { get => settings.LaunchMode; set => Change(settings.LaunchMode, value, v => settings.LaunchMode = v); }
     public string FirstWindowPreference { get => settings.FirstWindowPreference; set => Change(settings.FirstWindowPreference, value, v => settings.FirstWindowPreference = v); }
     public IReadOnlyList<string> FirstWindowPreferenceChoices { get; } =
-        ["defaultProfile", "persistedLayoutAndContent", "persistedWindowLayout"];
+        ["defaultProfile", "persistedLayout", "persistedLayoutAndContent", "persistedWindowLayout"];
     public string WindowingBehavior { get => settings.WindowingBehavior; set => Change(settings.WindowingBehavior, value, v => settings.WindowingBehavior = v); }
-    public IReadOnlyList<string> WindowingBehaviorChoices { get; } = ["useNew", "useExisting"];
+    public IReadOnlyList<string> WindowingBehaviorChoices { get; } =
+        ["useNew", "useExisting", "useExistingOrCreate", "useAnyExisting"];
     public string StartupActions { get => settings.StartupActions; set => Change(settings.StartupActions, value, v => settings.StartupActions = v); }
     public bool AlwaysOnTop
     {
@@ -143,7 +144,7 @@ public sealed class AppearanceSettingsViewModel(AppSettings settings, Action cha
     public bool UseAcrylicInTabRow { get => settings.UseAcrylicInTabRow; set => Change(settings.UseAcrylicInTabRow, value, v => settings.UseAcrylicInTabRow = v); }
     public bool DisableAnimations { get => settings.DisableAnimations; set => Change(settings.DisableAnimations, value, v => settings.DisableAnimations = v); }
     public string NewTabPosition { get => settings.NewTabPosition; set => Change(settings.NewTabPosition, value, v => settings.NewTabPosition = v); }
-    public IReadOnlyList<string> NewTabPositionChoices { get; } = ["afterLastTab", "atEnd"];
+    public IReadOnlyList<string> NewTabPositionChoices { get; } = ["afterLastTab", "afterCurrentTab", "atEnd"];
 
     private void Change<T>(T oldValue, T newValue, Action<T> update)
     {

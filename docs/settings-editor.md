@@ -46,7 +46,7 @@ storage. No reflection-based DI or runtime view discovery is used.
 
 ## Current boundary
 
-The editor does not dispatch actions, mutate the running terminal, select files
-with native pickers, or provide visual color/font pickers yet. It exposes the
-highest-value typed fields and lossless JSON hooks so those controls can be
-added without changing persistence semantics.
+The editor does not dispatch actions or mutate the running terminal. Profile
+icons and background images use the platform file picker, font face uses the
+installed system font list, and colors use a swatch plus preset palette while
+keeping hex text editable. Persistence remains the layered JSON model.

@@ -1,8 +1,10 @@
 using System.Globalization;
 using System.Net;
 using System.Text;
+using System.Text.RegularExpressions;
 using Avalonia.Input;
 using Devolutions.Terminal.Core;
+using Devolutions.Terminal.Render;
 using Devolutions.Terminal.Settings;
 
 namespace Devolutions.Terminal;
@@ -251,42 +253,191 @@ public static class TerminalInteractionModel
         return marks.OrderBy(static mark => mark.Line).ThenBy(static mark => mark.Kind).ToArray();
     }
 
+    private static readonly Regex PlainTextUrl = new(
+        @"(?:https?://|ftp://|www\.)[^\s<>""'`]+",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
+        TimeSpan.FromMilliseconds(50));
+
     public static TerminalHyperlinkContext? HitTestHyperlink(
         TextBufferSnapshot snapshot,
         TerminalSelectionPoint point,
-        IReadOnlySet<string> safeSchemes)
+        IReadOnlySet<string> safeSchemes,
+        bool detectUrls = false)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
         ArgumentNullException.ThrowIfNull(safeSchemes);
         point = Clamp(snapshot, point);
         var cells = snapshot.Lines[point.Line].Cells;
         var uri = cells[point.Column].HyperlinkUri;
-        if (string.IsNullOrWhiteSpace(uri))
+        if (!string.IsNullOrWhiteSpace(uri))
+        {
+            var start = point.Column;
+            var end = point.Column;
+            while (start > 0 && string.Equals(cells[start - 1].HyperlinkUri, uri, StringComparison.Ordinal))
+            {
+                start--;
+            }
+
+            while (end + 1 < cells.Count &&
+                   string.Equals(cells[end + 1].HyperlinkUri, uri, StringComparison.Ordinal))
+            {
+                end++;
+            }
+
+            return CreateHyperlinkContext(uri, cells, start, end, point.Line, safeSchemes);
+        }
+
+        return detectUrls ? HitTestPlainTextUrl(snapshot, point, safeSchemes) : null;
+    }
+
+    public static IReadOnlyList<TerminalCellRange> GetHyperlinkOverlayRanges(
+        TerminalHyperlinkContext hyperlink,
+        int columns,
+        uint color = 0x202080FF)
+    {
+        ArgumentNullException.ThrowIfNull(hyperlink);
+        if (columns <= 0)
+        {
+            return [];
+        }
+
+        var startLine = Math.Min(hyperlink.Start.Line, hyperlink.End.Line);
+        var endLine = Math.Max(hyperlink.Start.Line, hyperlink.End.Line);
+        var ranges = new TerminalCellRange[endLine - startLine + 1];
+        for (var line = startLine; line <= endLine; line++)
+        {
+            var startColumn = line == hyperlink.Start.Line ? hyperlink.Start.Column : 0;
+            var endColumn = line == hyperlink.End.Line ? hyperlink.End.Column : columns - 1;
+            ranges[line - startLine] = new TerminalCellRange(line, startColumn, endColumn, color);
+        }
+
+        return ranges;
+    }
+
+    private static TerminalHyperlinkContext? HitTestPlainTextUrl(
+        TextBufferSnapshot snapshot,
+        TerminalSelectionPoint point,
+        IReadOnlySet<string> safeSchemes)
+    {
+        var startLine = point.Line;
+        var endLine = point.Line;
+        while (startLine > 0 && snapshot.Lines[startLine - 1].Wrapped)
+        {
+            startLine--;
+        }
+
+        while (endLine < snapshot.Lines.Count - 1 && snapshot.Lines[endLine].Wrapped)
+        {
+            endLine++;
+        }
+
+        var text = new StringBuilder();
+        var map = new List<(int Line, int Column)>();
+        for (var line = startLine; line <= endLine; line++)
+        {
+            var cells = snapshot.Lines[line].Cells;
+            for (var column = 0; column < cells.Count; column++)
+            {
+                if (cells[column].IsWideContinuation)
+                {
+                    continue;
+                }
+
+                var grapheme = cells[column].Text;
+                if (string.IsNullOrEmpty(grapheme))
+                {
+                    text.Append(' ');
+                    map.Add((line, column));
+                    continue;
+                }
+
+                text.Append(grapheme);
+                for (var i = 0; i < grapheme.Length; i++)
+                {
+                    map.Add((line, column));
+                }
+            }
+        }
+
+        var lineText = text.ToString();
+        var index = -1;
+        for (var i = 0; i < map.Count; i++)
+        {
+            if (map[i].Line == point.Line && map[i].Column == point.Column)
+            {
+                index = i;
+                break;
+            }
+        }
+
+        if (index < 0 || lineText.Length == 0)
         {
             return null;
         }
 
-        var start = point.Column;
-        var end = point.Column;
-        while (start > 0 && string.Equals(cells[start - 1].HyperlinkUri, uri, StringComparison.Ordinal))
+        MatchCollection matches;
+        try
         {
-            start--;
+            matches = PlainTextUrl.Matches(lineText);
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return null;
         }
 
-        while (end + 1 < cells.Count &&
-               string.Equals(cells[end + 1].HyperlinkUri, uri, StringComparison.Ordinal))
+        foreach (Match match in matches)
         {
-            end++;
+            var start = match.Index;
+            var length = match.Length;
+            while (length > 0 && IsTrailingUrlPunctuation(lineText[start + length - 1]))
+            {
+                length--;
+            }
+
+            if (length == 0 || index < start || index >= start + length)
+            {
+                continue;
+            }
+
+            var raw = lineText.Substring(start, length);
+            var uri = raw.StartsWith("www.", StringComparison.OrdinalIgnoreCase)
+                ? "https://" + raw
+                : raw;
+            var startPos = map[start];
+            var endPos = map[start + length - 1];
+            var canOpen = Uri.TryCreate(uri, UriKind.Absolute, out var parsed) &&
+                          safeSchemes.Contains(parsed.Scheme) &&
+                          IsSafeTarget(parsed);
+            return new TerminalHyperlinkContext(
+                uri,
+                raw,
+                new TerminalSelectionPoint(startPos.Column, startPos.Line),
+                new TerminalSelectionPoint(endPos.Column, endPos.Line),
+                canOpen);
         }
 
+        return null;
+    }
+
+    private static bool IsTrailingUrlPunctuation(char value) =>
+        value is '.' or ',' or ';' or ':' or '!' or '?' or ')' or ']' or '}' or '>' or '\'' or '"';
+
+    private static TerminalHyperlinkContext CreateHyperlinkContext(
+        string uri,
+        IReadOnlyList<Cell> cells,
+        int start,
+        int end,
+        int line,
+        IReadOnlySet<string> safeSchemes)
+    {
         var canOpen = Uri.TryCreate(uri, UriKind.Absolute, out var parsed) &&
                       safeSchemes.Contains(parsed.Scheme) &&
                       IsSafeTarget(parsed);
         return new TerminalHyperlinkContext(
             uri,
             CellText(cells, start, end).TrimEnd(),
-            new TerminalSelectionPoint(start, point.Line),
-            new TerminalSelectionPoint(end, point.Line),
+            new TerminalSelectionPoint(start, line),
+            new TerminalSelectionPoint(end, line),
             canOpen);
     }
 

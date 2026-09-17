@@ -38,7 +38,9 @@ public sealed class TerminalConnectionFactory
         var clientIdValue = Environment.GetEnvironmentVariable(AzureClientIdEnvironmentVariable);
         if (!Guid.TryParse(clientIdValue, out var clientId) || clientId == Guid.Empty)
         {
-            throw new InvalidOperationException(
+            throw new AzureCloudShellException(
+                AzureCloudShellStage.Authentication,
+                "ClientIdMissing",
                 $"Azure Cloud Shell requires a public-client application GUID in {AzureClientIdEnvironmentVariable}.");
         }
 

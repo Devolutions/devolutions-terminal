@@ -51,9 +51,11 @@ public sealed class TerminalConnectionFactoryTests
                 ConnectionType = AzureCloudShellConnection.ConnectionTypeGuid.ToString("B"),
             };
 
-            var error = Assert.Throws<InvalidOperationException>(
+            var error = Assert.Throws<AzureCloudShellException>(
                 () => new TerminalConnectionFactory(Callbacks).Create(profile));
 
+            Assert.Equal("ClientIdMissing", error.Code);
+            Assert.Equal(AzureCloudShellStage.Authentication, error.Stage);
             Assert.Contains(
                 TerminalConnectionFactory.AzureClientIdEnvironmentVariable,
                 error.Message,

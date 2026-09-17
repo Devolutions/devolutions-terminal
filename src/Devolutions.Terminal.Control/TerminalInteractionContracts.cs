@@ -131,6 +131,7 @@ public sealed record TerminalInteractionOptions
         new HashSet<string>(["http", "https", "mailto"], StringComparer.OrdinalIgnoreCase);
     public bool CopyOnSelect { get; init; }
     public bool ScrollToZoom { get; init; } = true;
+    public bool DetectUrls { get; init; } = true;
 
     public static TerminalInteractionOptions FromSettings(AppSettings settings)
     {
@@ -143,6 +144,7 @@ public sealed record TerminalInteractionOptions
             WordDelimiters = settings.WordDelimiters,
             CopyOnSelect = settings.CopyOnSelect,
             ScrollToZoom = settings.ScrollToZoom,
+            DetectUrls = settings.DetectUrls,
             SafeUriSchemes = schemes,
             Copy = new TerminalCopyOptions
             {
