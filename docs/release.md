@@ -349,15 +349,10 @@ from outside the repo) that an in-repo `ProjectReference` build cannot surface.
 
 CI packs the project in the `nuget-pack` job of `build-terminal.yml` on every
 build, builds the sample against the freshly packed package as a smoke test,
-and uploads the `.nupkg`/`.snupkg` as a workflow artifact. The
-`nuget-publish` job pushes those packages to nuget.org only for tag-triggered,
-non-dry-run runs, using the `NUGET_API_KEY` secret configured on the
-`nuget.org` GitHub Environment.
-
-Required environment secret:
-
-- `NUGET_API_KEY` — an API key scoped to the `Devolutions.Terminal.Control`
-  package ID on nuget.org.
+and uploads the `.nupkg`/`.snupkg` as a workflow artifact. The release job
+downloads this artifact alongside the `Devolutions.Terminal.App` packages and
+publishes all NuGet packages together through NuGet trusted publishing (OIDC).
+There is no separate Control publication option or publishing job.
 
 When changing the internal project boundary (adding a new internal project
 that `Control` needs, or a project that needs direct access to
