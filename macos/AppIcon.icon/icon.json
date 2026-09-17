@@ -1,8 +1,8 @@
 {
   "fill" : {
     "linear-gradient" : [
-      "display-p3:0.00000,0.61176,1.00000,1.00000",
-      "display-p3:0.00000,0.30980,0.56863,1.00000"
+      "display-p3:0.30196,0.30196,0.30196,1.00000",
+      "display-p3:0.20000,0.20000,0.20000,1.00000"
     ],
     "orientation" : {
       "start" : {
@@ -22,10 +22,10 @@
           "blend-mode" : "normal",
           "glass" : false,
           "hidden" : false,
-          "image-name" : "DevolutionsTerminal.png",
+          "image-name" : "DevolutionsTerminalFullBleed.png",
           "name" : "Devolutions Terminal",
           "position" : {
-            "scale" : 0.78,
+            "scale" : 1,
             "translation-in-points" : [
               0,
               0
