@@ -193,9 +193,9 @@
           </controls:SettingsRow.Value>
         </controls:SettingsRow>
         <controls:SettingsRow Header="Detect URLs"
-                              Description="Not supported yet: automatic detection of plain-text URLs. Explicit terminal hyperlinks (OSC 8) remain available. Saved for compatibility only.">
+                              Description="Automatically detect http, https, ftp, and www URLs in terminal text. Explicit OSC 8 hyperlinks remain available.">
           <controls:SettingsRow.Value>
-            <controls:SettingsToggle IsEnabled="False" AutomationProperties.Name="Detect URLs (not supported)" IsChecked="{Binding DetectUrls}" />
+            <controls:SettingsToggle AutomationProperties.Name="Detect URLs" IsChecked="{Binding DetectUrls}" />
           </controls:SettingsRow.Value>
         </controls:SettingsRow>
         <controls:SettingsRow Header="Warn about large paste"
@@ -278,9 +278,9 @@
           </controls:SettingsRow.Value>
         </controls:SettingsRow>
         <controls:SettingsRow Header="Acrylic tab row"
-                              Description="Use acrylic material behind the tab row.">
+                              Description="Not supported yet: acrylic material is not applied. Saved for compatibility only.">
           <controls:SettingsRow.Value>
-            <controls:SettingsToggle AutomationProperties.Name="Acrylic tab row" IsChecked="{Binding UseAcrylicInTabRow}" />
+            <controls:SettingsToggle IsEnabled="False" AutomationProperties.Name="Acrylic tab row (not supported)" IsChecked="{Binding UseAcrylicInTabRow}" />
           </controls:SettingsRow.Value>
         </controls:SettingsRow>
         <controls:SettingsRow Header="Disable animations"
@@ -329,13 +329,17 @@
         <controls:SettingsRow Header="Starting directory"
                               Description="The directory this profile starts in when loaded.">
           <controls:SettingsRow.Value>
-            <TextBox Classes="field" Text="{Binding SelectedProfile.StartingDirectory}" />
+            <controls:FilePathField Title="Select starting directory"
+                                    Folders="True"
+                                    Text="{Binding SelectedProfile.StartingDirectory}" />
           </controls:SettingsRow.Value>
         </controls:SettingsRow>
         <controls:SettingsRow Header="Icon"
                               Description="Emoji or image location used for this profile.">
           <controls:SettingsRow.Value>
-            <TextBox Classes="field" Text="{Binding SelectedProfile.Icon}" />
+            <controls:FilePathField Title="Select profile icon"
+                                    ImageFiles="True"
+                                    Text="{Binding SelectedProfile.Icon}" />
           </controls:SettingsRow.Value>
         </controls:SettingsRow>
         <controls:SettingsRow Header="Tab title"
@@ -347,13 +351,13 @@
         <controls:SettingsRow Header="Tab color"
                               Description="Optional color used for the profile tab.">
           <controls:SettingsRow.Value>
-            <TextBox Classes="field" Text="{Binding SelectedProfile.TabColor}" />
+            <controls:ColorField Text="{Binding SelectedProfile.TabColor}" />
           </controls:SettingsRow.Value>
         </controls:SettingsRow>
         <controls:SettingsRow Header="Run this profile as Administrator"
-                              Description="Open this profile in an elevated terminal window.">
+                              Description="Not supported yet: elevation is not implemented. Saved for compatibility only.">
           <controls:SettingsRow.Value>
-            <controls:SettingsToggle IsChecked="{Binding SelectedProfile.Elevate}" />
+            <controls:SettingsToggle IsEnabled="False" AutomationProperties.Name="Run this profile as Administrator (not supported)" IsChecked="{Binding SelectedProfile.Elevate}" />
           </controls:SettingsRow.Value>
         </controls:SettingsRow>
         <controls:SettingsRow Header="Hide profile from dropdown"
@@ -392,7 +396,7 @@
         <Border Classes="settings-card">
           <Grid ColumnDefinitions="220,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
           <TextBlock Grid.Row="0" Classes="fieldLabel" Text="Font face" />
-          <TextBox Grid.Row="0" Grid.Column="1" Classes="field" Text="{Binding SelectedProfile.FontFace}" />
+          <controls:FontFaceField Grid.Row="0" Grid.Column="1" Text="{Binding SelectedProfile.FontFace}" />
           <TextBlock Grid.Row="1" Classes="fieldLabel" Text="Font size" />
           <TextBox Grid.Row="1" Grid.Column="1" Classes="field" Text="{Binding SelectedProfile.FontSize}" />
           <TextBlock Grid.Row="2" Classes="fieldLabel" Text="Font weight" />
@@ -402,25 +406,28 @@
           <TextBlock Grid.Row="4" Classes="fieldLabel" Text="Light color scheme" />
           <TextBox Grid.Row="4" Grid.Column="1" Classes="field" Text="{Binding SelectedProfile.LightColorScheme}" />
           <TextBlock Grid.Row="5" Classes="fieldLabel" Text="Foreground" />
-          <TextBox Grid.Row="5" Grid.Column="1" Classes="field" Text="{Binding SelectedProfile.Foreground}" />
+          <controls:ColorField Grid.Row="5" Grid.Column="1" Text="{Binding SelectedProfile.Foreground}" />
           <TextBlock Grid.Row="6" Classes="fieldLabel" Text="Background" />
-          <TextBox Grid.Row="6" Grid.Column="1" Classes="field" Text="{Binding SelectedProfile.Background}" />
+          <controls:ColorField Grid.Row="6" Grid.Column="1" Text="{Binding SelectedProfile.Background}" />
           <TextBlock Grid.Row="7" Classes="fieldLabel" Text="Cursor color" />
-          <TextBox Grid.Row="7" Grid.Column="1" Classes="field" Text="{Binding SelectedProfile.CursorColor}" />
+          <controls:ColorField Grid.Row="7" Grid.Column="1" Text="{Binding SelectedProfile.CursorColor}" />
           <TextBlock Grid.Row="8" Classes="fieldLabel" Text="Selection background" />
-          <TextBox Grid.Row="8" Grid.Column="1" Classes="field" Text="{Binding SelectedProfile.SelectionBackground}" />
+          <controls:ColorField Grid.Row="8" Grid.Column="1" Text="{Binding SelectedProfile.SelectionBackground}" />
           <TextBlock Grid.Row="9" Classes="fieldLabel" Text="Opacity (0-100)" />
           <TextBox Grid.Row="9" Grid.Column="1" Classes="field" Text="{Binding SelectedProfile.Opacity}" />
           <TextBlock Grid.Row="10" Classes="fieldLabel" Text="Background image" />
-          <TextBox Grid.Row="10" Grid.Column="1" Classes="field" Text="{Binding SelectedProfile.BackgroundImage}" />
+          <controls:FilePathField Grid.Row="10" Grid.Column="1"
+                                  Title="Select background image"
+                                  ImageFiles="True"
+                                  Text="{Binding SelectedProfile.BackgroundImage}" />
           <TextBlock Grid.Row="11" Classes="fieldLabel" Text="Background image opacity" />
           <TextBox Grid.Row="11" Grid.Column="1" Classes="field" Text="{Binding SelectedProfile.BackgroundImageOpacity}" />
           </Grid>
         </Border>
         <controls:SettingsRow Header="Use acrylic"
-                              Description="Use acrylic material for the terminal background.">
+                              Description="Not supported yet: acrylic material is not applied. Saved for compatibility only.">
           <controls:SettingsRow.Value>
-            <controls:SettingsToggle AutomationProperties.Name="Use acrylic" IsChecked="{Binding SelectedProfile.UseAcrylic}" />
+            <controls:SettingsToggle IsEnabled="False" AutomationProperties.Name="Use acrylic (not supported)" IsChecked="{Binding SelectedProfile.UseAcrylic}" />
           </controls:SettingsRow.Value>
         </controls:SettingsRow>
         <controls:SettingsRow Header="Retro terminal effect"
@@ -560,45 +567,45 @@
           <TextBlock Grid.Row="0" Classes="fieldLabel" Text="Name" />
           <TextBox Grid.Row="0" Grid.Column="1" Classes="field" Text="{Binding SelectedScheme.Name}" />
           <TextBlock Grid.Row="0" Grid.Column="2" Classes="fieldLabel" Text="Foreground" />
-          <TextBox Grid.Row="0" Grid.Column="3" Classes="field" Text="{Binding SelectedScheme.Foreground}" />
+          <controls:ColorField Grid.Row="0" Grid.Column="3" Text="{Binding SelectedScheme.Foreground}" />
           <TextBlock Grid.Row="1" Classes="fieldLabel" Text="Background" />
-          <TextBox Grid.Row="1" Grid.Column="1" Classes="field" Text="{Binding SelectedScheme.Background}" />
+          <controls:ColorField Grid.Row="1" Grid.Column="1" Text="{Binding SelectedScheme.Background}" />
           <TextBlock Grid.Row="1" Grid.Column="2" Classes="fieldLabel" Text="Cursor" />
-          <TextBox Grid.Row="1" Grid.Column="3" Classes="field" Text="{Binding SelectedScheme.CursorColor}" />
+          <controls:ColorField Grid.Row="1" Grid.Column="3" Text="{Binding SelectedScheme.CursorColor}" />
           <TextBlock Grid.Row="2" Classes="fieldLabel" Text="Selection" />
-          <TextBox Grid.Row="2" Grid.Column="1" Classes="field" Text="{Binding SelectedScheme.SelectionBackground}" />
+          <controls:ColorField Grid.Row="2" Grid.Column="1" Text="{Binding SelectedScheme.SelectionBackground}" />
           <TextBlock Grid.Row="3" Classes="fieldLabel" Text="Black" />
-          <TextBox Grid.Row="3" Grid.Column="1" Classes="field" Text="{Binding SelectedScheme.Black}" />
+          <controls:ColorField Grid.Row="3" Grid.Column="1" Text="{Binding SelectedScheme.Black}" />
           <TextBlock Grid.Row="3" Grid.Column="2" Classes="fieldLabel" Text="Bright black" />
-          <TextBox Grid.Row="3" Grid.Column="3" Classes="field" Text="{Binding SelectedScheme.BrightBlack}" />
+          <controls:ColorField Grid.Row="3" Grid.Column="3" Text="{Binding SelectedScheme.BrightBlack}" />
           <TextBlock Grid.Row="4" Classes="fieldLabel" Text="Red" />
-          <TextBox Grid.Row="4" Grid.Column="1" Classes="field" Text="{Binding SelectedScheme.Red}" />
+          <controls:ColorField Grid.Row="4" Grid.Column="1" Text="{Binding SelectedScheme.Red}" />
           <TextBlock Grid.Row="4" Grid.Column="2" Classes="fieldLabel" Text="Bright red" />
-          <TextBox Grid.Row="4" Grid.Column="3" Classes="field" Text="{Binding SelectedScheme.BrightRed}" />
+          <controls:ColorField Grid.Row="4" Grid.Column="3" Text="{Binding SelectedScheme.BrightRed}" />
           <TextBlock Grid.Row="5" Classes="fieldLabel" Text="Green" />
-          <TextBox Grid.Row="5" Grid.Column="1" Classes="field" Text="{Binding SelectedScheme.Green}" />
+          <controls:ColorField Grid.Row="5" Grid.Column="1" Text="{Binding SelectedScheme.Green}" />
           <TextBlock Grid.Row="5" Grid.Column="2" Classes="fieldLabel" Text="Bright green" />
-          <TextBox Grid.Row="5" Grid.Column="3" Classes="field" Text="{Binding SelectedScheme.BrightGreen}" />
+          <controls:ColorField Grid.Row="5" Grid.Column="3" Text="{Binding SelectedScheme.BrightGreen}" />
           <TextBlock Grid.Row="6" Classes="fieldLabel" Text="Yellow" />
-          <TextBox Grid.Row="6" Grid.Column="1" Classes="field" Text="{Binding SelectedScheme.Yellow}" />
+          <controls:ColorField Grid.Row="6" Grid.Column="1" Text="{Binding SelectedScheme.Yellow}" />
           <TextBlock Grid.Row="6" Grid.Column="2" Classes="fieldLabel" Text="Bright yellow" />
-          <TextBox Grid.Row="6" Grid.Column="3" Classes="field" Text="{Binding SelectedScheme.BrightYellow}" />
+          <controls:ColorField Grid.Row="6" Grid.Column="3" Text="{Binding SelectedScheme.BrightYellow}" />
           <TextBlock Grid.Row="7" Classes="fieldLabel" Text="Blue" />
-          <TextBox Grid.Row="7" Grid.Column="1" Classes="field" Text="{Binding SelectedScheme.Blue}" />
+          <controls:ColorField Grid.Row="7" Grid.Column="1" Text="{Binding SelectedScheme.Blue}" />
           <TextBlock Grid.Row="7" Grid.Column="2" Classes="fieldLabel" Text="Bright blue" />
-          <TextBox Grid.Row="7" Grid.Column="3" Classes="field" Text="{Binding SelectedScheme.BrightBlue}" />
+          <controls:ColorField Grid.Row="7" Grid.Column="3" Text="{Binding SelectedScheme.BrightBlue}" />
           <TextBlock Grid.Row="8" Classes="fieldLabel" Text="Purple" />
-          <TextBox Grid.Row="8" Grid.Column="1" Classes="field" Text="{Binding SelectedScheme.Purple}" />
+          <controls:ColorField Grid.Row="8" Grid.Column="1" Text="{Binding SelectedScheme.Purple}" />
           <TextBlock Grid.Row="8" Grid.Column="2" Classes="fieldLabel" Text="Bright purple" />
-          <TextBox Grid.Row="8" Grid.Column="3" Classes="field" Text="{Binding SelectedScheme.BrightPurple}" />
+          <controls:ColorField Grid.Row="8" Grid.Column="3" Text="{Binding SelectedScheme.BrightPurple}" />
           <TextBlock Grid.Row="9" Classes="fieldLabel" Text="Cyan" />
-          <TextBox Grid.Row="9" Grid.Column="1" Classes="field" Text="{Binding SelectedScheme.Cyan}" />
+          <controls:ColorField Grid.Row="9" Grid.Column="1" Text="{Binding SelectedScheme.Cyan}" />
           <TextBlock Grid.Row="9" Grid.Column="2" Classes="fieldLabel" Text="Bright cyan" />
-          <TextBox Grid.Row="9" Grid.Column="3" Classes="field" Text="{Binding SelectedScheme.BrightCyan}" />
+          <controls:ColorField Grid.Row="9" Grid.Column="3" Text="{Binding SelectedScheme.BrightCyan}" />
           <TextBlock Grid.Row="10" Classes="fieldLabel" Text="White" />
-          <TextBox Grid.Row="10" Grid.Column="1" Classes="field" Text="{Binding SelectedScheme.White}" />
+          <controls:ColorField Grid.Row="10" Grid.Column="1" Text="{Binding SelectedScheme.White}" />
           <TextBlock Grid.Row="10" Grid.Column="2" Classes="fieldLabel" Text="Bright white" />
-          <TextBox Grid.Row="10" Grid.Column="3" Classes="field" Text="{Binding SelectedScheme.BrightWhite}" />
+          <controls:ColorField Grid.Row="10" Grid.Column="3" Text="{Binding SelectedScheme.BrightWhite}" />
           </Grid>
         </Border>
       </StackPanel>
@@ -723,9 +730,9 @@
           </controls:SettingsRow.Value>
         </controls:SettingsRow>
         <controls:SettingsRow Header="Enable unfocused acrylic"
-                              Description="Keep the acrylic effect when the window loses focus.">
+                              Description="Not supported yet: acrylic material is not applied. Saved for compatibility only.">
           <controls:SettingsRow.Value>
-            <controls:SettingsToggle AutomationProperties.Name="Enable unfocused acrylic" IsChecked="{Binding EnableUnfocusedAcrylic}" />
+            <controls:SettingsToggle IsEnabled="False" AutomationProperties.Name="Enable unfocused acrylic (not supported)" IsChecked="{Binding EnableUnfocusedAcrylic}" />
           </controls:SettingsRow.Value>
         </controls:SettingsRow>
         <controls:SettingsRow Header="Show input service warning"
@@ -741,16 +748,23 @@
       <StackPanel>
         <TextBlock Classes="pageTitle" Text="{Binding Title}" />
         <TextBlock Classes="pageDescription" Text="{Binding Description}" />
+        <controls:SettingsRow Header="Language"
+                              Description="Not supported yet: the UI language is not applied. Saved for compatibility only.">
+          <controls:SettingsRow.Value>
+            <TextBox Classes="field"
+                     IsEnabled="False"
+                     AutomationProperties.Name="Language (not supported)"
+                     Text="{Binding Language}" />
+          </controls:SettingsRow.Value>
+        </controls:SettingsRow>
         <Border Classes="settings-card">
-          <Grid ColumnDefinitions="220,*" RowDefinitions="Auto,Auto,Auto,Auto">
-          <TextBlock Grid.Row="0" Classes="fieldLabel" Text="Language" />
-          <TextBox Grid.Row="0" Grid.Column="1" Classes="field" Text="{Binding Language}" />
-          <TextBlock Grid.Row="1" Classes="fieldLabel" Text="Web search query URL" />
-          <TextBox Grid.Row="1" Grid.Column="1" Classes="field" Text="{Binding SearchWebDefaultQueryUrl}" />
-          <TextBlock Grid.Row="2" Classes="fieldLabel" Text="Disabled profile sources (one per line)" />
-          <TextBox Grid.Row="2" Grid.Column="1" Classes="field" AcceptsReturn="True" MinHeight="90" Text="{Binding DisabledProfileSources}" />
-          <TextBlock Grid.Row="3" Classes="fieldLabel" Text="Safe URI schemes (one per line)" />
-          <TextBox Grid.Row="3" Grid.Column="1" Classes="field" AcceptsReturn="True" MinHeight="90" Text="{Binding SafeUriSchemes}" />
+          <Grid ColumnDefinitions="220,*" RowDefinitions="Auto,Auto,Auto">
+          <TextBlock Grid.Row="0" Classes="fieldLabel" Text="Web search query URL" />
+          <TextBox Grid.Row="0" Grid.Column="1" Classes="field" Text="{Binding SearchWebDefaultQueryUrl}" />
+          <TextBlock Grid.Row="1" Classes="fieldLabel" Text="Disabled profile sources (one per line)" />
+          <TextBox Grid.Row="1" Grid.Column="1" Classes="field" AcceptsReturn="True" MinHeight="90" Text="{Binding DisabledProfileSources}" />
+          <TextBlock Grid.Row="2" Classes="fieldLabel" Text="Safe URI schemes (one per line)" />
+          <TextBox Grid.Row="2" Grid.Column="1" Classes="field" AcceptsReturn="True" MinHeight="90" Text="{Binding SafeUriSchemes}" />
           </Grid>
         </Border>
         <controls:SettingsRow Header="Debug features"
@@ -772,9 +786,9 @@
           </controls:SettingsRow.Value>
         </controls:SettingsRow>
         <controls:SettingsRow Header="Show admin shield"
-                              Description="Badge elevated terminal windows with a shield icon.">
+                              Description="Not supported yet: elevation badges are not shown. Saved for compatibility only.">
           <controls:SettingsRow.Value>
-            <controls:SettingsToggle AutomationProperties.Name="Show admin shield" IsChecked="{Binding ShowAdminShield}" />
+            <controls:SettingsToggle IsEnabled="False" AutomationProperties.Name="Show admin shield (not supported)" IsChecked="{Binding ShowAdminShield}" />
           </controls:SettingsRow.Value>
         </controls:SettingsRow>
         <controls:SettingsRow Header="Enable color selection"

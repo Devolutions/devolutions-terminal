@@ -3,6 +3,7 @@ using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
 using Avalonia.LogicalTree;
+using Avalonia.Media;
 using Devolutions.Terminal.Settings;
 using Devolutions.Terminal.Settings.Editor.Controls;
 using Xunit;
@@ -306,9 +307,28 @@ public sealed class SettingsEditorViewModelTests
         Assert.Same(viewModel, window.DataContext);
     }
 
+    [Fact]
+    public void StartupAndAppearanceChoicesIncludeWindowsTerminalValues()
+    {
+        var settings = SettingsLoader.Load(Defaults);
+        var startup = new StartupSettingsViewModel(settings, () => { });
+        var appearance = new AppearanceSettingsViewModel(settings, () => { });
+
+        Assert.Contains("persistedLayout", startup.FirstWindowPreferenceChoices);
+        Assert.Contains("useAnyExisting", startup.WindowingBehaviorChoices);
+        Assert.Contains("useExistingOrCreate", startup.WindowingBehaviorChoices);
+        Assert.Contains("afterCurrentTab", appearance.NewTabPositionChoices);
+        Assert.Contains("atEnd", appearance.NewTabPositionChoices);
+    }
+
     [AvaloniaTheory]
-    [InlineData(SettingsPage.Interaction, "Detect URLs")]
     [InlineData(SettingsPage.Appearance, "Disable animations")]
+    [InlineData(SettingsPage.Appearance, "Acrylic tab row")]
+    [InlineData(SettingsPage.Profiles, "Run this profile as Administrator")]
+    [InlineData(SettingsPage.ProfileAppearance, "Use acrylic")]
+    [InlineData(SettingsPage.Compatibility, "Enable unfocused acrylic")]
+    [InlineData(SettingsPage.Extensions, "Language")]
+    [InlineData(SettingsPage.Extensions, "Show admin shield")]
     public void UnsupportedTogglesAreDisabledAndExplained(SettingsPage page, string header)
     {
         var editor = CreateEditor();
@@ -319,7 +339,7 @@ public sealed class SettingsEditorViewModelTests
         var row = Assert.Single(content.GetLogicalDescendants().OfType<SettingsRow>(),
             row => row.Header == header);
         Assert.Contains("Not supported", row.Description, StringComparison.Ordinal);
-        Assert.False(Assert.IsType<SettingsToggle>(row.Value).IsEnabled);
+        Assert.False(Assert.IsAssignableFrom<Control>(row.Value).IsEnabled);
     }
 
     [AvaloniaFact]
@@ -357,6 +377,68 @@ public sealed class SettingsEditorViewModelTests
 
         Assert.False(toggle.IsChecked);
         Assert.Equal("Off", state.Text);
+    }
+
+    [AvaloniaFact]
+    public void ColorFieldRoundTripsHexAndUpdatesSwatch()
+    {
+        var field = new ColorField { Text = "#E74856" };
+        var layout = Assert.IsType<DockPanel>(field.Content);
+        var host = Assert.IsType<Panel>(layout.Children[0]);
+        var swatch = Assert.IsType<Border>(host.Children[0]);
+
+        Assert.Equal("#E74856", field.Text);
+        Assert.Equal(Color.Parse("#E74856"), Assert.IsType<SolidColorBrush>(swatch.Background).Color);
+
+        field.Text = "#16C60C";
+        Assert.Equal(Color.Parse("#16C60C"), Assert.IsType<SolidColorBrush>(swatch.Background).Color);
+    }
+
+    [AvaloniaFact]
+    public void FontFaceFieldKeepsConfiguredFaceAndListsSystemFonts()
+    {
+        var field = new FontFaceField { Text = "Cascadia Mono" };
+
+        Assert.Equal("Cascadia Mono", field.Text);
+        Assert.Contains("Cascadia Mono", field.Fonts);
+    }
+
+    [AvaloniaFact]
+    public void FilePathFieldRoundTripsSelectedPath()
+    {
+        var field = new FilePathField { Text = "/tmp/icon.png", ImageFiles = true, Title = "Select icon" };
+
+        Assert.Equal("/tmp/icon.png", field.Text);
+        Assert.True(field.ImageFiles);
+        Assert.Equal("Select icon", field.Title);
+    }
+
+    [AvaloniaFact]
+    public void FilePathFieldSupportsFolderPickerMode()
+    {
+        var field = new FilePathField
+        {
+            Text = "%USERPROFILE%",
+            Folders = true,
+            Title = "Select starting directory",
+        };
+
+        Assert.True(field.Folders);
+        Assert.Equal("%USERPROFILE%", field.Text);
+    }
+
+    [AvaloniaFact]
+    public void ProfileAppearancePageUsesPickers()
+    {
+        var editor = CreateEditor();
+        editor.SelectPage(SettingsPage.ProfileAppearance);
+        var view = new SettingsView(editor);
+        var content = Assert.Single(view.DataTemplates, template => template.Match(editor.CurrentPage)).Build(editor.CurrentPage)!;
+        content.DataContext = editor.CurrentPage;
+
+        Assert.NotEmpty(content.GetLogicalDescendants().OfType<FontFaceField>());
+        Assert.NotEmpty(content.GetLogicalDescendants().OfType<ColorField>());
+        Assert.NotEmpty(content.GetLogicalDescendants().OfType<FilePathField>());
     }
 
     [AvaloniaFact]

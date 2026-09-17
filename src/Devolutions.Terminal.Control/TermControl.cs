@@ -1746,7 +1746,8 @@ public sealed class TermControl : Avalonia.Controls.Control
         var hyperlink = TerminalInteractionModel.HitTestHyperlink(
             viewport,
             new TerminalSelectionPoint(viewportColumn, viewportRow),
-            InteractionOptions.SafeUriSchemes);
+            InteractionOptions.SafeUriSchemes,
+            InteractionOptions.DetectUrls);
         if (hyperlink is null)
         {
             return null;
@@ -1954,26 +1955,15 @@ public sealed class TermControl : Avalonia.Controls.Control
     private void UpdateHoveredHyperlink(Point position)
     {
         var (x, y) = HitTest(position);
-        var row = Engine.Buffer.GetRow(y);
-        var uri = row[x].HyperlinkUri;
-        IReadOnlyList<TerminalCellRange> next = [];
-        if (uri is not null)
-        {
-            var start = x;
-            var end = x;
-            while (start > 0 && string.Equals(row[start - 1].HyperlinkUri, uri, StringComparison.Ordinal))
-            {
-                start--;
-            }
-
-            while (end + 1 < row.Length &&
-                   string.Equals(row[end + 1].HyperlinkUri, uri, StringComparison.Ordinal))
-            {
-                end++;
-            }
-
-            next = [new TerminalCellRange(y, start, end, 0x202080FF)];
-        }
+        var snapshot = Engine.CreateSnapshot().Buffer;
+        var hyperlink = TerminalInteractionModel.HitTestHyperlink(
+            snapshot,
+            new TerminalSelectionPoint(x, y),
+            InteractionOptions.SafeUriSchemes,
+            InteractionOptions.DetectUrls);
+        IReadOnlyList<TerminalCellRange> next = hyperlink is null
+            ? []
+            : TerminalInteractionModel.GetHyperlinkOverlayRanges(hyperlink, snapshot.Columns);
 
         if (!_hoveredHyperlink.SequenceEqual(next))
         {

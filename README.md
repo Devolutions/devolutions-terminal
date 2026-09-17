@@ -141,10 +141,10 @@ undelivered input is reported.
 
 The editor disables options that are currently retained only for settings-file
 compatibility: `compatibility.textMeasurement`, `compatibility.ambiguousWidth`,
-`experimental.detectURLs`, and `disableAnimations`. The terminal engine determines
-text measurement and character widths. Plain-text URL detection is not implemented;
-explicit OSC 8 hyperlinks remain supported. Window/pane animation effects are not
-configurable through `disableAnimations`.
+and `disableAnimations`. The terminal engine determines text measurement and
+character widths. `experimental.detectURLs` detects http, https, ftp, and www
+URLs in terminal text; explicit OSC 8 hyperlinks remain supported.
+Window/pane animation effects are not configurable through `disableAnimations`.
 
 Broker retries share active requests and retain completed responses for at least
 five seconds after completion. Admission is bounded at 128 active requests and

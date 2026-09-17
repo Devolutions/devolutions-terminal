@@ -3370,7 +3370,14 @@ public partial class MainWindow :
         var (columns, rows) = InitialTerminalSize();
         foreach (var pane in sessions.Values)
         {
-            await pane.Control.StartAsync(pane.Profile, columns, rows).ConfigureAwait(true);
+            try
+            {
+                await pane.Control.StartAsync(pane.Profile, columns, rows).ConfigureAwait(true);
+            }
+            catch (Exception ex) when (IsLaunchFailure(ex))
+            {
+                await ShowLaunchErrorAsync(pane.Profile, ex).ConfigureAwait(true);
+            }
         }
 
         activePane.Control.Focus();
@@ -3896,6 +3903,14 @@ public partial class MainWindow :
 
     private async Task ShowLaunchErrorAsync(ProfileSettings profile, Exception error)
     {
+        ShowNotification(new TerminalNotification(
+            "Unable to launch profile",
+            $"Could not launch '{profile.Name}'. {error.Message}"));
+        if (error is AzureCloudShellException { Code: "ClientIdMissing" })
+        {
+            return;
+        }
+
         var close = new Button
         {
             Content = "Close",
@@ -4259,7 +4274,6 @@ public sealed class TerminalPane : ITerminalInputTarget
             Title = string.IsNullOrWhiteSpace(profile.TabTitle) ? profile.Name : profile.TabTitle,
             Icon = profile.IconResource?.ToString(),
             Color = profile.TabColor,
-            IsAdministrator = profile.Elevate,
         };
         Presentation.Title = string.IsNullOrWhiteSpace(profile.TabTitle)
             ? profile.Name

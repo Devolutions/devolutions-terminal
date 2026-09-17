@@ -35,11 +35,14 @@ they are not converted into success.
 ## Hyperlinks, mouse, touch, and marks
 
 Hyperlink hit testing returns the complete hyperlink run, display text, buffer
-range, and a policy-derived `CanOpen` value. The default safe schemes are `http`,
-`https`, and `mailto`; settings can replace this allow-list. Ctrl+click opens a safe
-URI, while right-click raises `HyperlinkContextRequested`. Open and copy operations
-are independently callable for host context menus. Executable `file:` targets remain
-blocked even when a host adds `file` to the scheme allow-list.
+range, and a policy-derived `CanOpen` value. OSC 8 hyperlinks take precedence.
+When `experimental.detectURLs` is enabled, http, https, ftp, and `www.` text is
+also matched across soft-wrapped rows (trailing punctuation stripped; `www.`
+becomes `https://`). The default safe schemes are `http`, `https`, and `mailto`; settings
+can replace this allow-list. Ctrl+click opens a safe URI, while right-click raises
+`HyperlinkContextRequested`. Open and copy operations are independently callable
+for host context menus. Executable `file:` targets remain blocked even when a host
+adds `file` to the scheme allow-list.
 
 DEC mouse tracking takes precedence over selection and emits SGR or legacy mouse
 coordinates as negotiated by the terminal. Focus reporting emits CSI I/O. Outside
@@ -65,7 +68,7 @@ rectangle, and renders underlined preedit text with the IME cursor.
 
 ### Avalonia UIA limitation
 
-Avalonia 11.3 does not expose public `ITextProvider` or `ITextRangeProvider`
+Avalonia 12 does not expose public `ITextProvider` or `ITextRangeProvider`
 interfaces from its automation layer. On Windows, the peer therefore reaches UIA
 as a Document element with ValuePattern, name, focus, and state, while its full text
 range model is available to managed automation clients and tests. Native UIA
