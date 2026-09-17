@@ -59,6 +59,7 @@ try {
     $toolPath = @(
         Join-Path $toolDirectory "dt"
         Join-Path $toolDirectory "dt.exe"
+        Join-Path $toolDirectory "dt.cmd"
     ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
     if ([string]::IsNullOrWhiteSpace($toolPath)) {
         $installedFiles = @(Get-ChildItem -LiteralPath $toolDirectory -File | Select-Object -ExpandProperty Name)
