@@ -32,8 +32,6 @@ foreach ($packageName in $expectedPackageNames) {
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ("devolutions-terminal-nuget-" + [guid]::NewGuid())
 $nuGetConfigPath = Join-Path $testRoot "NuGet.Config"
 $toolDirectory = Join-Path $testRoot "tools"
-$executableName = if ($IsWindows) { "dt.exe" } else { "dt" }
-$toolPath = Join-Path $toolDirectory $executableName
 $originalNugetPackages = $env:NUGET_PACKAGES
 
 try {
@@ -58,8 +56,13 @@ try {
         throw "dotnet tool install failed with exit code $LASTEXITCODE."
     }
 
-    if (-not (Test-Path -LiteralPath $toolPath -PathType Leaf)) {
-        throw "Installed dt command '$toolPath' was not found."
+    $toolPath = @(
+        Join-Path $toolDirectory "dt"
+        Join-Path $toolDirectory "dt.exe"
+    ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+    if ([string]::IsNullOrWhiteSpace($toolPath)) {
+        $installedFiles = @(Get-ChildItem -LiteralPath $toolDirectory -File | Select-Object -ExpandProperty Name)
+        throw "Installed dt command was not found in '$toolDirectory'. Files: $($installedFiles -join ', ')."
     }
 
     & $toolPath --version
