@@ -55,6 +55,10 @@ public static class SettingsLoader
         var pendingFragmentUpdates = new List<JsonObject>();
         var defaults = ParseObject(defaultsJson, "defaults.json", required: true, diagnostics)!;
         MigrateLegacyAliases(defaults);
+        if (OperatingSystem.IsMacOS())
+        {
+            ApplyMacOsDefaultKeyBindings(defaults);
+        }
         var merged = (JsonObject)defaults.DeepClone();
         var actionMap = new ActionMap();
         actionMap.Layer(
@@ -64,11 +68,7 @@ public static class SettingsLoader
 
         // These bindings are part of the product defaults, but intentionally live
         // in userDefaults.json in the native settings model.
-        var userDefaults = ParseObject(
-            ReadEmbeddedUserDefaults(),
-            "userDefaults.json",
-            required: true,
-            diagnostics)!;
+        var userDefaults = ParseUserDefaults(diagnostics);
         actionMap.Layer(
             userDefaults["actions"] as JsonArray,
             userDefaults["keybindings"] as JsonArray,
@@ -167,11 +167,7 @@ public static class SettingsLoader
     {
         ArgumentNullException.ThrowIfNull(settings);
         var document = settings.UserDocument is null
-            ? ParseObject(
-                ReadEmbeddedUserDefaults(),
-                "userDefaults.json",
-                required: true,
-                diagnostics: [])!
+            ? ParseUserDefaults([])
             : (JsonObject)settings.UserDocument.DeepClone();
         document["$help"] = "https://aka.ms/terminal-documentation";
         document["$schema"] = "https://aka.ms/terminal-profiles-schema";
@@ -185,6 +181,126 @@ public static class SettingsLoader
             WriteIndented = true,
             Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
         }) + Environment.NewLine;
+    }
+
+    private static JsonObject ParseUserDefaults(List<SettingsDiagnostic> diagnostics)
+    {
+        var userDefaults = ParseObject(
+            ReadEmbeddedUserDefaults(),
+            "userDefaults.json",
+            required: true,
+            diagnostics)!;
+        if (OperatingSystem.IsMacOS())
+        {
+            if (!TryReplaceDefaultKeyBinding(
+                    userDefaults,
+                    "Terminal.CopyToClipboard",
+                    "ctrl+c",
+                    "cmd+c") ||
+                !TryReplaceDefaultKeyBinding(
+                    userDefaults,
+                    "Terminal.PasteFromClipboard",
+                    "ctrl+v",
+                    "cmd+v"))
+            {
+                throw new InvalidOperationException(
+                    "Embedded user defaults do not define the expected copy and paste key bindings.");
+            }
+        }
+
+        return userDefaults;
+    }
+
+    private static void ApplyMacOsDefaultKeyBindings(JsonObject defaults)
+    {
+        (string CommandId, string DefaultChord, string MacOsChord)[] replacements =
+        [
+            ("Terminal.OpenSettingsUI", "ctrl+,", "cmd+,"),
+            ("Terminal.FindText", "ctrl+shift+f", "cmd+f"),
+            ("Terminal.ToggleCommandPalette", "ctrl+shift+p", "cmd+shift+p"),
+            ("Terminal.OpenNewTab", "ctrl+shift+t", "cmd+t"),
+            ("Terminal.OpenNewWindow", "ctrl+shift+n", "cmd+n"),
+            ("Terminal.NextTab", "ctrl+tab", "cmd+shift+close_bracket"),
+            ("Terminal.PrevTab", "ctrl+shift+tab", "cmd+shift+open_bracket"),
+            ("Terminal.SwitchToTab0", "ctrl+alt+1", "cmd+1"),
+            ("Terminal.SwitchToTab1", "ctrl+alt+2", "cmd+2"),
+            ("Terminal.SwitchToTab2", "ctrl+alt+3", "cmd+3"),
+            ("Terminal.SwitchToTab3", "ctrl+alt+4", "cmd+4"),
+            ("Terminal.SwitchToTab4", "ctrl+alt+5", "cmd+5"),
+            ("Terminal.SwitchToTab5", "ctrl+alt+6", "cmd+6"),
+            ("Terminal.SwitchToTab6", "ctrl+alt+7", "cmd+7"),
+            ("Terminal.SwitchToTab7", "ctrl+alt+8", "cmd+8"),
+            ("Terminal.SwitchToLastTab", "ctrl+alt+9", "cmd+9"),
+            ("Terminal.ClosePane", "ctrl+shift+w", "cmd+w"),
+            ("Terminal.CopyToClipboard", "ctrl+shift+c", "cmd+c"),
+            ("Terminal.PasteFromClipboard", "ctrl+shift+v", "cmd+v"),
+            ("Terminal.SelectAll", "ctrl+shift+a", "cmd+a"),
+            ("Terminal.ClearBuffer", "ctrl+shift+k", "cmd+k"),
+            ("Terminal.IncreaseFontSize", "ctrl+plus", "cmd+plus"),
+            ("Terminal.DecreaseFontSize", "ctrl+minus", "cmd+minus"),
+            ("Terminal.IncreaseFontSize", "ctrl+numpad_plus", "cmd+numpad_plus"),
+            ("Terminal.DecreaseFontSize", "ctrl+numpad_minus", "cmd+numpad_minus"),
+            ("Terminal.ResetFontSize", "ctrl+0", "cmd+0"),
+            ("Terminal.ResetFontSize", "ctrl+numpad_0", "cmd+numpad_0"),
+            ("Terminal.ToggleFullscreen", "alt+enter", "ctrl+cmd+f"),
+        ];
+
+        foreach (var (commandId, defaultChord, macOsChord) in replacements)
+        {
+            TryReplaceDefaultKeyBinding(defaults, commandId, defaultChord, macOsChord);
+        }
+
+        if (ContainsCommand(defaults, "Terminal.Quit") &&
+            !ContainsKeyBinding(defaults, "Terminal.Quit"))
+        {
+            AddDefaultKeyBinding(defaults, "Terminal.Quit", "cmd+q");
+        }
+    }
+
+    private static bool TryReplaceDefaultKeyBinding(
+        JsonObject defaults,
+        string commandId,
+        string defaultChord,
+        string keyChord)
+    {
+        var binding = (defaults["keybindings"] as JsonArray)?
+            .OfType<JsonObject>()
+            .SingleOrDefault(candidate =>
+                string.Equals(String(candidate, "id"), commandId, StringComparison.Ordinal) &&
+                string.Equals(String(candidate, "keys"), defaultChord, StringComparison.OrdinalIgnoreCase));
+        if (binding is null)
+        {
+            return false;
+        }
+
+        binding["keys"] = keyChord;
+        return true;
+    }
+
+    private static bool ContainsCommand(JsonObject defaults, string commandId) =>
+        (defaults["actions"] as JsonArray)?
+            .OfType<JsonObject>()
+            .Any(candidate =>
+                string.Equals(String(candidate, "id"), commandId, StringComparison.Ordinal)) == true;
+
+    private static bool ContainsKeyBinding(JsonObject defaults, string commandId) =>
+        (defaults["keybindings"] as JsonArray)?
+            .OfType<JsonObject>()
+            .Any(candidate =>
+                string.Equals(String(candidate, "id"), commandId, StringComparison.Ordinal)) == true;
+
+    private static void AddDefaultKeyBinding(
+        JsonObject defaults,
+        string commandId,
+        string keyChord)
+    {
+        var bindings = defaults["keybindings"] as JsonArray ??
+            throw new InvalidOperationException("Embedded defaults do not define key bindings.");
+        bindings.Add((JsonNode)new JsonObject
+        {
+            ["id"] = commandId,
+            ["keys"] = keyChord,
+        });
     }
 
     private static AppSettings Resolve(

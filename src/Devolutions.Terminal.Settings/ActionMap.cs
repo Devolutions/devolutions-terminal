@@ -224,6 +224,14 @@ public readonly record struct KeyChord
         _ => null,
     };
 
+    public string ToDisplayString()
+    {
+        var value = ToString();
+        return OperatingSystem.IsMacOS() && value.StartsWith("win+", StringComparison.Ordinal)
+            ? $"cmd+{value[4..]}"
+            : value;
+    }
+
     public override string ToString() => Value ?? string.Empty;
 }
 

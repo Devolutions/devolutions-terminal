@@ -139,6 +139,14 @@ public partial class MainWindow :
             : DynamicProfileManager.CreateDefault();
         _settings = SettingsService.LoadWithDynamicProfiles(_dynamicProfileManager);
         _settingsChanged?.Invoke(_settings);
+        var newTabShortcut = _settings.ActionMap
+            .GetKeyBindingForAction("Terminal.OpenNewTab")?
+            .ToDisplayString();
+        ToolTip.SetTip(
+            NewTabButton,
+            string.IsNullOrWhiteSpace(newTabShortcut)
+                ? "New tab"
+                : $"New tab ({newTabShortcut})");
         ApplyWindowChrome();
         RefreshJumpList();
         _stateStore = stateStore ?? SettingsService.LoadApplicationState();
@@ -389,9 +397,11 @@ public partial class MainWindow :
             Command = new RelayCommand(() => OpenSettings()),
             Icon = FluentMenuIcon("\uE713"),
             InputGesture = EffectiveDefaultGesture(
-                "ctrl+comma",
+                OperatingSystem.IsMacOS() ? "cmd+comma" : "ctrl+comma",
                 ShortcutAction.OpenSettings,
-                new KeyGesture(Key.OemComma, KeyModifiers.Control)),
+                new KeyGesture(
+                    Key.OemComma,
+                    OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control)),
         };
         AutomationProperties.SetName(settings, "Settings");
         AutomationProperties.SetAutomationId(settings, "SettingsMenuItem");
@@ -402,9 +412,12 @@ public partial class MainWindow :
             Command = new RelayCommand(() => ShowCommandPalette()),
             Icon = FluentMenuIcon("\uE945"),
             InputGesture = EffectiveDefaultGesture(
-                "ctrl+shift+p",
+                OperatingSystem.IsMacOS() ? "cmd+shift+p" : "ctrl+shift+p",
                 ShortcutAction.ToggleCommandPalette,
-                new KeyGesture(Key.P, KeyModifiers.Control | KeyModifiers.Shift)),
+                new KeyGesture(
+                    Key.P,
+                    (OperatingSystem.IsMacOS() ? KeyModifiers.Meta : KeyModifiers.Control) |
+                    KeyModifiers.Shift)),
         });
         items.Add(new MenuItem
         {
@@ -2217,7 +2230,7 @@ public partial class MainWindow :
         foreach (var command in _settings.ActionMap.AllCommands.Where(static command => command.ActionAndArgs is not null))
         {
             var action = command.ActionAndArgs!;
-            var shortcut = _settings.ActionMap.GetKeyBindingForAction(command.Id)?.ToString();
+            var shortcut = _settings.ActionMap.GetKeyBindingForAction(command.Id)?.ToDisplayString();
             _paletteItems.Add(new PaletteItem(command.Name, async () =>
             {
                 await DispatchActionAsync(action).ConfigureAwait(true);
