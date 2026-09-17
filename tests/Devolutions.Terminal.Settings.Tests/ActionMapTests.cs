@@ -166,14 +166,77 @@ public sealed class ActionMapTests
     {
         var settings = SettingsService.CreateDefault();
 
-        Assert.Equal(ShortcutAction.CopyText, settings.ActionMap.Resolve("ctrl+c")?.ActionAndArgs?.Action);
-        Assert.Equal(ShortcutAction.PasteText, settings.ActionMap.Resolve("ctrl+v")?.ActionAndArgs?.Action);
+        var copyChord = OperatingSystem.IsMacOS() ? "cmd+c" : "ctrl+c";
+        var pasteChord = OperatingSystem.IsMacOS() ? "cmd+v" : "ctrl+v";
+        Assert.Equal(ShortcutAction.CopyText, settings.ActionMap.Resolve(copyChord)?.ActionAndArgs?.Action);
+        Assert.Equal(ShortcutAction.PasteText, settings.ActionMap.Resolve(pasteChord)?.ActionAndArgs?.Action);
+        Assert.Null(settings.ActionMap.Resolve(OperatingSystem.IsMacOS() ? "ctrl+c" : "cmd+c"));
+        Assert.Null(settings.ActionMap.Resolve(OperatingSystem.IsMacOS() ? "ctrl+v" : "cmd+v"));
         Assert.Equal(ShortcutAction.SplitPane, settings.ActionMap.Resolve("shift+alt+d")?.ActionAndArgs?.Action);
         Assert.Equal(ShortcutAction.QuakeMode, settings.ActionMap.Resolve("win+backtick")?.ActionAndArgs?.Action);
         Assert.NotNull(settings.ActionMap.GetActionByID("Terminal.OpenSettingsUI"));
         Assert.All(
             settings.ActionMap.BindingIds.Where(static binding => binding.Value.Length > 0),
             binding => Assert.NotNull(settings.ActionMap.GetActionByID(binding.Value)));
+    }
+
+    [Fact]
+    public void EmbeddedDefaultsUsePlatformKeyBindings()
+    {
+        var settings = SettingsService.CreateDefault();
+        (string CommandId, string DefaultChord, string MacOsChord)[] bindings =
+        [
+            ("Terminal.OpenSettingsUI", "ctrl+,", "cmd+,"),
+            ("Terminal.FindText", "ctrl+shift+f", "cmd+f"),
+            ("Terminal.ToggleCommandPalette", "ctrl+shift+p", "cmd+shift+p"),
+            ("Terminal.OpenNewTab", "ctrl+shift+t", "cmd+t"),
+            ("Terminal.OpenNewWindow", "ctrl+shift+n", "cmd+n"),
+            ("Terminal.NextTab", "ctrl+tab", "cmd+shift+]"),
+            ("Terminal.PrevTab", "ctrl+shift+tab", "cmd+shift+["),
+            ("Terminal.SwitchToTab0", "ctrl+alt+1", "cmd+1"),
+            ("Terminal.SwitchToTab1", "ctrl+alt+2", "cmd+2"),
+            ("Terminal.SwitchToTab2", "ctrl+alt+3", "cmd+3"),
+            ("Terminal.SwitchToTab3", "ctrl+alt+4", "cmd+4"),
+            ("Terminal.SwitchToTab4", "ctrl+alt+5", "cmd+5"),
+            ("Terminal.SwitchToTab5", "ctrl+alt+6", "cmd+6"),
+            ("Terminal.SwitchToTab6", "ctrl+alt+7", "cmd+7"),
+            ("Terminal.SwitchToTab7", "ctrl+alt+8", "cmd+8"),
+            ("Terminal.SwitchToLastTab", "ctrl+alt+9", "cmd+9"),
+            ("Terminal.ClosePane", "ctrl+shift+w", "cmd+w"),
+            ("Terminal.CopyToClipboard", "ctrl+shift+c", "cmd+c"),
+            ("Terminal.PasteFromClipboard", "ctrl+shift+v", "cmd+v"),
+            ("Terminal.SelectAll", "ctrl+shift+a", "cmd+a"),
+            ("Terminal.ClearBuffer", "ctrl+shift+k", "cmd+k"),
+            ("Terminal.IncreaseFontSize", "ctrl+plus", "cmd+plus"),
+            ("Terminal.DecreaseFontSize", "ctrl+minus", "cmd+minus"),
+            ("Terminal.IncreaseFontSize", "ctrl+numpad_plus", "cmd+numpad_plus"),
+            ("Terminal.DecreaseFontSize", "ctrl+numpad_minus", "cmd+numpad_minus"),
+            ("Terminal.ResetFontSize", "ctrl+0", "cmd+0"),
+            ("Terminal.ResetFontSize", "ctrl+numpad_0", "cmd+numpad_0"),
+            ("Terminal.ToggleFullscreen", "alt+enter", "ctrl+cmd+f"),
+        ];
+
+        foreach (var (commandId, defaultChord, macOsChord) in bindings)
+        {
+            var expectedChord = OperatingSystem.IsMacOS() ? macOsChord : defaultChord;
+            var replacedChord = OperatingSystem.IsMacOS() ? defaultChord : macOsChord;
+            Assert.Equal(commandId, settings.ActionMap.Resolve(expectedChord)?.Id);
+            Assert.Null(settings.ActionMap.Resolve(replacedChord));
+        }
+
+        Assert.Equal(
+            OperatingSystem.IsMacOS() ? "Terminal.Quit" : null,
+            settings.ActionMap.Resolve("cmd+q")?.Id);
+    }
+
+    [Fact]
+    public void KeyChordDisplayUsesMacOsCommandName()
+    {
+        var chord = KeyChord.Parse("cmd+shift+p");
+
+        Assert.Equal(
+            OperatingSystem.IsMacOS() ? "cmd+shift+p" : "win+shift+p",
+            chord.ToDisplayString());
     }
 
     [Fact]

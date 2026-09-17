@@ -50,8 +50,7 @@
                  VerticalAlignment="Center"
                  chrome:WindowDecorationProperties.ElementRole="User"
                  Click="NewTab_OnClick"
-                 AutomationProperties.Name="New tab"
-                 ToolTip.Tip="New tab (Ctrl+Shift+T)">
+                 AutomationProperties.Name="New tab">
             <Path Data="M 0,5 L 10,5 M 5,0 L 5,10"
                   Width="10"
                   Height="10"

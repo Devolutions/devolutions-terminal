@@ -11,6 +11,8 @@ registration, and Homebrew remain out of scope.
 - Local shells through `dt-pty-host` (`forkpty`, same framing as Linux)
 - Selectable built-in and Ghostty engines (`libghostty-vt.dylib`)
 - Settings at `~/Library/Application Support/Devolutions/Terminal/`
+- Native Command-key defaults for clipboard, tabs, windows, search, settings,
+  selection, font sizing, full screen, and quit actions
 - Generated zsh/bash/fish/pwsh/sh profiles (`Devolutions.Terminal.macOS`)
 - Hidden Windows inbox profiles that use `%SystemRoot%`
 - Opening files and URIs with `open(1)`
