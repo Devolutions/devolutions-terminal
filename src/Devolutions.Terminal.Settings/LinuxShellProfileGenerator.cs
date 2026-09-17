@@ -69,7 +69,9 @@ public sealed class LinuxShellProfileGenerator(
             Name = name,
             Source = Source,
             Origin = SettingsOrigin.Generated,
-            Commandline = executable,
+            Commandline = environment.IsMacOS
+                ? UnixShellCommandline.WithLogin(executable)
+                : executable,
             StartingDirectory = environment.UserProfile,
             Icon = Icon,
         };

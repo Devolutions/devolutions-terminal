@@ -136,10 +136,28 @@ public sealed class TerminalInteractionModelTests
         Assert.Contains(@"\u30028?", payload.Rtf);
 
         var data = TermControl.CreateClipboardDataTransfer(payload);
+        var htmlFormat = OperatingSystem.IsMacOS() ? "public.html" : "HTML Format";
+        var rtfFormat = OperatingSystem.IsMacOS() ? "public.rtf" : "Rich Text Format";
         Assert.IsType<byte[]>(
-            data.TryGetValue(DataFormat.CreateBytesPlatformFormat("HTML Format")));
+            data.TryGetValue(DataFormat.CreateBytesPlatformFormat(htmlFormat)));
         Assert.IsType<byte[]>(
-            data.TryGetValue(DataFormat.CreateBytesPlatformFormat("Rich Text Format")));
+            data.TryGetValue(DataFormat.CreateBytesPlatformFormat(rtfFormat)));
+        if (OperatingSystem.IsMacOS())
+        {
+            Assert.Equal(
+                "<pre>onetwo \u754c</pre>",
+                TermControl.ToPlatformHtmlClipboard(payload.Html!));
+        }
+    }
+
+    [Fact]
+    public void FormatDroppedPathsQuotesShellMetacharacters()
+    {
+        Assert.Equal(
+            @"/tmp/plain '/tmp/My File.txt' '/tmp/quote'\''d'",
+            TerminalInteractionModel.FormatDroppedPaths(
+                ["/tmp/plain", "/tmp/My File.txt", "/tmp/quote'd"],
+                " "));
     }
 
     [Fact]

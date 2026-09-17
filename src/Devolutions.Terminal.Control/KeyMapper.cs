@@ -236,7 +236,8 @@ public static class KeyMapper
         var allKeys = flags.HasFlag(KittyKeyboardFlags.ReportAllKeysAsEscapeCodes);
         var disambiguate = flags.HasFlag(KittyKeyboardFlags.DisambiguateEscapeCodes);
         var altOrControl = modifiers.HasFlag(KeyModifiers.Alt) ||
-                           modifiers.HasFlag(KeyModifiers.Control);
+                           modifiers.HasFlag(KeyModifiers.Control) ||
+                           modifiers.HasFlag(KeyModifiers.Meta);
         var disambiguated = disambiguate &&
             (key == Key.Escape ||
              (key is Key.Return or Key.LineFeed or Key.Tab or Key.Back &&
@@ -485,11 +486,40 @@ public static class KeyMapper
         _ => 0,
     };
 
+    public static string? NormalizeOptionAsMetaSymbol(
+        Key key,
+        KeyModifiers modifiers,
+        string? keySymbol,
+        bool optionAsMeta)
+    {
+        if (!optionAsMeta ||
+            !modifiers.HasFlag(KeyModifiers.Alt) ||
+            modifiers.HasFlag(KeyModifiers.Control) ||
+            modifiers.HasFlag(KeyModifiers.Meta))
+        {
+            return keySymbol;
+        }
+
+        if (key is >= Key.A and <= Key.Z)
+        {
+            var letter = (char)((modifiers.HasFlag(KeyModifiers.Shift) ? 'A' : 'a') + (key - Key.A));
+            return letter.ToString();
+        }
+
+        if (key is >= Key.D0 and <= Key.D9)
+        {
+            return ((char)('0' + (key - Key.D0))).ToString();
+        }
+
+        return keySymbol;
+    }
+
     private static int KittyModifiers(KeyModifiers modifiers) =>
         1 +
         (modifiers.HasFlag(KeyModifiers.Shift) ? 1 : 0) +
         (modifiers.HasFlag(KeyModifiers.Alt) ? 2 : 0) +
-        (modifiers.HasFlag(KeyModifiers.Control) ? 4 : 0);
+        (modifiers.HasFlag(KeyModifiers.Control) ? 4 : 0) +
+        (modifiers.HasFlag(KeyModifiers.Meta) ? 8 : 0);
 
     private static bool TrySingleRune(string? text, out Rune rune)
     {

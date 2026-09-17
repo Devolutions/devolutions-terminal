@@ -174,7 +174,18 @@ public partial class MainWindow :
         AddHandler(TextInputEvent, OnWindowTextInput, RoutingStrategies.Tunnel);
         ConfigureActionDispatcher();
         PopulateCommandPalette();
+        if (OperatingSystem.IsMacOS())
+        {
+            ToolTip.SetTip(ExitFullscreenButton, "Exit full screen (⌃⌘F)");
+            NativeMenu.SetMenu(
+                this,
+                MacOsNativeMenu.CreateWindowMenu(action =>
+                    _actionDispatcher.DispatchAsync(new ActionAndArgs(action))));
+        }
     }
+
+    public void DispatchMenuAction(ShortcutAction action) =>
+        _ = _actionDispatcher.DispatchAsync(new ActionAndArgs(action));
 
     private MainWindow(ProfileSettings initialProfile) : this()
     {
@@ -1018,6 +1029,10 @@ public partial class MainWindow :
                 ContextMenu = CreateTabContextMenu(tab),
                 Width = tabWidth,
             };
+            if (OperatingSystem.IsMacOS())
+            {
+                button.Classes.Add("macos");
+            }
             Avalonia.Controls.Chrome.WindowDecorationProperties.SetElementRole(
                 button,
                 Avalonia.Input.WindowDecorationsElementRole.User);
@@ -2856,10 +2871,9 @@ public partial class MainWindow :
     {
         PixelPoint point;
         if (behavior == MonitorBehavior.ToMouse &&
-            OperatingSystem.IsWindows() &&
-            GetCursorPosition(out var cursor))
+            DesktopCursor.TryGetPosition(out var cursor))
         {
-            point = new PixelPoint(cursor.X, cursor.Y);
+            point = cursor;
         }
         else
         {
@@ -4073,17 +4087,6 @@ public partial class MainWindow :
     [LibraryImport("user32.dll", EntryPoint = "SetWindowTextW", StringMarshalling = StringMarshalling.Utf16)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool SetWindowText(nint windowHandle, string title);
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct CursorPoint
-    {
-        public int X;
-        public int Y;
-    }
-
-    [LibraryImport("user32.dll", EntryPoint = "GetCursorPos")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static partial bool GetCursorPosition(out CursorPoint point);
 
     private sealed class PaneScrollBar : Grid
     {

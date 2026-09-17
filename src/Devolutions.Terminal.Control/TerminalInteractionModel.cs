@@ -147,6 +147,28 @@ public static class TerminalInteractionModel
         return new TerminalClipboardPayload(text, html, rtf);
     }
 
+    public static string FormatDroppedPaths(IEnumerable<string> paths, string delimiter)
+    {
+        ArgumentNullException.ThrowIfNull(paths);
+        delimiter ??= " ";
+        return string.Join(delimiter, paths.Select(QuoteForShell));
+    }
+
+    private static string QuoteForShell(string path)
+    {
+        if (path.Length == 0)
+        {
+            return "''";
+        }
+
+        if (path.AsSpan().IndexOfAny(" \t'\"\\$`&|;<>*?[](){}!") < 0)
+        {
+            return path;
+        }
+
+        return "'" + path.Replace("'", "'\\''", StringComparison.Ordinal) + "'";
+    }
+
     public static TerminalPasteRequest PreparePaste(
         string? clipboardText,
         TerminalPasteOptions options,

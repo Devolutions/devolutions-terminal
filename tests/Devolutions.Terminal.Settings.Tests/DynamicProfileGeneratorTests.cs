@@ -44,9 +44,24 @@ public sealed class DynamicProfileGeneratorTests
         Assert.All(result.Profiles, profile =>
             Assert.Equal(DynamicProfileSource.MacOS, profile.Source));
         Assert.Contains(result.Profiles, profile => profile.Name == "Zsh");
+        Assert.All(
+            result.Profiles,
+            profile => Assert.EndsWith(" -l", profile.Commandline, StringComparison.Ordinal));
         Assert.Equal("macOS shells", new LinuxShellProfileGenerator(
             environment,
             DynamicProfileSource.MacOS).DisplayName);
+    }
+
+    [Fact]
+    public void UnixShellCommandlineAddsLoginFlagOnBareExecutables()
+    {
+        Assert.Equal("/bin/zsh -l", UnixShellCommandline.WithLogin("/bin/zsh"));
+        Assert.Equal("/bin/zsh -l", UnixShellCommandline.WithLogin("/bin/zsh -l"));
+        Assert.Equal(
+            OperatingSystem.IsMacOS() ? "/bin/zsh -l" : OperatingSystem.IsWindows()
+                ? @"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
+                : "/bin/bash",
+            UnixShellCommandline.DefaultNewProfileCommandline());
     }
 
     [Fact]

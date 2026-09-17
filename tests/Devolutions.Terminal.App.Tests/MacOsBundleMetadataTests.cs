@@ -25,6 +25,7 @@ public sealed class MacOsBundleMetadataTests
         Assert.Equal("public.app-category.developer-tools", values["LSApplicationCategoryType"]);
         Assert.Equal("true", values["NSHighResolutionCapable"]);
         Assert.Equal("true", values["NSSupportsAutomaticGraphicsSwitching"]);
+        Assert.Contains("Apple Events", values["NSAppleEventsUsageDescription"], StringComparison.Ordinal);
         Assert.Contains("dterm", File.ReadAllText(Path.Combine(MacOsAssets, "Info.plist")));
     }
 

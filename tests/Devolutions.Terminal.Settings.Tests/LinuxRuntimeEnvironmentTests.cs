@@ -81,7 +81,9 @@ public sealed class LinuxRuntimeEnvironmentTests
         Assert.All(result.Profiles, profile =>
         {
             Assert.Equal(DynamicProfileSource.MacOS, profile.Source);
-            Assert.True(File.Exists(profile.Commandline), profile.Commandline);
+            Assert.EndsWith(" -l", profile.Commandline, StringComparison.Ordinal);
+            var executable = profile.Commandline[..profile.Commandline.LastIndexOf(' ')];
+            Assert.True(File.Exists(executable), profile.Commandline);
         });
     }
 }

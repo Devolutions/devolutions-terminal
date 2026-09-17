@@ -211,9 +211,7 @@ public sealed class SettingsEditorViewModel : ObservableObject
         {
             Guid = $"{{{Guid.NewGuid()}}}",
             Name = "New profile",
-            Commandline = OperatingSystem.IsWindows()
-                ? @"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
-                : "/bin/bash",
+            Commandline = UnixShellCommandline.DefaultNewProfileCommandline(),
             Origin = SettingsOrigin.User,
         };
         _settings.Profiles.Add(profile);

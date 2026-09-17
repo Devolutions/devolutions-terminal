@@ -294,8 +294,7 @@ public sealed class LinuxPtyConnection : IRestartableTerminalConnection
             }
         }
 
-        startInfo.Environment.TryAdd("TERM", "xterm-256color");
-        startInfo.Environment.TryAdd("COLORTERM", "truecolor");
+        UnixTerminalEnvironment.Apply(startInfo.Environment, OperatingSystem.IsMacOS());
         return startInfo;
     }
 
