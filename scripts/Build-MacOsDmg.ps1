@@ -85,9 +85,17 @@ try {
     # itself does not consume SOURCE_DATE_EPOCH.
     Get-MacOsSourceDateEpoch -RepoRoot $repoRoot | Out-Null
 
+    # Size from the payload. A fixed 32m volume is smaller than the NativeAOT
+    # bundle, so cp fails with ENOSPC while copying Devolutions.Terminal.
+    $sourceBytes = (Get-MacOsTreeByteSize -Path $AppPath) +
+        (Get-MacOsTreeByteSize -Path $background)
+    $sizeMb = Get-MacOsWritableDmgSizeMegabytes -SourceBytes $sourceBytes
+    $sourceMb = [Math]::Round([double]$sourceBytes / 1MB, 1)
+    Write-Host "Creating ${sizeMb}m writable disk image for $sourceMb MiB of sources."
+
     Invoke-Native -FilePath hdiutil -ArgumentList @(
         'create',
-        '-size', '32m',
+        '-size', "${sizeMb}m",
         '-fs', 'HFS+',
         '-type', 'UDIF',
         '-volname', $metadata.DISPLAY_NAME,

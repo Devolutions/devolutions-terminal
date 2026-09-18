@@ -237,6 +237,55 @@ function Set-MacOsReproducibleTimestamps {
     $root.LastAccessTimeUtc = $time
 }
 
+function Get-MacOsTreeByteSize {
+    <#
+        .SYNOPSIS
+        Returns the logical byte size of a file or of every file under a
+        directory. Used to size writable DMGs from the payload that will be
+        copied onto HFS+, which does not share APFS compression.
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path
+    )
+
+    $item = Get-Item -LiteralPath $Path -Force
+    if (-not $item.PSIsContainer) {
+        return [long]$item.Length
+    }
+
+    $sum = (Get-ChildItem -LiteralPath $Path -Recurse -Force -File |
+        Measure-Object -Property Length -Sum).Sum
+    if ($null -eq $sum) {
+        return [long]0
+    }
+    return [long]$sum
+}
+
+function Get-MacOsWritableDmgSizeMegabytes {
+    <#
+        .SYNOPSIS
+        Computes a writable HFS+ DMG size in mebibytes, large enough for the
+        given payload plus filesystem catalog and Finder-layout headroom.
+
+        A previously hardcoded 32m volume overflowed when copying NativeAOT
+        app bundles (ENOSPC on Devolutions.Terminal).
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [long]$SourceBytes
+    )
+
+    if ($SourceBytes -lt 0) {
+        throw "SourceBytes must be non-negative."
+    }
+
+    $sourceMegabytes = [long][Math]::Ceiling([double]$SourceBytes / 1MB)
+    $percentHeadroom = [long][Math]::Ceiling($sourceMegabytes / 4.0)
+    $extraMegabytes = [Math]::Max([long]32, $percentHeadroom)
+    return [Math]::Max([long]64, $sourceMegabytes + $extraMegabytes)
+}
+
 Export-ModuleMember -Function `
     Import-MacOsPackageEnv, `
     Get-MacOsSourceDateEpoch, `
@@ -247,4 +296,6 @@ Export-ModuleMember -Function `
     Invoke-Native, `
     Assert-MacOsCodeSignature, `
     Get-Sha256Manifest, `
-    Set-MacOsReproducibleTimestamps
+    Set-MacOsReproducibleTimestamps, `
+    Get-MacOsTreeByteSize, `
+    Get-MacOsWritableDmgSizeMegabytes

@@ -123,4 +123,24 @@ if (-not $builderFailed) {
     throw "Builder accepted an invalid RID."
 }
 
+function Assert-EqualLong {
+    param(
+        [Parameter(Mandatory)][long]$Actual,
+        [Parameter(Mandatory)][long]$Expected,
+        [Parameter(Mandatory)][string]$Name
+    )
+    if ($Actual -ne $Expected) {
+        throw "$Name mismatch: expected $Expected, got $Actual."
+    }
+}
+
+Assert-EqualLong -Actual (Get-MacOsWritableDmgSizeMegabytes -SourceBytes 0) -Expected 64 -Name 'empty DMG size'
+Assert-EqualLong -Actual (Get-MacOsWritableDmgSizeMegabytes -SourceBytes 20MB) -Expected 64 -Name 'small bundle DMG size'
+Assert-EqualLong -Actual (Get-MacOsWritableDmgSizeMegabytes -SourceBytes 32MB) -Expected 64 -Name 'legacy 32m bundle DMG size'
+Assert-EqualLong -Actual (Get-MacOsWritableDmgSizeMegabytes -SourceBytes (80MB + 1)) -Expected 113 -Name '80 MiB+1 bundle DMG size'
+Assert-EqualLong -Actual (Get-MacOsWritableDmgSizeMegabytes -SourceBytes 200MB) -Expected 250 -Name '200 MiB bundle DMG size'
+
+$background = Join-Path $repoRoot 'macos/InstallerBackground.png'
+Assert-EqualLong -Actual (Get-MacOsTreeByteSize -Path $background) -Expected (Get-Item -LiteralPath $background).Length -Name 'background tree size'
+
 Write-Host "macOS packaging scripts and canonical metadata validation passed."
