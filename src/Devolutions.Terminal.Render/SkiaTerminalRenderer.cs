@@ -1018,8 +1018,11 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
     {
         var flags = run.Attributes.Flags;
         var underline = (flags & CellFlags.Underline) != 0 || run.Attributes.HyperlinkUri is not null;
+        var doubleUnderline = (flags & CellFlags.DoubleUnderline) != 0;
+        var curly = (flags & CellFlags.CurlyUnderline) != 0;
+        var overline = (flags & CellFlags.Overline) != 0;
         var strike = (flags & CellFlags.Strikethrough) != 0;
-        if (!underline && !strike)
+        if (!underline && !doubleUnderline && !curly && !overline && !strike)
         {
             return;
         }
@@ -1028,10 +1031,38 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
         _paint.StrokeWidth = PhysicalPixel;
         var left = padding + (run.StartColumn * (float)CellSize.Width);
         var right = left + (run.CellCount * (float)CellSize.Width);
-        if (underline)
+        var underlineY = top + _baseline + Math.Max(1, (float)CellSize.Height * 0.08f);
+        if (overline)
         {
-            var y = top + _baseline + Math.Max(1, (float)CellSize.Height * 0.08f);
-            canvas.DrawLine(left, y, right, y, _paint);
+            canvas.DrawLine(left, top + PhysicalPixel, right, top + PhysicalPixel, _paint);
+        }
+
+        if (doubleUnderline)
+        {
+            canvas.DrawLine(left, underlineY, right, underlineY, _paint);
+            canvas.DrawLine(
+                left,
+                underlineY + (2 * PhysicalPixel),
+                right,
+                underlineY + (2 * PhysicalPixel),
+                _paint);
+        }
+        else if (curly)
+        {
+            var amplitude = Math.Max(1, (float)CellSize.Height * 0.06f);
+            var previousX = left;
+            var previousY = underlineY;
+            for (var x = left + 2; x <= right; x += 2)
+            {
+                var y = underlineY + ((((int)(x - left) / 2) % 2 == 0) ? amplitude : -amplitude);
+                canvas.DrawLine(previousX, previousY, x, y, _paint);
+                previousX = x;
+                previousY = y;
+            }
+        }
+        else if (underline)
+        {
+            canvas.DrawLine(left, underlineY, right, underlineY, _paint);
         }
 
         if (strike)

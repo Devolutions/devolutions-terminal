@@ -17,12 +17,12 @@ internal static class UnixTerminalEnvironment
         ArgumentNullException.ThrowIfNull(environment);
         environment.TryAdd("TERM", "xterm-256color");
         environment.TryAdd("COLORTERM", "truecolor");
+        environment.TryAdd("TERM_PROGRAM", TermProgram);
         if (!isMacOs)
         {
             return;
         }
 
-        environment.TryAdd("TERM_PROGRAM", TermProgram);
         environment.TryGetValue("PATH", out var path);
         path ??= Environment.GetEnvironmentVariable("PATH");
         environment["PATH"] = AugmentMacOsPath(path);

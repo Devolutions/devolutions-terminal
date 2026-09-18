@@ -70,6 +70,19 @@ public sealed class KeyMapperTests
     }
 
     [Fact]
+    public void ApplicationKeypadMapsEnterToSs3M()
+    {
+        var sequence = KeyMapper.ToVt(
+            Key.Return,
+            KeyModifiers.None,
+            PhysicalKey.Enter,
+            null,
+            new TerminalInputMode(true, false, true, KittyKeyboardFlags.None, 0, false));
+
+        Assert.Equal("\u001bOM", sequence);
+    }
+
+    [Fact]
     public void MapsApplicationCursorKey()
     {
         var sequence = KeyMapper.ToVt(
@@ -371,6 +384,70 @@ public sealed class KeyMapperTests
         Assert.Equal(
             "é",
             KeyMapper.NormalizeOptionAsMetaSymbol(Key.E, KeyModifiers.Alt, "é", optionAsMeta: false));
+    }
+
+    [Theory]
+    [InlineData(Key.Up, KeyModifiers.Control, "\u001b[1;5A")]
+    [InlineData(Key.Down, KeyModifiers.Shift, "\u001b[1;2B")]
+    [InlineData(Key.Left, KeyModifiers.Alt, "\u001b[1;3D")]
+    [InlineData(Key.Right, KeyModifiers.Control | KeyModifiers.Shift, "\u001b[1;6C")]
+    [InlineData(Key.Home, KeyModifiers.Control, "\u001b[1;5H")]
+    [InlineData(Key.Delete, KeyModifiers.Shift, "\u001b[3;2~")]
+    public void EncodesXtermModifiersOnFunctionalKeys(
+        Key key,
+        KeyModifiers modifiers,
+        string expected)
+    {
+        var sequence = KeyMapper.ToVt(
+            key,
+            modifiers,
+            PhysicalKey.None,
+            null,
+            applicationCursorKeys: false);
+
+        Assert.Equal(expected, sequence);
+    }
+
+    [Theory]
+    [InlineData(KeyModifiers.Shift, "\u001b[27;2;13~")]
+    [InlineData(KeyModifiers.Control, "\u001b[27;5;13~")]
+    [InlineData(KeyModifiers.Control | KeyModifiers.Shift, "\u001b[27;6;13~")]
+    public void EncodesModifiedEnterForTuiNewlines(KeyModifiers modifiers, string expected)
+    {
+        var sequence = KeyMapper.ToVt(
+            Key.Return,
+            modifiers,
+            PhysicalKey.Enter,
+            null,
+            applicationCursorKeys: false);
+
+        Assert.Equal(expected, sequence);
+    }
+
+    [Fact]
+    public void AltEnterStaysEscapeCarriageReturn()
+    {
+        var sequence = KeyMapper.ToVt(
+            Key.Return,
+            KeyModifiers.Alt,
+            PhysicalKey.Enter,
+            null,
+            applicationCursorKeys: false);
+
+        Assert.Equal("\u001b\r", sequence);
+    }
+
+    [Fact]
+    public void ModifiedApplicationCursorKeysUseCsiNotSs3()
+    {
+        var sequence = KeyMapper.ToVt(
+            Key.Up,
+            KeyModifiers.Control,
+            PhysicalKey.ArrowUp,
+            null,
+            applicationCursorKeys: true);
+
+        Assert.Equal("\u001b[1;5A", sequence);
     }
 
     [Fact]

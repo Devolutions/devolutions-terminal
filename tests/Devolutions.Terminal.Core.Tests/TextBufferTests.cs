@@ -163,6 +163,21 @@ public sealed class TextBufferTests
     }
 
     [Fact]
+    public void AlternateBufferResizeClipsWithoutReflow()
+    {
+        var engine = new TerminalEngine(8, 2);
+        engine.Feed("\u001b[?1049habcdefgh");
+
+        engine.Resize(4, 3);
+
+        Assert.True(engine.AlternateBufferActive);
+        Assert.Equal("abcd", RowText(engine.Buffer, 0));
+        Assert.Equal("", RowText(engine.Buffer, 1).TrimEnd());
+        Assert.Equal(3, engine.CursorX);
+        Assert.Equal(0, engine.CursorY);
+    }
+
+    [Fact]
     public void ResizeMapsPendingWrapAfterLastCharacter()
     {
         var engine = new TerminalEngine(6, 3);
@@ -175,6 +190,71 @@ public sealed class TextBufferTests
             .Replace(Environment.NewLine, string.Empty, StringComparison.Ordinal)
             .TrimEnd();
         Assert.Equal("abcdefX", allText);
+    }
+
+    [Fact]
+    public void LeftRightMarginsWrapAndHomeInsideTheRegion()
+    {
+        var engine = new TerminalEngine(10, 3);
+        engine.Feed("\u001b[?69h\u001b[3;8s");
+        engine.Feed("\u001b[?6h");
+        engine.Feed("abcdefg");
+
+        Assert.Equal(2, engine.Buffer.MarginLeft);
+        Assert.Equal(7, engine.Buffer.MarginRight);
+        Assert.Equal("abcdef", string.Concat(
+            Enumerable.Range(2, 6).Select(x => engine.Buffer.GetCell(x, 0).Text)));
+        Assert.Equal("g", engine.Buffer.GetCell(2, 1).Text);
+        Assert.Equal(3, engine.CursorX);
+        Assert.Equal(1, engine.CursorY);
+    }
+
+    [Fact]
+    public void ShiftLeftMovesLineContentsWithinTheScreen()
+    {
+        var engine = new TerminalEngine(6, 2);
+        engine.Feed("abcdef\u001b[1 @");
+
+        Assert.Equal("bcdef", RowText(engine.Buffer, 0));
+        Assert.Equal(' ', (char)engine.Buffer.GetCell(5, 0).Rune.Value);
+    }
+
+    [Fact]
+    public void ReverseWraparoundMovesBackspaceToPreviousLine()
+    {
+        var engine = new TerminalEngine(4, 3);
+        engine.Feed("abcd\u001b[2;1H\u001b[?45h\b");
+
+        Assert.Equal(3, engine.CursorX);
+        Assert.Equal(0, engine.CursorY);
+    }
+
+    [Fact]
+    public void DecalnFillsTheScreenWithE()
+    {
+        var engine = new TerminalEngine(3, 2);
+        engine.Feed("hi\u001b#8");
+
+        Assert.Equal('E', (char)engine.Buffer.GetCell(0, 0).Rune.Value);
+        Assert.Equal('E', (char)engine.Buffer.GetCell(2, 1).Rune.Value);
+        Assert.Equal(0, engine.CursorX);
+        Assert.Equal(0, engine.CursorY);
+    }
+
+    [Fact]
+    public void AmbiguousCharactersStayNarrowByDefault()
+    {
+        WcWidth.AmbiguousAsWide = false;
+        Assert.Equal(1, WcWidth.Width(new System.Text.Rune('©')));
+        WcWidth.AmbiguousAsWide = true;
+        try
+        {
+            Assert.Equal(2, WcWidth.Width(new System.Text.Rune('©')));
+        }
+        finally
+        {
+            WcWidth.AmbiguousAsWide = false;
+        }
     }
 
     private static string RowText(TextBuffer buffer, int row) =>

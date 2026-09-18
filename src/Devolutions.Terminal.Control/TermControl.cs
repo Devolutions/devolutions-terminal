@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.Versioning;
 using System.Text;
 using Avalonia;
@@ -76,6 +77,13 @@ public sealed class TermControl : Avalonia.Controls.Control
     private long _invalidationPosts;
     private long _invalidationDrains;
     private int _invalidationPending;
+    private TerminalInteractionOptions _interactionOptions = new();
+    private Thickness _padding = new(8);
+    private readonly DispatcherTimer _ptyResizeTimer;
+    private int _pendingPtyColumns;
+    private int _pendingPtyRows;
+    private int _pendingPtyPixelWidth;
+    private int _pendingPtyPixelHeight;
 
     // Throughput-harness diagnostics (Devolutions.Terminal.Bench): posts requested by
     // the engine-invalidated handler vs UI drains actually executed.
@@ -122,6 +130,8 @@ public sealed class TermControl : Avalonia.Controls.Control
             }
         };
 
+        _ptyResizeTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(32) };
+        _ptyResizeTimer.Tick += (_, _) => FlushPtyResize();
         _blinkTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(530) };
         _blinkTimer.Tick += (_, _) =>
         {
@@ -215,7 +225,19 @@ public sealed class TermControl : Avalonia.Controls.Control
             AccessibilityChanged?.Invoke(this, EventArgs.Empty);
         }
     }
-    public TerminalInteractionOptions InteractionOptions { get; set; } = new();
+
+    public TerminalInteractionOptions InteractionOptions
+    {
+        get => _interactionOptions;
+        set
+        {
+            _interactionOptions = value ?? new TerminalInteractionOptions();
+            WcWidth.AmbiguousAsWide = string.Equals(
+                _interactionOptions.AmbiguousWidth,
+                "wide",
+                StringComparison.OrdinalIgnoreCase);
+        }
+    }
     public double FontSize => _fontSize;
     public TerminalConnectionState ConnectionState =>
         _connection?.State ?? TerminalConnectionState.NotConnected;
@@ -254,6 +276,7 @@ public sealed class TermControl : Avalonia.Controls.Control
     public async Task StartAsync(ProfileSettings profile, int columns, int rows)
     {
         Profile = profile;
+        _padding = ParsePadding(profile.Padding);
         _shaderEffectsEnabled = true;
         _defaultFontSize = profile.FontSize <= 0 ? 12 : profile.FontSize;
         _fontSize = _defaultFontSize;
@@ -936,36 +959,64 @@ public sealed class TermControl : Avalonia.Controls.Control
     protected override Size MeasureOverride(Size availableSize)
     {
         MeasureGlyph();
-        const double padding = 8;
-        var cols = Math.Max(1, (int)((availableSize.Width - (padding * 2)) / _cellWidth));
-        var rows = Math.Max(1, (int)((availableSize.Height - (padding * 2)) / _cellHeight));
-        return new Size((cols * _cellWidth) + (padding * 2), (rows * _cellHeight) + (padding * 2));
+        var padX = HorizontalPadding;
+        var padY = VerticalPadding;
+        var cols = Math.Max(1, (int)((availableSize.Width - padX) / _cellWidth));
+        var rows = Math.Max(1, (int)((availableSize.Height - padY) / _cellHeight));
+        return new Size((cols * _cellWidth) + padX, (rows * _cellHeight) + padY);
     }
 
     protected override Size ArrangeOverride(Size finalSize)
     {
         MeasureGlyph();
-        const double padding = 8;
-        var cols = Math.Max(1, (int)((finalSize.Width - (padding * 2)) / _cellWidth));
-        var rows = Math.Max(1, (int)((finalSize.Height - (padding * 2)) / _cellHeight));
+        var cols = Math.Max(1, (int)((finalSize.Width - HorizontalPadding) / _cellWidth));
+        var rows = Math.Max(1, (int)((finalSize.Height - VerticalPadding) / _cellHeight));
         var gridChanged = cols != Engine.Columns || rows != Engine.Rows;
+        var previousCellWidth = _engineCellWidthPixels;
+        var previousCellHeight = _engineCellHeightPixels;
         ResizeEngine(cols, rows);
-        if (gridChanged)
+        if (gridChanged ||
+            previousCellWidth != _engineCellWidthPixels ||
+            previousCellHeight != _engineCellHeightPixels)
         {
-            try
-            {
-                if (_connection?.IsRunning == true)
-                {
-                    _connection.Resize(cols, rows);
-                }
-            }
-            catch (Exception ex) when (ex is IOException or InvalidOperationException)
-            {
-                ReportInteractionError("Terminal resize was not accepted; resize again after input drains", ex);
-            }
+            SchedulePtyResize(
+                cols,
+                rows,
+                checked((int)Math.Max(1, cols * _engineCellWidthPixels)),
+                checked((int)Math.Max(1, rows * _engineCellHeightPixels)));
         }
 
         return finalSize;
+    }
+
+    private void SchedulePtyResize(int columns, int rows, int pixelWidth, int pixelHeight)
+    {
+        _pendingPtyColumns = columns;
+        _pendingPtyRows = rows;
+        _pendingPtyPixelWidth = pixelWidth;
+        _pendingPtyPixelHeight = pixelHeight;
+        _ptyResizeTimer.Stop();
+        _ptyResizeTimer.Start();
+    }
+
+    private void FlushPtyResize()
+    {
+        _ptyResizeTimer.Stop();
+        try
+        {
+            if (_connection?.IsRunning == true)
+            {
+                _connection.Resize(
+                    _pendingPtyColumns,
+                    _pendingPtyRows,
+                    _pendingPtyPixelWidth,
+                    _pendingPtyPixelHeight);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or OverflowException)
+        {
+            ReportInteractionError("Terminal resize was not accepted; resize again after input drains", ex);
+        }
     }
 
     private void ResizeEngine(int columns, int rows)
@@ -1012,7 +1063,7 @@ public sealed class TermControl : Avalonia.Controls.Control
             Engine.Scheme,
             new TerminalRenderOptions
             {
-                CursorStyle = ParseCursorStyle(profile?.CursorShape),
+                CursorStyle = ResolveCursorStyle(Engine.CursorStyle, profile?.CursorShape),
                 CursorHeightPercentage = profile?.CursorHeight ?? 25,
             });
 
@@ -1031,7 +1082,7 @@ public sealed class TermControl : Avalonia.Controls.Control
             _renderer,
             frame,
             overlays,
-            padding: 8,
+            padding: (float)_padding.Left,
             drawCursor: Engine.CursorVisible && (_cursorOn || !IsFocused)));
     }
 
@@ -1198,7 +1249,7 @@ public sealed class TermControl : Avalonia.Controls.Control
             return;
         }
 
-        if (Engine.MouseTracking)
+        if (Engine.MouseTracking && !BypassMouseTracking(e.KeyModifiers))
         {
             _pressedMouseButton = PointerButton(point);
             WriteMouseInput(button: _pressedMouseButton, x, y, released: false, e.KeyModifiers);
@@ -1283,6 +1334,7 @@ public sealed class TermControl : Avalonia.Controls.Control
         UpdateHoveredHyperlink(e.GetPosition(this));
         if (e.Pointer.Type != PointerType.Touch &&
             Engine.MouseTracking &&
+            !BypassMouseTracking(e.KeyModifiers) &&
             (Engine.MouseTrackingMode == TerminalMouseTrackingMode.AllMotion ||
              (Engine.MouseTrackingMode == TerminalMouseTrackingMode.ButtonEvent &&
               _pressedMouseButton >= 0)))
@@ -1362,11 +1414,28 @@ public sealed class TermControl : Avalonia.Controls.Control
             return;
         }
 
-        if (Engine.MouseTracking)
+        if (Engine.MouseTracking && !BypassMouseTracking(e.KeyModifiers))
         {
             var (x, y) = HitTest(e.GetPosition(this));
             var button = e.Delta.Y > 0 ? 64 : 65;
             WriteMouseInput(button, x, y, released: false, e.KeyModifiers);
+            e.Handled = true;
+            base.OnPointerWheelChanged(e);
+            return;
+        }
+
+        if (Engine.AlternateBufferActive)
+        {
+            var steps = Math.Max(1, (int)Math.Round(Math.Abs(e.Delta.Y) * 3));
+            var up = e.Delta.Y > 0;
+            var sequence = Engine.ApplicationCursorKeys
+                ? (up ? "\u001bOA" : "\u001bOB")
+                : (up ? "\u001b[A" : "\u001b[B");
+            for (var i = 0; i < steps; i++)
+            {
+                TryWriteInput(sequence);
+            }
+
             e.Handled = true;
             base.OnPointerWheelChanged(e);
             return;
@@ -1512,9 +1581,8 @@ public sealed class TermControl : Avalonia.Controls.Control
 
     private (int X, int Y) HitTest(Point point)
     {
-        const double padding = 8;
-        var x = (int)Math.Floor((point.X - padding) / _cellWidth);
-        var y = (int)Math.Floor((point.Y - padding) / _cellHeight);
+        var x = (int)Math.Floor((point.X - _padding.Left) / _cellWidth);
+        var y = (int)Math.Floor((point.Y - _padding.Top) / _cellHeight);
         y = Math.Clamp(y, 0, Engine.Rows - 1);
         var snapshot = Engine.CreateSnapshot().Buffer;
         if ((uint)y < (uint)snapshot.Lines.Count &&
@@ -1826,53 +1894,18 @@ public sealed class TermControl : Avalonia.Controls.Control
 
     internal Rect GetImeCursorRectangle()
     {
-        const double padding = 8;
         return new Rect(
-            padding + (Engine.CursorX * _cellWidth),
-            padding + (Engine.CursorY * _cellHeight),
+            _padding.Left + (Engine.CursorX * _cellWidth),
+            _padding.Top + (Engine.CursorY * _cellHeight),
             _cellWidth,
             _cellHeight);
     }
 
     internal void SetImeSelectionOffset(int offset)
     {
-        var snapshot = Engine.CreateSnapshot(includeHistory: true).Buffer;
-        var lineIndex = Math.Clamp(snapshot.HistoryCount + snapshot.CursorY, 0, snapshot.Lines.Count - 1);
-        var cells = snapshot.Lines[lineIndex].Cells;
-        var textOffset = 0;
-        var targetColumn = cells.Count - 1;
-        for (var column = 0; column < cells.Count; column++)
-        {
-            if (cells[column].IsWideContinuation)
-            {
-                continue;
-            }
-
-            if (textOffset >= offset)
-            {
-                targetColumn = column;
-                break;
-            }
-
-            textOffset += cells[column].Text.Length;
-            targetColumn = column + 1 < cells.Count && cells[column + 1].IsWideContinuation
-                ? column + 2
-                : column + 1;
-        }
-
-        targetColumn = Math.Clamp(targetColumn, 0, cells.Count - 1);
-        var delta = targetColumn - Engine.CursorX;
-        if (delta == 0)
-        {
-            return;
-        }
-
-        TryWriteInput(TerminalInteractionModel.BuildCursorRepositionSequence(
-            Engine.CursorX,
-            Engine.CursorY,
-            Engine.CursorX + delta,
-            Engine.CursorY,
-            Engine.ApplicationCursorKeys));
+        // IME caret moves must not inject arrow keys into the PTY. TUIs such as
+        // Claude Code / vim treat those as application input.
+        _ = offset;
     }
 
     internal void SetImeComposition(string text, int? cursorOffset)
@@ -2125,6 +2158,9 @@ public sealed class TermControl : Avalonia.Controls.Control
         }
     }
 
+    private static bool BypassMouseTracking(KeyModifiers modifiers) =>
+        modifiers.HasFlag(KeyModifiers.Shift);
+
     private void WriteMouseInput(
         int button,
         int x,
@@ -2186,6 +2222,45 @@ public sealed class TermControl : Avalonia.Controls.Control
     private void ReportInteractionError(string operation, Exception exception) =>
         InteractionError?.Invoke(this, new TerminalInteractionErrorEventArgs(operation, exception));
 
+
+    private double HorizontalPadding => _padding.Left + _padding.Right;
+
+    private double VerticalPadding => _padding.Top + _padding.Bottom;
+
+    internal static Thickness ParsePadding(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return new Thickness(8);
+        }
+
+        var parts = value.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        var numbers = new double[parts.Length];
+        for (var i = 0; i < parts.Length; i++)
+        {
+            if (!double.TryParse(parts[i], CultureInfo.InvariantCulture, out numbers[i]))
+            {
+                return new Thickness(8);
+            }
+        }
+
+        return numbers.Length switch
+        {
+            1 => new Thickness(numbers[0]),
+            2 => new Thickness(numbers[0], numbers[1], numbers[0], numbers[1]),
+            4 => new Thickness(numbers[0], numbers[1], numbers[2], numbers[3]),
+            _ => new Thickness(8),
+        };
+    }
+
+    internal static TerminalCursorStyle ResolveCursorStyle(int decscusr, string? profileShape) =>
+        decscusr switch
+        {
+            1 or 2 => TerminalCursorStyle.FilledBox,
+            3 or 4 => TerminalCursorStyle.Underscore,
+            5 or 6 => TerminalCursorStyle.Bar,
+            _ => ParseCursorStyle(profileShape),
+        };
 
     internal static TerminalCursorStyle ParseCursorStyle(string? value) =>
         value is not null && value.Equals("underscore", StringComparison.OrdinalIgnoreCase)

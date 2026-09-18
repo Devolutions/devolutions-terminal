@@ -76,6 +76,7 @@ public sealed class TextBuffer
         _lines = new CircularBuffer<BufferLine>(Rows + _historySize);
         _tabStops = CreateDefaultTabStops(Columns);
         ScrollBottom = Rows - 1;
+        MarginRight = Columns - 1;
         EnsureViewportLines();
     }
 
@@ -86,6 +87,9 @@ public sealed class TextBuffer
     public int CursorY { get; set; }
     public int ScrollTop { get; private set; }
     public int ScrollBottom { get; private set; }
+    public int MarginLeft { get; private set; }
+    public int MarginRight { get; private set; }
+    public bool LeftRightMargins { get; set; }
     public int ViewportStart => Math.Max(0, _lines.Count - Rows);
     public int ScrollOffset
     {
@@ -94,6 +98,7 @@ public sealed class TextBuffer
     }
 
     public bool OriginMode { get; set; }
+    public bool ReverseWraparound { get; set; }
     public bool WrapPending { get; set; }
     public int TotalLines => _lines.Count;
     public int HistoryCount => ViewportStart;
@@ -109,7 +114,8 @@ public sealed class TextBuffer
     public void Resize(
         int columns,
         int rows,
-        IReadOnlyList<TerminalImageAnchor>? retainedAnchors = null)
+        IReadOnlyList<TerminalImageAnchor>? retainedAnchors = null,
+        bool reflow = true)
     {
         columns = Math.Max(1, columns);
         rows = Math.Max(1, rows);
@@ -124,6 +130,7 @@ public sealed class TextBuffer
         var wasWrapPending = WrapPending;
         var source = _lines.ToList();
         var activeMark = _activeMark;
+        var previousOffset = ScrollOffset;
 
         Columns = columns;
         Rows = rows;
@@ -131,8 +138,37 @@ public sealed class TextBuffer
         _tabStops = ResizeTabStops(_tabStops, columns);
         ScrollTop = 0;
         ScrollBottom = rows - 1;
+        MarginLeft = 0;
+        MarginRight = columns - 1;
         WrapPending = false;
-        ScrollOffset = 0;
+
+        if (!reflow)
+        {
+            var clipped = new List<BufferLine>(Math.Max(source.Count, rows));
+            var keep = Math.Min(source.Count, rows);
+            for (var i = 0; i < keep; i++)
+            {
+                clipped.Add(ResizeLineCells(source[i], columns));
+            }
+
+            while (clipped.Count < rows)
+            {
+                clipped.Add(NewBlankLine(CellAttributes.Default));
+            }
+
+            _lines.ResetCapacity(rows + _historySize, clipped);
+            _activeMark = activeMark;
+            EnsureViewportLines();
+            CursorY = Math.Clamp(CursorY, 0, rows - 1);
+            CursorX = Math.Clamp(
+                CursorX,
+                0,
+                Math.Max(0, EffectiveColumns(GetLiveLine(CursorY)) - 1));
+            WrapPending = wasWrapPending &&
+                          CursorX == EffectiveColumns(GetLiveLine(CursorY)) - 1;
+            ScrollOffset = Math.Clamp(previousOffset, 0, HistoryCount);
+            return;
+        }
 
         var reflowed = Reflow(
             source,
@@ -168,7 +204,7 @@ public sealed class TextBuffer
         CursorX = Math.Clamp(cursorColumn, 0, columns - 1);
         WrapPending = wasWrapPending &&
                       CursorX == EffectiveColumns(GetLiveLine(CursorY)) - 1;
-
+        ScrollOffset = Math.Clamp(previousOffset, 0, HistoryCount);
     }
 
     public Cell[] GetRow(int viewportY) => GetVisibleLine(viewportY).Cells;
@@ -387,7 +423,7 @@ public sealed class TextBuffer
             ContinueLogicalLine(source);
         }
 
-        var effectiveColumns = EffectiveColumns(GetLiveLine(CursorY));
+        var effectiveColumns = RightBound(GetLiveLine(CursorY)) + 1;
         if (CursorX + width > effectiveColumns)
         {
             var source = GetLiveLine(CursorY);
@@ -395,7 +431,7 @@ public sealed class TextBuffer
             CarriageReturn();
             LineFeed();
             ContinueLogicalLine(source);
-            effectiveColumns = EffectiveColumns(GetLiveLine(CursorY));
+            effectiveColumns = RightBound(GetLiveLine(CursorY)) + 1;
         }
 
         var row = GetLiveLine(CursorY).Cells;
@@ -446,7 +482,7 @@ public sealed class TextBuffer
 
     public void CarriageReturn()
     {
-        CursorX = 0;
+        CursorX = LeftBound;
         WrapPending = false;
     }
 
@@ -464,7 +500,7 @@ public sealed class TextBuffer
 
         if (alsoCarriageReturn)
         {
-            CursorX = 0;
+            CursorX = LeftBound;
         }
         else
         {
@@ -490,10 +526,22 @@ public sealed class TextBuffer
     public void Backspace()
     {
         WrapPending = false;
-        if (CursorX > 0)
+        if (CursorX > LeftBound)
         {
             CursorX--;
-            if (GetLiveLine(CursorY).Cells[CursorX].IsWideContinuation && CursorX > 0)
+            if (GetLiveLine(CursorY).Cells[CursorX].IsWideContinuation && CursorX > LeftBound)
+            {
+                CursorX--;
+            }
+
+            return;
+        }
+
+        if (ReverseWraparound && CursorY > ScrollTop)
+        {
+            CursorY--;
+            CursorX = RightBound(GetLiveLine(CursorY));
+            if (GetLiveLine(CursorY).Cells[CursorX].IsWideContinuation && CursorX > LeftBound)
             {
                 CursorX--;
             }
@@ -577,8 +625,12 @@ public sealed class TextBuffer
         WrapPending = false;
         var top = OriginMode && relativeToOrigin ? ScrollTop : 0;
         var bottom = OriginMode && relativeToOrigin ? ScrollBottom : Rows - 1;
+        var left = OriginMode && relativeToOrigin ? LeftBound : 0;
         CursorY = Math.Clamp(top + row, top, bottom);
-        CursorX = Math.Clamp(col, 0, EffectiveColumns(GetLiveLine(CursorY)) - 1);
+        var right = OriginMode && relativeToOrigin
+            ? RightBound(GetLiveLine(CursorY))
+            : EffectiveColumns(GetLiveLine(CursorY)) - 1;
+        CursorX = Math.Clamp(left + col, left, right);
     }
 
     public void MoveCursor(int dx, int dy, bool respectMargins = false)
@@ -587,8 +639,70 @@ public sealed class TextBuffer
         var withinMargins = CursorY >= ScrollTop && CursorY <= ScrollBottom;
         var top = OriginMode || (respectMargins && withinMargins) ? ScrollTop : 0;
         var bottom = OriginMode || (respectMargins && withinMargins) ? ScrollBottom : Rows - 1;
+        var left = OriginMode ? LeftBound : 0;
+        var right = OriginMode
+            ? RightBound(GetLiveLine(CursorY))
+            : EffectiveColumns(GetLiveLine(CursorY)) - 1;
+        if (ReverseWraparound && dy == 0 && CursorX + dx < left && CursorY > top)
+        {
+            var steps = left - (CursorX + dx);
+            CursorY = Math.Max(top, CursorY - 1);
+            right = OriginMode
+                ? RightBound(GetLiveLine(CursorY))
+                : EffectiveColumns(GetLiveLine(CursorY)) - 1;
+            CursorX = Math.Max(left, right - steps + 1);
+            return;
+        }
+
         CursorY = Math.Clamp(CursorY + dy, top, bottom);
-        CursorX = Math.Clamp(CursorX + dx, 0, EffectiveColumns(GetLiveLine(CursorY)) - 1);
+        right = OriginMode
+            ? RightBound(GetLiveLine(CursorY))
+            : EffectiveColumns(GetLiveLine(CursorY)) - 1;
+        CursorX = Math.Clamp(CursorX + dx, left, right);
+    }
+
+    public void SetLeftRightMargins(int left, int right)
+    {
+        left = Math.Clamp(left, 0, Columns - 1);
+        right = Math.Clamp(right, 0, Columns - 1);
+        if (right <= left)
+        {
+            return;
+        }
+
+        MarginLeft = left;
+        MarginRight = right;
+    }
+
+    public void FillAlignmentPattern()
+    {
+        WrapPending = false;
+        CursorX = 0;
+        CursorY = 0;
+        var glyph = new Cell
+        {
+            Rune = new Rune('E'),
+            Attributes = CellAttributes.Default,
+            StoredWidth = 1,
+        };
+        for (var y = 0; y < Rows; y++)
+        {
+            var line = GetLiveLine(y);
+            line.Wrapped = false;
+            line.Rendition = LineRendition.SingleWidth;
+            Array.Fill(line.Cells, glyph);
+        }
+    }
+
+    public void ResetViewMargins()
+    {
+        ScrollTop = 0;
+        ScrollBottom = Rows - 1;
+        LeftRightMargins = false;
+        MarginLeft = 0;
+        MarginRight = Columns - 1;
+        OriginMode = false;
+        ReverseWraparound = false;
     }
 
     public void SetScrollRegion(int top, int bottom)
@@ -891,6 +1005,41 @@ public sealed class TextBuffer
         }
     }
 
+    public void ShiftColumns(int count)
+    {
+        if (count == 0)
+        {
+            return;
+        }
+
+        var left = LeftBound;
+        var right = LeftRightMargins ? MarginRight : Columns - 1;
+        var width = right - left + 1;
+        var shift = Math.Clamp(Math.Abs(count), 1, width);
+        for (var y = ScrollTop; y <= ScrollBottom; y++)
+        {
+            var row = GetLiveLine(y).Cells;
+            if (count < 0)
+            {
+                Array.Copy(row, left + shift, row, left, width - shift);
+                for (var x = right - shift + 1; x <= right; x++)
+                {
+                    row[x] = BlankWith(CurrentAttributes);
+                }
+            }
+            else
+            {
+                Array.Copy(row, left, row, left + shift, width - shift);
+                for (var x = left; x < left + shift; x++)
+                {
+                    row[x] = BlankWith(CurrentAttributes);
+                }
+            }
+
+            RepairWideCells(row);
+        }
+    }
+
     public void InsertCharacters(int count)
     {
         var row = GetLiveLine(CursorY).Cells;
@@ -1000,8 +1149,12 @@ public sealed class TextBuffer
         CursorY = 0;
         WrapPending = false;
         OriginMode = false;
+        ReverseWraparound = false;
         ScrollTop = 0;
         ScrollBottom = Rows - 1;
+        LeftRightMargins = false;
+        MarginLeft = 0;
+        MarginRight = Columns - 1;
         ScrollOffset = 0;
         _tabStops = CreateDefaultTabStops(Columns);
         if (!keepHistory)
@@ -1156,6 +1309,34 @@ public sealed class TextBuffer
         return new BufferLine(row, ++_nextLogicalLineId);
     }
 
+    private static BufferLine ResizeLineCells(BufferLine source, int columns)
+    {
+        var cells = new Cell[columns];
+        var copy = Math.Min(source.Cells.Length, columns);
+        Array.Copy(source.Cells, cells, copy);
+        for (var x = copy; x < columns; x++)
+        {
+            cells[x] = Cell.Blank;
+        }
+
+        RepairWideCells(cells);
+        var line = new BufferLine(cells, source.LogicalLineId)
+        {
+            Wrapped = source.Wrapped,
+            Rendition = source.Rendition,
+            LogicalOffset = source.LogicalOffset,
+        };
+        foreach (var mark in source.Marks)
+        {
+            if ((uint)mark.StartColumn < (uint)columns)
+            {
+                line.Marks.Add(mark);
+            }
+        }
+
+        return line;
+    }
+
     private void ContinueLogicalLine(BufferLine source)
     {
         var destination = GetLiveLine(CursorY);
@@ -1165,6 +1346,13 @@ public sealed class TextBuffer
 
     private int EffectiveColumns(BufferLine line) =>
         line.Rendition == LineRendition.SingleWidth ? Columns : Math.Max(1, Columns / 2);
+
+    private int LeftBound => LeftRightMargins ? MarginLeft : 0;
+
+    private int RightBound(BufferLine line) =>
+        LeftRightMargins
+            ? Math.Min(MarginRight, EffectiveColumns(line) - 1)
+            : EffectiveColumns(line) - 1;
 
     private static Cell BlankWith(CellAttributes attributes) => new()
     {

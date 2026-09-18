@@ -5,6 +5,8 @@ namespace Devolutions.Terminal.Core;
 
 public static class WcWidth
 {
+    public static bool AmbiguousAsWide { get; set; }
+
     public static int Width(Rune rune)
     {
         var value = rune.Value;
@@ -34,7 +36,7 @@ public static class WcWidth
             return 0;
         }
 
-        if (IsWide(value))
+        if (IsWide(value) || (AmbiguousAsWide && IsAmbiguous(value)))
         {
             return 2;
         }
@@ -68,4 +70,14 @@ public static class WcWidth
             >= 0x2648 and <= 0x2653 or
             >= 0x1F1E6 and <= 0x1F1FF or
             >= 0x1F300 and <= 0x1FAFF;
+
+    private static bool IsAmbiguous(int v) =>
+        v is >= 0x00A1 and <= 0x00FF
+        || v is >= 0x2010 and <= 0x2027
+        || v is >= 0x2030 and <= 0x205E
+        || v is >= 0x2100 and <= 0x245F
+        || v is >= 0x2460 and <= 0x24FF
+        || v is >= 0x2500 and <= 0x25FF
+        || v is >= 0x2600 and <= 0x27BF
+        || v is >= 0x2985 and <= 0x2986;
 }

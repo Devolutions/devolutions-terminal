@@ -15,6 +15,13 @@ public interface IVtDispatch
     void CsiDispatch(char final, ReadOnlySpan<int> parameters, byte intermediate, bool privateMarker);
     void CsiDispatch(char final, ReadOnlySpan<int> parameters, byte intermediate, byte privateMarker) =>
         CsiDispatch(final, parameters, intermediate, privateMarker != 0);
+    void CsiDispatch(
+        char final,
+        ReadOnlySpan<int> parameters,
+        ReadOnlySpan<bool> subparameters,
+        byte intermediate,
+        byte privateMarker) =>
+        CsiDispatch(final, parameters, intermediate, privateMarker);
     void DcsDispatch(
         char final,
         ReadOnlySpan<int> parameters,

@@ -48,6 +48,7 @@ public interface ITerminalEngine : IDisposable
     bool AlternateBufferActive { get; }
     bool CursorVisible { get; }
     bool CursorBlinking { get; }
+    int CursorStyle { get; }
     bool ApplicationCursorKeys { get; }
     bool BracketedPaste { get; }
     bool MouseTracking { get; }

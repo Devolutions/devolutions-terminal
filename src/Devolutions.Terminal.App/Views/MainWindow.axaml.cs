@@ -623,11 +623,17 @@ public partial class MainWindow :
             ? commandLine[1..closingQuote]
             : commandLine.Split(' ', 2)[0];
         executable = executable.Trim().Trim('"');
-        return normalizedTitle.Equals(executable, StringComparison.OrdinalIgnoreCase) ||
-               Path.GetFileName(normalizedTitle).Equals(
-                   Path.GetFileName(executable),
-                   StringComparison.OrdinalIgnoreCase);
+        return normalizedTitle.Equals(executable, StringComparison.OrdinalIgnoreCase) &&
+               LooksLikeExecutablePath(normalizedTitle);
     }
+
+    private static bool LooksLikeExecutablePath(string title) =>
+        title.Contains('/', StringComparison.Ordinal) ||
+        title.Contains('\\', StringComparison.Ordinal) ||
+        title.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ||
+        title.EndsWith(".com", StringComparison.OrdinalIgnoreCase) ||
+        title.EndsWith(".bat", StringComparison.OrdinalIgnoreCase) ||
+        title.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase);
 
     private IRestartableTerminalConnection CreateConnection(ProfileSettings profile)
     {

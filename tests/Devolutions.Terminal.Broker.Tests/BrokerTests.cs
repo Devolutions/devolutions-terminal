@@ -69,14 +69,16 @@ public sealed class BrokerTests
     public async Task RequestTimeoutDoesNotDeleteHealthyEndpoint()
     {
         using var fixture = new BrokerFixture();
+        var handler = new GateHandler();
         await using var host = Assert.IsType<BrokerHost>(
-            BrokerHost.TryCreate(new DelayedHandler(), fixture.Key, fixture.Directory));
+            BrokerHost.TryCreate(handler, fixture.Key, fixture.Directory));
         var client = new BrokerClient(fixture.Key, fixture.Directory);
 
         var timedOut = await client.SendAsync(
             "use-any",
             "first",
-            TimeSpan.FromMilliseconds(20));
+            TimeSpan.FromMilliseconds(50));
+        handler.Release.TrySetResult();
         var second = await client.SendAsync(
             "use-any",
             "second",
@@ -111,14 +113,16 @@ public sealed class BrokerTests
             ValueTask.FromResult(new BrokerDispatchResult(BrokerStatus.Success, payload, 1, "test"));
     }
 
-    private sealed class DelayedHandler : IBrokerRequestHandler
+    private sealed class GateHandler : IBrokerRequestHandler
     {
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public async ValueTask<BrokerDispatchResult> HandleAsync(
             string targetWindow,
             string payload,
             CancellationToken cancellationToken)
         {
-            await Task.Delay(100, cancellationToken);
+            await Release.Task.WaitAsync(cancellationToken);
             return new(BrokerStatus.Success, payload);
         }
     }

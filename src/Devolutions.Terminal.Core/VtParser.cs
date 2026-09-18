@@ -37,6 +37,8 @@ public sealed class VtParser
 
     private readonly IVtDispatch _dispatch;
     private readonly int[] _parameters = new int[MaxParameters];
+    private readonly bool[] _subparameters = new bool[MaxParameters];
+    private bool _nextIsSubparameter;
     private readonly List<byte> _osc = [];
     private readonly List<byte> _apc = [];
     private readonly List<byte> _dcs = [];
@@ -439,9 +441,15 @@ public sealed class VtParser
             _currentParameter = Math.Min((_currentParameter * 10) + (value - '0'), 65535);
             _state = State.CsiParam;
         }
-        else if (value is (byte)';' or (byte)':')
+        else if (value == (byte)';')
         {
             PushParameter();
+            _nextIsSubparameter = false;
+        }
+        else if (value == (byte)':')
+        {
+            PushParameter();
+            _nextIsSubparameter = true;
         }
         else if (value is >= 0x20 and <= 0x2F)
         {
@@ -491,10 +499,12 @@ public sealed class VtParser
         var intermediate = _intermediate;
         var privateMarker = _privateMarker;
         var parameters = _parameters.AsSpan(0, parameterCount).ToArray();
+        var subparameters = _subparameters.AsSpan(0, parameterCount).ToArray();
         ClearSequence();
         _dispatch.CsiDispatch(
             (char)final,
             parameters,
+            subparameters,
             intermediate,
             privateMarker);
         if (enterVt52)
@@ -542,16 +552,20 @@ public sealed class VtParser
     {
         var text = Encoding.UTF8.GetString(_osc.ToArray());
         var separator = text.IndexOf(';');
-        var command = 0;
-        ReadOnlySpan<char> data = text;
+        var command = -1;
+        ReadOnlySpan<char> data = [];
         if (separator >= 0)
         {
-            if (!int.TryParse(text.AsSpan(0, separator), out command))
+            if (int.TryParse(text.AsSpan(0, separator), out var parsed))
             {
-                command = -1;
+                command = parsed;
             }
 
             data = text.AsSpan(separator + 1);
+        }
+        else if (int.TryParse(text, out var bare))
+        {
+            command = bare;
         }
 
         if (command >= 0)
@@ -873,6 +887,7 @@ public sealed class VtParser
             return;
         }
 
+        _subparameters[_parameterCount] = _nextIsSubparameter;
         _parameters[_parameterCount++] = _currentParameter;
         _currentParameter = -1;
     }
@@ -892,6 +907,8 @@ public sealed class VtParser
         _intermediate = 0;
         _privateMarker = 0;
         _escIntermediateCount = 0;
+        _nextIsSubparameter = false;
+        Array.Clear(_subparameters);
     }
 
     private void AppendEscIntermediate(byte value)

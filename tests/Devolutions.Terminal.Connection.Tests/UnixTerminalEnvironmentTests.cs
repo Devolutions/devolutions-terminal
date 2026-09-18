@@ -23,14 +23,14 @@ public sealed class UnixTerminalEnvironmentTests
     }
 
     [Fact]
-    public void LinuxEnvironmentDoesNotSetTermProgram()
+    public void LinuxEnvironmentSetsTermProgramWithoutTouchingPath()
     {
         var environment = new Dictionary<string, string?>();
 
         UnixTerminalEnvironment.Apply(environment, isMacOs: false);
 
         Assert.Equal("xterm-256color", environment["TERM"]);
-        Assert.False(environment.ContainsKey("TERM_PROGRAM"));
+        Assert.Equal(UnixTerminalEnvironment.TermProgram, environment["TERM_PROGRAM"]);
         Assert.False(environment.ContainsKey("PATH"));
     }
 }

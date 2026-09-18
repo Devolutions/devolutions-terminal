@@ -344,6 +344,15 @@ public sealed class TerminalInteractionModelTests
                 4,
                 applicationCursorKeys: true));
         Assert.Equal(
+            "\u001b[<0;300;10M",
+            TerminalInteractionModel.BuildMouseSequence(
+                0,
+                299,
+                9,
+                released: false,
+                sgr: false,
+                KeyModifiers.None));
+        Assert.Equal(
             "\u001b[<16;3;4M",
             TerminalInteractionModel.BuildMouseSequence(
                 0,
