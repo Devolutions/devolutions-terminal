@@ -68,6 +68,7 @@ open "artifacts/packages/Devolutions Terminal.app"
 ```
 
 Release DMGs use a Finder window layout with a branded installation background,
-the app, and an Applications folder shortcut. The background is maintained as
-`macos/InstallerBackground.svg` and committed as
-`macos/InstallerBackground.png` for packaging.
+the app, and an Applications folder shortcut. The writable disk image is sized
+from the app bundle (plus HFS+/Finder headroom) rather than a fixed volume
+size. The background is maintained as `macos/InstallerBackground.svg` and
+committed as `macos/InstallerBackground.png` for packaging.
