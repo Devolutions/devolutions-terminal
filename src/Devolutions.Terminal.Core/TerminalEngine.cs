@@ -75,6 +75,11 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
     private bool _sixelDisplayMode = true;
     private double _cellWidth = 10;
     private double _cellHeight = 20;
+    private int _cursorStyle;
+    private int _synchronizedOutputDepth;
+    private bool _alternateScroll;
+    private bool _inBandResize;
+    private readonly Stack<string> _titleStack = new(16);
 
     public TerminalEngine(int columns = 120, int rows = 30, int historySize = 9001)
     {
@@ -119,6 +124,7 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
     public bool AlternateBufferActive => ReferenceEquals(_active, _alternate);
     public bool CursorVisible { get; private set; }
     public bool CursorBlinking { get; private set; }
+    public int CursorStyle => _cursorStyle;
     public bool ApplicationCursorKeys { get; private set; }
     public bool BracketedPaste { get; private set; }
     public bool MouseTracking { get; private set; }
@@ -177,7 +183,10 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
     {
         _parser.Process(data);
         PruneEvictedImages();
-        Invalidated?.Invoke(this, EventArgs.Empty);
+        if (_synchronizedOutputDepth == 0)
+        {
+            Invalidated?.Invoke(this, EventArgs.Empty);
+        }
     }
 
     public void Feed(string text) => Feed(Encoding.UTF8.GetBytes(text));
@@ -199,8 +208,16 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
             _images
                 .Where(static image => image.AlternateBuffer)
                 .Select(static image => image.LogicalAnchor)
-                .ToArray());
+                .ToArray(),
+            reflow: false);
         PruneEvictedImages();
+        if (_inBandResize)
+        {
+            var pixelWidth = Math.Max(1, (int)Math.Round(_cellWidth * columns));
+            var pixelHeight = Math.Max(1, (int)Math.Round(_cellHeight * rows));
+            Respond($"\u001b[48;{rows};{columns};{pixelHeight};{pixelWidth}t");
+        }
+
         Invalidated?.Invoke(this, EventArgs.Empty);
     }
 
@@ -230,6 +247,11 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         _kittyKeyboardStack.Clear();
         _modifyOtherKeys = 0;
         _win32InputMode = false;
+        _cursorStyle = 0;
+        _synchronizedOutputDepth = 0;
+        _alternateScroll = false;
+        _inBandResize = false;
+        _titleStack.Clear();
         _sixelDisplayMode = true;
         _vt52Graphics = false;
         _rectangularAttributeExtent = false;
@@ -403,15 +425,23 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
             return;
         }
 
-        if (intermediate == (byte)'#' && final is >= '3' and <= '6')
+        if (intermediate == (byte)'#')
         {
-            Buffer.SetCurrentLineRendition(final switch
+            if (final is >= '3' and <= '6')
             {
-                '3' => LineRendition.DoubleHeightTop,
-                '4' => LineRendition.DoubleHeightBottom,
-                '6' => LineRendition.DoubleWidth,
-                _ => LineRendition.SingleWidth,
-            });
+                Buffer.SetCurrentLineRendition(final switch
+                {
+                    '3' => LineRendition.DoubleHeightTop,
+                    '4' => LineRendition.DoubleHeightBottom,
+                    '6' => LineRendition.DoubleWidth,
+                    _ => LineRendition.SingleWidth,
+                });
+            }
+            else if (final == '8')
+            {
+                Buffer.FillAlignmentPattern();
+            }
+
             return;
         }
 
@@ -535,10 +565,18 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
     }
 
     void IVtDispatch.CsiDispatch(char final, ReadOnlySpan<int> parameters, byte intermediate, bool privateMarker) =>
-        DispatchCsi(final, parameters, intermediate, privateMarker ? (byte)'?' : (byte)0);
+        DispatchCsi(final, parameters, [], intermediate, privateMarker ? (byte)'?' : (byte)0);
 
     void IVtDispatch.CsiDispatch(char final, ReadOnlySpan<int> parameters, byte intermediate, byte privateMarker) =>
-        DispatchCsi(final, parameters, intermediate, privateMarker);
+        DispatchCsi(final, parameters, [], intermediate, privateMarker);
+
+    void IVtDispatch.CsiDispatch(
+        char final,
+        ReadOnlySpan<int> parameters,
+        ReadOnlySpan<bool> subparameters,
+        byte intermediate,
+        byte privateMarker) =>
+        DispatchCsi(final, parameters, subparameters, intermediate, privateMarker);
 
     void IVtDispatch.DcsDispatch(
         char final,
@@ -587,6 +625,7 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         switch (command)
         {
             case 0:
+            case 1:
             case 2:
                 Title = data.ToString();
                 TitleChanged?.Invoke(this, Title);
@@ -606,6 +645,10 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
                 {
                     DispatchConEmuImage(data);
                 }
+                else if (data.StartsWith("4;", StringComparison.Ordinal) || data.SequenceEqual("4"))
+                {
+                    DispatchConEmuProgress(data);
+                }
                 else
                 {
                     DispatchWindowsNotification(data);
@@ -615,6 +658,18 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
             case 11:
             case 12:
                 DispatchDynamicColors(command, data);
+                break;
+            case 104:
+                ResetColorTable(data);
+                break;
+            case 110:
+                _scheme = _scheme.WithForeground(_defaultScheme.Foreground);
+                break;
+            case 111:
+                _scheme = _scheme.WithBackground(_defaultScheme.Background);
+                break;
+            case 112:
+                _scheme = _scheme.WithCursor(_defaultScheme.Cursor);
                 break;
             case 52:
                 DispatchClipboard(data);
@@ -694,8 +749,8 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         {
             "m" => $"1$r{FormatSgrSetting()}m",
             "r" => $"1$r{Buffer.ScrollTop + 1};{Buffer.ScrollBottom + 1}r",
-            "s" => $"1$r1;{Buffer.Columns}s",
-            " q" => "1$r0 q",
+            "s" => $"1$r{Buffer.MarginLeft + 1};{Buffer.MarginRight + 1}s",
+            " q" => $"1$r{_cursorStyle} q",
             "\"q" => "1$r0\"q",
             "*x" => $"1$r{(_rectangularAttributeExtent ? 2 : 1)}*x",
             _ => "0$r",
@@ -1245,11 +1300,24 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         AddSgrFlag(values, CellFlags.Bold, "1");
         AddSgrFlag(values, CellFlags.Faint, "2");
         AddSgrFlag(values, CellFlags.Italic, "3");
-        AddSgrFlag(values, CellFlags.Underline, "4");
+        if ((_sgr.Flags & CellFlags.DoubleUnderline) != 0)
+        {
+            values.Add("4:2");
+        }
+        else if ((_sgr.Flags & CellFlags.CurlyUnderline) != 0)
+        {
+            values.Add("4:3");
+        }
+        else
+        {
+            AddSgrFlag(values, CellFlags.Underline, "4");
+        }
+
         AddSgrFlag(values, CellFlags.Blink, "5");
         AddSgrFlag(values, CellFlags.Inverse, "7");
         AddSgrFlag(values, CellFlags.Invisible, "8");
         AddSgrFlag(values, CellFlags.Strikethrough, "9");
+        AddSgrFlag(values, CellFlags.Overline, "53");
         AddSgrColor(values, _sgr.Foreground, foreground: true);
         AddSgrColor(values, _sgr.Background, foreground: false);
         return string.Join(';', values);
@@ -1960,11 +2028,6 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
 
     private void DispatchClipboard(ReadOnlySpan<char> data)
     {
-        if (!AllowClipboardWrite)
-        {
-            return;
-        }
-
         var separator = data.IndexOf(';');
         if (separator < 0)
         {
@@ -1973,6 +2036,12 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
 
         var payload = data[(separator + 1)..];
         if (payload.SequenceEqual("?"))
+        {
+            RespondOsc("52;c;");
+            return;
+        }
+
+        if (!AllowClipboardWrite)
         {
             return;
         }
@@ -2005,6 +2074,13 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         }
 
         ClipboardWriteRequested?.Invoke(this, text);
+    }
+
+    private static void DispatchConEmuProgress(ReadOnlySpan<char> data)
+    {
+        // OSC 9;4;st[;pr] — ConEmu/WT progress. Accept and ignore so it is
+        // not shown as a toast. st=0 hide, 1 value, 2 error, 3 indeterminate, 4 paused.
+        _ = data;
     }
 
     private void DispatchWindowsNotification(ReadOnlySpan<char> data)
@@ -2115,7 +2191,12 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         ShellIntegrationChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    private void DispatchCsi(char final, ReadOnlySpan<int> parameters, byte intermediate, byte privateMarker)
+    private void DispatchCsi(
+        char final,
+        ReadOnlySpan<int> parameters,
+        ReadOnlySpan<bool> subparameters,
+        byte intermediate,
+        byte privateMarker)
     {
         if (intermediate == 0 && final == 'u' && DispatchKittyKeyboard(parameters, privateMarker))
         {
@@ -2260,6 +2341,28 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
             return;
         }
 
+        if (privateMarker == 0 && intermediate == (byte)' ')
+        {
+            switch (final)
+            {
+                case 'q':
+                    SetCursorStyle(Param(parameters, 0, 0));
+                    return;
+                case '@':
+                    Buffer.ShiftColumns(-Count(parameters));
+                    return;
+                case 'A':
+                    Buffer.ShiftColumns(Count(parameters));
+                    return;
+            }
+        }
+
+        if (privateMarker == 0 && intermediate == (byte)'!' && final == 'p')
+        {
+            SoftReset();
+            return;
+        }
+
         if (privateMarker == (byte)'?' && final is 'h' or 'l')
         {
             DispatchPrivateModes(final == 'h', parameters);
@@ -2282,6 +2385,12 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
                 DeviceStatus(mode, privateReport: true);
             }
 
+            return;
+        }
+
+        if (privateMarker == (byte)'>' && final == 'q')
+        {
+            RespondDcs(">|{Devolutions.Terminal}");
             return;
         }
 
@@ -2383,7 +2492,7 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
                 DispatchAnsiModes(final == 'h', parameters);
                 break;
             case 'm':
-                ApplySgr(parameters);
+                ApplySgr(parameters, subparameters);
                 break;
             case 'n':
                 DeviceStatus(Param(parameters, 0, 0), privateReport: false);
@@ -2394,7 +2503,20 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
                     Math.Max(1, Param(parameters, 1, Buffer.Rows)) - 1);
                 break;
             case 's':
-                Buffer.SaveCursor();
+                if (Buffer.LeftRightMargins)
+                {
+                    Buffer.SetLeftRightMargins(
+                        OneBased(parameters, 0),
+                        Math.Max(1, Param(parameters, 1, Buffer.Columns)) - 1);
+                }
+                else
+                {
+                    Buffer.SaveCursor();
+                }
+
+                break;
+            case 't':
+                DispatchWindowOps(parameters);
                 break;
             case 'u':
                 Buffer.RestoreCursor();
@@ -2534,11 +2656,25 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
                     AutoWrap = enable;
                     Buffer.WrapPending = false;
                     break;
+                case 45:
+                    Buffer.ReverseWraparound = enable;
+                    break;
+                case 66:
+                    ApplicationKeypad = enable;
+                    break;
                 case 12:
                     CursorBlinking = enable;
                     break;
                 case 25:
                     CursorVisible = enable;
+                    break;
+                case 69:
+                    Buffer.LeftRightMargins = enable;
+                    if (!enable)
+                    {
+                        Buffer.SetLeftRightMargins(0, Buffer.Columns - 1);
+                    }
+
                     break;
                 case 47:
                     SetAlternateBuffer(enable, clearOnEnter: false, saveCursor: false);
@@ -2590,8 +2726,29 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
                 case 1049:
                     SetAlternateBuffer(enable, clearOnEnter: true, saveCursor: true);
                     break;
+                case 1007:
+                    _alternateScroll = enable;
+                    break;
                 case 2004:
                     BracketedPaste = enable;
+                    break;
+                case 2048:
+                    _inBandResize = enable;
+                    break;
+                case 2026:
+                    if (enable)
+                    {
+                        _synchronizedOutputDepth = Math.Min(_synchronizedOutputDepth + 1, 16);
+                    }
+                    else if (_synchronizedOutputDepth > 0)
+                    {
+                        _synchronizedOutputDepth--;
+                        if (_synchronizedOutputDepth == 0)
+                        {
+                            Invalidated?.Invoke(this, EventArgs.Empty);
+                        }
+                    }
+
                     break;
                 case 9001:
                     _win32InputMode = enable;
@@ -2659,7 +2816,7 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         }
     }
 
-    private void ApplySgr(ReadOnlySpan<int> parameters)
+    private void ApplySgr(ReadOnlySpan<int> parameters, ReadOnlySpan<bool> subparameters = default)
     {
         if (parameters.Length == 0)
         {
@@ -2670,6 +2827,11 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
 
         for (var i = 0; i < parameters.Length; i++)
         {
+            if ((uint)i < (uint)subparameters.Length && subparameters[i])
+            {
+                continue;
+            }
+
             var value = Param(parameters, i, 0);
             switch (value)
             {
@@ -2686,8 +2848,10 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
                     _sgr.Flags |= CellFlags.Italic;
                     break;
                 case 4:
+                    ApplyUnderlineStyle(NextSubparameter(parameters, subparameters, i, 1));
+                    break;
                 case 21:
-                    _sgr.Flags |= CellFlags.Underline;
+                    SetUnderlineFlags(CellFlags.DoubleUnderline);
                     break;
                 case 5:
                 case 6:
@@ -2709,7 +2873,13 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
                     _sgr.Flags &= ~CellFlags.Italic;
                     break;
                 case 24:
-                    _sgr.Flags &= ~CellFlags.Underline;
+                    _sgr.Flags &= ~UnderlineFlags;
+                    break;
+                case 53:
+                    _sgr.Flags |= CellFlags.Overline;
+                    break;
+                case 55:
+                    _sgr.Flags &= ~CellFlags.Overline;
                     break;
                 case 25:
                     _sgr.Flags &= ~CellFlags.Blink;
@@ -2749,6 +2919,49 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         }
 
         Buffer.CurrentAttributes = _sgr;
+    }
+
+    private const CellFlags UnderlineFlags =
+        CellFlags.Underline | CellFlags.DoubleUnderline | CellFlags.CurlyUnderline;
+
+    private void ApplyUnderlineStyle(int style)
+    {
+        switch (style)
+        {
+            case 0:
+                _sgr.Flags &= ~UnderlineFlags;
+                break;
+            case 2:
+                SetUnderlineFlags(CellFlags.DoubleUnderline);
+                break;
+            case 3:
+            case 4:
+            case 5:
+                SetUnderlineFlags(CellFlags.CurlyUnderline);
+                break;
+            default:
+                SetUnderlineFlags(CellFlags.Underline);
+                break;
+        }
+    }
+
+    private void SetUnderlineFlags(CellFlags style)
+    {
+        _sgr.Flags = (_sgr.Flags & ~UnderlineFlags) | style;
+    }
+
+    private static int NextSubparameter(
+        ReadOnlySpan<int> parameters,
+        ReadOnlySpan<bool> subparameters,
+        int index,
+        int fallback)
+    {
+        var next = index + 1;
+        return (uint)next < (uint)parameters.Length &&
+               (uint)next < (uint)subparameters.Length &&
+               subparameters[next]
+            ? Param(parameters, next, fallback)
+            : fallback;
     }
 
     private int ApplyExtendedColor(ReadOnlySpan<int> parameters, int index, bool foreground)
@@ -2795,6 +3008,107 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         }
     }
 
+    private void SoftReset()
+    {
+        CursorVisible = true;
+        CursorBlinking = true;
+        ApplicationCursorKeys = false;
+        ApplicationKeypad = false;
+        BracketedPaste = false;
+        MouseTracking = false;
+        MouseTrackingMode = TerminalMouseTrackingMode.None;
+        SgrMouse = false;
+        FocusTracking = false;
+        AutoWrap = true;
+        InsertMode = false;
+        NewLineMode = false;
+        ReverseVideo = false;
+        AnsiMode = true;
+        _kittyKeyboardFlags = KittyKeyboardFlags.None;
+        _kittyKeyboardStack.Clear();
+        _modifyOtherKeys = 0;
+        _win32InputMode = false;
+        _cursorStyle = 0;
+        _synchronizedOutputDepth = 0;
+        _alternateScroll = false;
+        _inBandResize = false;
+        _sixelDisplayMode = true;
+        _vt52Graphics = false;
+        _rectangularAttributeExtent = false;
+        _sgr = CellAttributes.Default;
+        Buffer.CurrentAttributes = _sgr;
+        Buffer.CurrentProtection = false;
+        Buffer.CurrentHyperlinkUri = null;
+        Buffer.ResetViewMargins();
+        Buffer.SavedCursorX = 0;
+        Buffer.SavedCursorY = 0;
+        Buffer.SavedAttributes = CellAttributes.Default;
+        Buffer.SavedProtection = false;
+        Array.Fill(_gsets, "B");
+        _gl = 0;
+        _gr = 2;
+        _singleShift = -1;
+        _hasLastPrintedRune = false;
+        Invalidated?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void SetCursorStyle(int style)
+    {
+        _cursorStyle = Math.Clamp(style, 0, 6);
+        if (_cursorStyle is 1 or 3 or 5)
+        {
+            CursorBlinking = true;
+        }
+        else if (_cursorStyle is 2 or 4 or 6)
+        {
+            CursorBlinking = false;
+        }
+    }
+
+    private void DispatchWindowOps(ReadOnlySpan<int> parameters)
+    {
+        var pixelWidth = Math.Max(1, (int)Math.Round(_cellWidth * Columns));
+        var pixelHeight = Math.Max(1, (int)Math.Round(_cellHeight * Rows));
+        var cellWidth = Math.Max(1, (int)Math.Round(_cellWidth));
+        var cellHeight = Math.Max(1, (int)Math.Round(_cellHeight));
+        switch (Param(parameters, 0, 0))
+        {
+            case 14:
+                Respond($"\u001b[4;{pixelHeight};{pixelWidth}t");
+                break;
+            case 16:
+                Respond($"\u001b[6;{cellHeight};{cellWidth}t");
+                break;
+            case 18:
+                Respond($"\u001b[8;{Rows};{Columns}t");
+                break;
+            case 11:
+                Respond("\u001b[1t");
+                break;
+            case 19:
+                Respond($"\u001b[9;{Rows};{Columns}t");
+                break;
+            case 21:
+                RespondOsc($"l{Title}");
+                break;
+            case 22:
+                if (_titleStack.Count < 16)
+                {
+                    _titleStack.Push(Title);
+                }
+
+                break;
+            case 23:
+                if (_titleStack.TryPop(out var restored) && restored != Title)
+                {
+                    Title = restored;
+                    TitleChanged?.Invoke(this, Title);
+                }
+
+                break;
+        }
+    }
+
     private void DeviceStatus(int mode, bool privateReport)
     {
         if (!privateReport && mode == 5)
@@ -2837,8 +3151,11 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
             5 => ReverseVideo ? 1 : 2,
             6 => Buffer.OriginMode ? 1 : 2,
             7 => AutoWrap ? 1 : 2,
+            45 => Buffer.ReverseWraparound ? 1 : 2,
+            66 => ApplicationKeypad ? 1 : 2,
             12 => CursorBlinking ? 1 : 2,
             25 => CursorVisible ? 1 : 2,
+            69 => Buffer.LeftRightMargins ? 1 : 2,
             80 => _sixelDisplayMode ? 1 : 2,
             47 or 1047 or 1049 => AlternateBufferActive ? 1 : 2,
             1000 => MouseTrackingMode == TerminalMouseTrackingMode.Button ? 1 : 2,
@@ -2846,7 +3163,10 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
             1003 => MouseTrackingMode == TerminalMouseTrackingMode.AllMotion ? 1 : 2,
             1004 => FocusTracking ? 1 : 2,
             1006 => SgrMouse ? 1 : 2,
+            1007 => _alternateScroll ? 1 : 2,
             2004 => BracketedPaste ? 1 : 2,
+            2026 => _synchronizedOutputDepth > 0 ? 1 : 2,
+            2048 => _inBandResize ? 1 : 2,
             9001 => _win32InputMode ? 1 : 2,
             _ => 0,
         };
@@ -2904,11 +3224,29 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         _ => 0,
     };
 
+    private void ResetColorTable(ReadOnlySpan<char> data)
+    {
+        if (data.IsEmpty)
+        {
+            _scheme = _defaultScheme;
+            return;
+        }
+
+        foreach (var part in data.ToString().Split(';', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (int.TryParse(part, out var index) && (uint)index < 256)
+            {
+                _scheme = _scheme.WithColorTableEntry(index, _defaultScheme.Resolve(index));
+            }
+        }
+    }
+
     private void DispatchHyperlink(ReadOnlySpan<char> data)
     {
         var separator = data.IndexOf(';');
         if (separator < 0)
         {
+            Buffer.CurrentHyperlinkUri = null;
             return;
         }
 

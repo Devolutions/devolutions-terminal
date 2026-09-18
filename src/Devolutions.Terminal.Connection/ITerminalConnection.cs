@@ -16,6 +16,8 @@ public interface ITerminalConnection : IAsyncDisposable
     void Write(string text);
     ValueTask WriteAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken = default);
     void Resize(int columns, int rows);
+    void Resize(int columns, int rows, int pixelWidth, int pixelHeight) =>
+        Resize(columns, rows);
 }
 
 public interface IRestartableTerminalConnection : ITerminalConnection

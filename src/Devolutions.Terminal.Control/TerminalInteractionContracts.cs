@@ -132,6 +132,7 @@ public sealed record TerminalInteractionOptions
     public bool CopyOnSelect { get; init; }
     public bool ScrollToZoom { get; init; } = true;
     public bool DetectUrls { get; init; } = true;
+    public string AmbiguousWidth { get; init; } = "narrow";
 
     public static TerminalInteractionOptions FromSettings(AppSettings settings)
     {
@@ -145,6 +146,7 @@ public sealed record TerminalInteractionOptions
             CopyOnSelect = settings.CopyOnSelect,
             ScrollToZoom = settings.ScrollToZoom,
             DetectUrls = settings.DetectUrls,
+            AmbiguousWidth = settings.AmbiguousWidth,
             SafeUriSchemes = schemes,
             Copy = new TerminalCopyOptions
             {

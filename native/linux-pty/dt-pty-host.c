@@ -30,14 +30,14 @@ static bool retryable(void) {
     return errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK;
 }
 
-static void resize_pty(int master, pid_t child, unsigned columns, unsigned rows) {
+static void resize_pty(int master, unsigned columns, unsigned rows, unsigned xpixels, unsigned ypixels) {
     struct winsize size = {
         .ws_row = (unsigned short)rows,
         .ws_col = (unsigned short)columns,
+        .ws_xpixel = (unsigned short)xpixels,
+        .ws_ypixel = (unsigned short)ypixels,
     };
-    if (ioctl(master, TIOCSWINSZ, &size) == 0) {
-        kill(-child, SIGWINCH);
-    }
+    ioctl(master, TIOCSWINSZ, &size);
 }
 
 int main(int argc, char **argv) {
@@ -198,10 +198,15 @@ int main(int argc, char **argv) {
             } else if (header[0] == 'R' && header[1] == ' ') {
                 unsigned new_columns = 0;
                 unsigned new_rows = 0;
-                if (sscanf(header + 2, "%u %u", &new_columns, &new_rows) == 2 &&
+                unsigned xpixels = 0;
+                unsigned ypixels = 0;
+                int parsed = sscanf(header + 2, "%u %u %u %u", &new_columns, &new_rows, &xpixels, &ypixels);
+                if (parsed >= 2 &&
                     new_columns > 0 && new_columns <= UINT16_MAX &&
-                    new_rows > 0 && new_rows <= UINT16_MAX) {
-                    resize_pty(master, child, new_columns, new_rows);
+                    new_rows > 0 && new_rows <= UINT16_MAX &&
+                    xpixels <= UINT16_MAX &&
+                    ypixels <= UINT16_MAX) {
+                    resize_pty(master, new_columns, new_rows, xpixels, ypixels);
                 }
             } else if (strcmp(header, "C") == 0) {
                 input_open = false;

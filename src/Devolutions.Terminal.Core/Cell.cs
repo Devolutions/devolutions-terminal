@@ -14,6 +14,9 @@ public enum CellFlags : ushort
     Inverse = 32,
     Invisible = 64,
     Strikethrough = 128,
+    DoubleUnderline = 256,
+    CurlyUnderline = 512,
+    Overline = 1024,
 }
 
 public enum ColorKind : byte

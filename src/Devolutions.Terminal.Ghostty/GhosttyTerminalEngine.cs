@@ -44,6 +44,9 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
     private bool _disposed;
     private bool _allowClipboardWrite;
     private bool _allowNotifications;
+    private bool _allowKittyKeyboard = true;
+    private KittyKeyboardFlags _kittyKeyboardFlags;
+    private readonly Stack<KittyKeyboardFlags> _kittyKeyboardStack = new(16);
     private string _title = "Devolutions Terminal";
     private string? _workingDirectory;
     private GhosttyRenderCursor _cursor;
@@ -191,6 +194,8 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
     public bool AlternateBufferActive => QueryInt(TerminalDataActiveScreen) == 1;
     public bool CursorVisible => _cursor.ViewportHasValue != 0 && _cursor.Visible != 0;
     public bool CursorBlinking => _cursor.Blinking != 0;
+    public int CursorStyle =>
+        _cursor.VisualStyle is >= 1 and <= 6 ? _cursor.VisualStyle : 0;
     public bool ApplicationCursorKeys => QueryMode(1);
     public bool BracketedPaste => QueryMode(2004);
     public bool MouseTracking => QueryMode(9) || QueryMode(1000) || QueryMode(1002) || QueryMode(1003);
@@ -209,7 +214,7 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
         AnsiMode: _ansiMode,
         ApplicationCursorKeys,
         ApplicationKeypad: QueryMode(66),
-        KittyFlags: KittyKeyboardFlags.None,
+        KittyFlags: _allowKittyKeyboard ? _kittyKeyboardFlags : KittyKeyboardFlags.None,
         ModifyOtherKeys: _modifyOtherKeys,
         Win32InputMode: false);
     public int Columns => Buffer.Columns;
@@ -346,7 +351,12 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
     {
         _allowClipboardWrite = allowClipboardWrite;
         _allowNotifications = allowNotifications;
-        _ = allowKittyKeyboard;
+        _allowKittyKeyboard = allowKittyKeyboard;
+        if (!allowKittyKeyboard)
+        {
+            _kittyKeyboardFlags = KittyKeyboardFlags.None;
+            _kittyKeyboardStack.Clear();
+        }
     }
 
     public TerminalSnapshot CreateSnapshot(bool includeHistory = false)
@@ -383,6 +393,8 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
     {
         _ansiMode = true;
         _modifyOtherKeys = 0;
+        _kittyKeyboardFlags = KittyKeyboardFlags.None;
+        _kittyKeyboardStack.Clear();
         _keyboardModeScan = KeyboardModeScanState.Ground;
         ResetKeyboardCsi();
     }
@@ -426,7 +438,7 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
                     else if (_keyboardCsiPrivate == 0 &&
                              !_keyboardCsiHasValue &&
                              _keyboardCsiCount == 0 &&
-                             value is (byte)'?' or (byte)'>')
+                             value is (byte)'?' or (byte)'>' or (byte)'<' or (byte)'=')
                     {
                         _keyboardCsiPrivate = value;
                     }
@@ -488,7 +500,51 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
                 ? Math.Clamp(_keyboardCsiParams[1], 0, 2)
                 : 0;
         }
+        else if (_allowKittyKeyboard && final == (byte)'u')
+        {
+            ApplyKittyKeyboardCsi();
+        }
     }
+
+    private void ApplyKittyKeyboardCsi()
+    {
+        const KittyKeyboardFlags supported =
+            KittyKeyboardFlags.DisambiguateEscapeCodes |
+            KittyKeyboardFlags.ReportEventTypes |
+            KittyKeyboardFlags.ReportAllKeysAsEscapeCodes |
+            KittyKeyboardFlags.ReportAssociatedText;
+        switch (_keyboardCsiPrivate)
+        {
+            case (byte)'>':
+                if (_kittyKeyboardStack.Count < 16)
+                {
+                    _kittyKeyboardStack.Push(_kittyKeyboardFlags);
+                }
+
+                _kittyKeyboardFlags = (KittyKeyboardFlags)ParamKeyboard(0) & supported;
+                break;
+            case (byte)'<':
+                var count = Math.Max(1, ParamKeyboard(0, 1));
+                while (count-- > 0 && _kittyKeyboardStack.TryPop(out var restored))
+                {
+                    _kittyKeyboardFlags = restored;
+                }
+
+                break;
+            case (byte)'=':
+                var flags = (KittyKeyboardFlags)ParamKeyboard(0) & supported;
+                _kittyKeyboardFlags = ParamKeyboard(1, 1) switch
+                {
+                    2 => _kittyKeyboardFlags | flags,
+                    3 => _kittyKeyboardFlags & ~flags,
+                    _ => flags,
+                };
+                break;
+        }
+    }
+
+    private int ParamKeyboard(int index, int fallback = 0) =>
+        index < _keyboardCsiCount ? _keyboardCsiParams[index] : fallback;
 
     private void ProbeUnsupportedImages(ReadOnlySpan<byte> data)
     {

@@ -232,6 +232,24 @@ public sealed class GhosttyTerminalEngineTests
         Assert.True(engine.InputMode.AnsiMode);
         Assert.False(engine.InputMode.Win32InputMode);
         Assert.Equal(0, engine.InputMode.ModifyOtherKeys);
+        Assert.Equal(KittyKeyboardFlags.None, engine.InputMode.KittyFlags);
+    }
+
+    [Fact]
+    public void KittyKeyboardFlagsAreProjectedFromHostSequences()
+    {
+        using var engine = new GhosttyTerminalEngine();
+
+        engine.Feed("\u001b[>1u");
+        Assert.Equal(KittyKeyboardFlags.DisambiguateEscapeCodes, engine.InputMode.KittyFlags);
+
+        engine.Feed("\u001b[=3;2u");
+        Assert.Equal(
+            KittyKeyboardFlags.DisambiguateEscapeCodes | KittyKeyboardFlags.ReportEventTypes,
+            engine.InputMode.KittyFlags);
+
+        engine.Feed("\u001b[<u");
+        Assert.Equal(KittyKeyboardFlags.None, engine.InputMode.KittyFlags);
     }
 
     [Fact]

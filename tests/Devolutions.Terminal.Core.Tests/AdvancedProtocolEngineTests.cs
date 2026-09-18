@@ -320,9 +320,9 @@ public sealed class AdvancedProtocolEngineTests
     public void AlternateBufferImageAnchorRemapsAcrossResize()
     {
         var engine = new TerminalEngine(6, 3);
-        engine.Feed("\u001b[?1049habcd\u001b[?80l\u001bP7q~\u001b\\efgh");
+        engine.Feed("\u001b[?1049h\u001b[2;2H\u001b[?80l\u001bP7q~\u001b\\");
 
-        engine.Resize(3, 4);
+        engine.Resize(4, 4);
 
         var image = Assert.Single(engine.CreateSnapshot(includeHistory: true).Images);
         Assert.True(image.AlternateBuffer);
@@ -407,5 +407,175 @@ public sealed class AdvancedProtocolEngineTests
 
         Assert.Empty(engine.Images);
         Assert.Empty(engine.CreateSnapshot().Images);
+    }
+
+    [Fact]
+    public void DecscusrUpdatesCursorStyleAndDecrqss()
+    {
+        var engine = new TerminalEngine(80, 24);
+        var responses = new List<string>();
+        engine.ResponseReady += (_, bytes) => responses.Add(Encoding.ASCII.GetString(bytes));
+
+        engine.Feed("\u001b[6 q");
+        engine.Feed("\u001bP$q q\u001b\\");
+
+        Assert.Equal(6, engine.CursorStyle);
+        Assert.False(engine.CursorBlinking);
+        Assert.Equal("\u001bP1$r6 q\u001b\\", Assert.Single(responses));
+    }
+
+    [Fact]
+    public void WindowOpsReportCharacterAndPixelSize()
+    {
+        var engine = new TerminalEngine(80, 24);
+        engine.Resize(80, 24, 8, 16);
+        var responses = new List<string>();
+        engine.ResponseReady += (_, bytes) => responses.Add(Encoding.ASCII.GetString(bytes));
+
+        engine.Feed("\u001b[18t\u001b[16t\u001b[14t");
+
+        Assert.Equal(
+            ["\u001b[8;24;80t", "\u001b[6;16;8t", "\u001b[4;384;640t"],
+            responses);
+    }
+
+    [Fact]
+    public void WindowOpsReportStateScreenAndTitle()
+    {
+        var engine = new TerminalEngine(80, 24);
+        engine.Feed("\u001b]2;tui\u0007");
+        var responses = new List<string>();
+        engine.ResponseReady += (_, bytes) => responses.Add(Encoding.ASCII.GetString(bytes));
+
+        engine.Feed("\u001b[11t\u001b[19t\u001b[21t");
+
+        Assert.Equal(
+            ["\u001b[1t", "\u001b[9;24;80t", "\u001b]ltui\u001b\\"],
+            responses);
+    }
+
+    [Fact]
+    public void InBandResizeReportsPixelAndCellSize()
+    {
+        var engine = new TerminalEngine(40, 10);
+        engine.Resize(40, 10, 8, 16);
+        var responses = new List<string>();
+        engine.ResponseReady += (_, bytes) => responses.Add(Encoding.ASCII.GetString(bytes));
+        engine.Feed("\u001b[?2048h");
+        engine.Resize(80, 24, 8, 16);
+
+        Assert.Equal("\u001b[48;24;80;384;640t", Assert.Single(responses));
+    }
+
+    [Fact]
+    public void XtversionReportsTheHostName()
+    {
+        var engine = new TerminalEngine();
+        var responses = new List<string>();
+        engine.ResponseReady += (_, bytes) => responses.Add(Encoding.ASCII.GetString(bytes));
+
+        engine.Feed("\u001b[>0q");
+
+        Assert.Equal("\u001bP>|{Devolutions.Terminal}\u001b\\", Assert.Single(responses));
+    }
+
+    [Fact]
+    public void SoftResetClearsModesButKeepsScreen()
+    {
+        var engine = new TerminalEngine(20, 5);
+        engine.Feed("hello\u001b[?1049h\u001b[?1h\u001b[?2004h\u001b[4h\u001b[1malt");
+        Assert.True(engine.AlternateBufferActive);
+        Assert.True(engine.ApplicationCursorKeys);
+        Assert.True(engine.BracketedPaste);
+        Assert.True(engine.InsertMode);
+
+        engine.Feed("\u001b[!p");
+
+        Assert.True(engine.AlternateBufferActive);
+        Assert.False(engine.ApplicationCursorKeys);
+        Assert.False(engine.BracketedPaste);
+        Assert.False(engine.InsertMode);
+        Assert.Equal(CellFlags.None, engine.Buffer.CurrentAttributes.Flags);
+        Assert.Contains('a', engine.Buffer.GetCell(0, 0).Text);
+    }
+
+    [Fact]
+    public void AlternateScrollModeIsReportable()
+    {
+        var engine = new TerminalEngine();
+        var responses = new List<string>();
+        engine.ResponseReady += (_, bytes) => responses.Add(Encoding.ASCII.GetString(bytes));
+        engine.Feed("\u001b[?1007h\u001b[?1007$p\u001b[?1007l\u001b[?1007$p");
+
+        Assert.Equal(["\u001b[?1007;1$y", "\u001b[?1007;2$y"], responses);
+    }
+
+    [Fact]
+    public void SgrColonUnderlineDoesNotAlsoSetFaint()
+    {
+        var engine = new TerminalEngine(20, 2);
+        engine.Feed("\u001b[4:2mX\u001b[4;2mY");
+
+        Assert.Equal(CellFlags.DoubleUnderline, engine.Buffer.GetCell(0, 0).Attributes.Flags);
+        Assert.Equal(CellFlags.Underline | CellFlags.Faint, engine.Buffer.GetCell(1, 0).Attributes.Flags);
+    }
+
+    [Fact]
+    public void SgrOverlineAndCurlyUnderlineAreIndependent()
+    {
+        var engine = new TerminalEngine(20, 2);
+        engine.Feed("\u001b[4:3;53mZ");
+
+        Assert.Equal(
+            CellFlags.CurlyUnderline | CellFlags.Overline,
+            engine.Buffer.GetCell(0, 0).Attributes.Flags);
+    }
+
+    [Fact]
+    public void WindowTitleStackPushesAndRestores()
+    {
+        var engine = new TerminalEngine();
+        var titles = new List<string>();
+        engine.TitleChanged += (_, title) => titles.Add(title);
+
+        engine.Feed("\u001b]2;outer\u0007");
+        engine.Feed("\u001b[22;2t");
+        engine.Feed("\u001b]2;inner\u0007");
+        engine.Feed("\u001b[23;2t");
+
+        Assert.Equal("outer", engine.Title);
+        Assert.Equal(["outer", "inner", "outer"], titles);
+    }
+
+    [Fact]
+    public void SynchronizedOutputHoldsInvalidationUntilPageEnd()
+    {
+        var engine = new TerminalEngine(80, 24);
+        var invalidations = 0;
+        engine.Invalidated += (_, _) => invalidations++;
+
+        engine.Feed("\u001b[?2026hpartial");
+        Assert.Equal(0, invalidations);
+
+        engine.Feed(" frame\u001b[?2026l");
+        Assert.True(invalidations >= 1);
+    }
+
+    [Fact]
+    public void DeclrmmReportsAndDecrqssUsesCurrentMargins()
+    {
+        var engine = new TerminalEngine(80, 24);
+        var responses = new List<string>();
+        engine.ResponseReady += (_, bytes) => responses.Add(Encoding.ASCII.GetString(bytes));
+
+        engine.Feed("\u001b[?69h\u001b[5;20s");
+        engine.Feed("\u001b[?69$p");
+        engine.Feed("\u001bP$qs\u001b\\");
+
+        Assert.True(engine.Buffer.LeftRightMargins);
+        Assert.Equal(4, engine.Buffer.MarginLeft);
+        Assert.Equal(19, engine.Buffer.MarginRight);
+        Assert.Equal("\u001b[?69;1$y", responses[0]);
+        Assert.Equal("\u001bP1$r5;20s\u001b\\", responses[1]);
     }
 }

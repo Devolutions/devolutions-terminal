@@ -7,6 +7,33 @@ namespace Devolutions.Terminal.Core.Tests;
 public sealed class OptionalOscTests
 {
     [Fact]
+    public void Osc110RestoresDefaultForeground()
+    {
+        var engine = new TerminalEngine();
+        var original = engine.Scheme.Foreground;
+        engine.Feed("\u001b]10;rgb:ffff/0000/0000\u0007");
+        Assert.NotEqual(original, engine.Scheme.Foreground);
+
+        engine.Feed("\u001b]110\u0007");
+        Assert.Equal(original, engine.Scheme.Foreground);
+    }
+
+    [Fact]
+    public void Osc52QueryRepliesWithEmptyClipboardWithoutLeaking()
+    {
+        var engine = new TerminalEngine();
+        var responses = new List<string>();
+        engine.ResponseReady += (_, bytes) => responses.Add(Encoding.UTF8.GetString(bytes));
+        string? clipboard = null;
+        engine.ClipboardWriteRequested += (_, text) => clipboard = text;
+
+        engine.Feed("\u001b]52;c;?\u0007");
+
+        Assert.Null(clipboard);
+        Assert.Equal("\u001b]52;c;\u001b\\", Assert.Single(responses));
+    }
+
+    [Fact]
     public void Osc52ClipboardWriteRequiresPolicy()
     {
         var engine = new TerminalEngine();
@@ -77,6 +104,20 @@ public sealed class OptionalOscTests
         engine.Feed("\u001b]9;Build complete\u0007");
         Assert.Equal("Build complete", notification?.Body);
         Assert.Null(notification?.Title);
+    }
+
+    [Fact]
+    public void Osc94ProgressIsNotRaisedAsANotification()
+    {
+        var engine = new TerminalEngine();
+        var notifications = 0;
+        engine.ConfigureOptionalFeatures(allowClipboardWrite: false, allowNotifications: true);
+        engine.NotificationRequested += (_, _) => notifications++;
+
+        engine.Feed("\u001b]9;4;1;40\u0007");
+        engine.Feed("\u001b]9;4;0\u0007");
+
+        Assert.Equal(0, notifications);
     }
 
     [Fact]

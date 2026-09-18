@@ -144,11 +144,15 @@ public sealed class LinuxPtyConnection : IRestartableTerminalConnection
         await GetWriter().Enqueue(CreateDataFrame(data.Span), cancellationToken).ConfigureAwait(false);
     }
 
-    public void Resize(int columns, int rows)
+    public void Resize(int columns, int rows) => Resize(columns, rows, 0, 0);
+
+    public void Resize(int columns, int rows, int pixelWidth, int pixelHeight)
     {
         columns = Math.Clamp(columns, 1, ushort.MaxValue);
         rows = Math.Clamp(rows, 1, ushort.MaxValue);
-        GetWriter().Post(Encoding.ASCII.GetBytes($"R {columns} {rows}\n"));
+        pixelWidth = Math.Clamp(pixelWidth, 0, ushort.MaxValue);
+        pixelHeight = Math.Clamp(pixelHeight, 0, ushort.MaxValue);
+        GetWriter().Post(Encoding.ASCII.GetBytes($"R {columns} {rows} {pixelWidth} {pixelHeight}\n"));
         Columns = columns;
         Rows = rows;
     }

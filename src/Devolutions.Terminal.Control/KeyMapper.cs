@@ -109,7 +109,7 @@ public static class KeyMapper
 
         var sequence = key switch
         {
-            Key.Return or Key.LineFeed => "\r",
+            Key.Return or Key.LineFeed => mode.ApplicationKeypad ? "\u001bOM" : "\r",
             Key.Tab => shift ? "\u001b[Z" : "\t",
             Key.Back => "\u007f",
             Key.Escape => "\u001b",
@@ -147,10 +147,50 @@ public static class KeyMapper
 
         if (sequence is not null)
         {
+            var hasModifiers = ctrl || alt || shift || modifiers.HasFlag(KeyModifiers.Meta);
+            if (hasModifiers && TryLegacyFunctionalKey(key, out var form))
+            {
+                return EncodeLegacyFunctionalKey(
+                    form,
+                    modifiers,
+                    TerminalKeyEventType.Press,
+                    reportEvents: false);
+            }
+
+            if ((ctrl || shift || modifiers.HasFlag(KeyModifiers.Meta)) &&
+                TryModifiedEditingKey(key, modifiers, out var modified))
+            {
+                return modified;
+            }
+
             return alt ? "\u001b" + sequence : sequence;
         }
 
         return !string.IsNullOrEmpty(keySymbol) && !ctrl && alt ? "\u001b" + keySymbol : null;
+    }
+
+    private static bool TryModifiedEditingKey(
+        Key key,
+        KeyModifiers modifiers,
+        out string sequence)
+    {
+        sequence = null!;
+        var code = key switch
+        {
+            Key.Return or Key.LineFeed => 13,
+            Key.Escape => 27,
+            Key.Back => 127,
+            _ => 0,
+        };
+        if (code == 0)
+        {
+            return false;
+        }
+
+        sequence = string.Create(
+            CultureInfo.InvariantCulture,
+            $"\u001b[27;{KittyModifiers(modifiers)};{code}~");
+        return true;
     }
 
     private static string? EncodeVt52(Key key, KeyModifiers modifiers, bool applicationKeypad)

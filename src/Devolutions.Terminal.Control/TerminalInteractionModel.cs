@@ -469,7 +469,7 @@ public static class TerminalInteractionModel
         if ((modifiers & KeyModifiers.Control) != 0) code |= 16;
         column = Math.Max(0, column) + 1;
         row = Math.Max(0, row) + 1;
-        if (sgr)
+        if (sgr || column > 223 || row > 223)
         {
             return $"\u001b[<{code};{column};{row}{(released ? 'm' : 'M')}";
         }
@@ -477,7 +477,7 @@ public static class TerminalInteractionModel
         return string.Create(
             CultureInfo.InvariantCulture,
             $"\u001b[M{(char)Math.Clamp(code + 32, 32, 255)}" +
-            $"{(char)Math.Clamp(column + 32, 32, 255)}{(char)Math.Clamp(row + 32, 32, 255)}");
+            $"{(char)(column + 32)}{(char)(row + 32)}");
     }
 
     internal static TerminalSelectionPoint Clamp(TextBufferSnapshot snapshot, TerminalSelectionPoint point) =>
