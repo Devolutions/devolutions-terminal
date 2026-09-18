@@ -22,11 +22,6 @@ on:
         required: false
         default: false
         type: boolean
-      publish_nuget:
-        description: Publish Devolutions.Terminal.App to NuGet.org (requires trusted publishing).
-        required: false
-        default: false
-        type: boolean
       sign_dry_run:
         description: Sign Windows and macOS packages during a dry run when signing credentials are available.
         required: false
@@ -57,7 +52,6 @@ jobs:
       release_version: ${{ steps.resolve.outputs.release_version }}
       msix_version: ${{ steps.resolve.outputs.msix_version }}
       dry_run: ${{ steps.resolve.outputs.dry_run }}
-      publish_nuget: ${{ steps.resolve.outputs.publish_nuget }}
       sign_dry_run: ${{ steps.resolve.outputs.sign_dry_run }}
       publish_environment: ${{ steps.resolve.outputs.publish_environment }}
     steps:
@@ -70,18 +64,12 @@ jobs:
         env:
           REQUESTED_VERSION: ${{ inputs.version }}
           DRY_RUN: ${{ inputs.dry_run }}
-          PUBLISH_NUGET: ${{ inputs.publish_nuget }}
           SIGN_DRY_RUN: ${{ inputs.sign_dry_run }}
           REQUESTED_ENVIRONMENT: ${{ inputs['github-env'] }}
         run: |
           $dryRun = if ([string]::IsNullOrWhiteSpace($env:DRY_RUN)) { "false" } else { $env:DRY_RUN.ToLowerInvariant() }
           if ($dryRun -notin @("true", "false")) {
             throw "dry_run must be true or false."
-          }
-
-          $publishNuget = if ($env:GITHUB_REF_TYPE -eq "tag") { "true" } elseif ([string]::IsNullOrWhiteSpace($env:PUBLISH_NUGET)) { "false" } else { $env:PUBLISH_NUGET.ToLowerInvariant() }
-          if ($publishNuget -notin @("true", "false")) {
-            throw "publish_nuget must be true or false."
           }
 
           $signDryRun = if ([string]::IsNullOrWhiteSpace($env:SIGN_DRY_RUN)) { "false" } else { $env:SIGN_DRY_RUN.ToLowerInvariant() }
@@ -133,7 +121,6 @@ jobs:
             "release_version=$releaseVersion"
             "msix_version=$msixVersion"
             "dry_run=$dryRun"
-            "publish_nuget=$publishNuget"
             "sign_dry_run=$signDryRun"
             "publish_environment=$publishEnvironment"
           ) | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
@@ -1084,7 +1071,7 @@ jobs:
           path: artifacts/nuget
 
       - name: NuGet login (OIDC)
-        if: needs.release-metadata.outputs.dry_run != 'true' && needs.release-metadata.outputs.publish_nuget == 'true'
+        if: needs.release-metadata.outputs.dry_run != 'true'
         id: nuget-login
         uses: NuGet/login@v1
         with:
@@ -1096,7 +1083,6 @@ jobs:
           $ErrorActionPreference = "Stop"
 
           $dryRun = [System.Boolean]::Parse('${{ needs.release-metadata.outputs.dry_run }}')
-          $publishNuget = [System.Boolean]::Parse('${{ needs.release-metadata.outputs.publish_nuget }}')
           $packages = @(Get-ChildItem -LiteralPath artifacts/nuget -Filter "*.nupkg" -File | Sort-Object Name)
           if ($packages.Count -ne 8) {
             throw "Expected eight NuGet packages, found $($packages.Count)."
@@ -1122,11 +1108,6 @@ jobs:
           $orderedPackages = @($controlPackages[0]) + @($appRuntimePackages) + @($pointerPackages[0])
           if ($dryRun) {
             Write-Host "Dry run: skipping NuGet.org publication of $($orderedPackages.Count) packages."
-            exit 0
-          }
-
-          if (-not $publishNuget) {
-            Write-Host "NuGet.org publication is disabled; the packages will remain available as GitHub release assets."
             exit 0
           }
 

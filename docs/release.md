@@ -234,9 +234,6 @@ Manual dispatch provides these inputs:
 - `dry_run` — build, package, and validate artifacts without creating or
   updating a GitHub Release. The combined release assets are uploaded as a
   workflow artifact.
-- `publish_nuget` — publish `Devolutions.Terminal.App` to NuGet.org. This is
-  disabled by default for manual releases so a missing or not-yet-activated
-  trusted-publishing policy does not block the GitHub Release.
 - `sign_dry_run` — with `dry_run`, sign Windows packages using the selected
   signing environment when all signing secrets are available. This validates
   the real `psign-tool` and Azure Artifact Signing path without publishing.
@@ -267,7 +264,7 @@ Required environment secrets:
 - `TRUSTED_SIGNING_ACCOUNT_NAME`
 - `TRUSTED_SIGNING_PROFILE_NAME`
 - `NUGET_BOT_USERNAME` — NuGet.org trusted-publishing identity for
-  `Devolutions.Terminal.App`; required only when NuGet publication is enabled
+  `Devolutions.Terminal.App`; required for non-dry-run releases
 - `APPLE_APP_DEV_ID_APP_CERTIFICATE` — base64-encoded Developer ID certificate
 - `APPLE_APP_DEV_ID_APP_CERTIFICATE_PASSWORD` — Developer ID certificate password
 - `APPLE_BOT_PASSWORD` — app-specific password for macOS notarization
@@ -280,20 +277,20 @@ Optional environment or repository variable:
 `.msi` files. The MSIX `Publisher` identity in `Package.appxmanifest` must
 match the Artifact Signing certificate subject.
 
-The release job publishes `Devolutions.Terminal.App` to NuGet.org through OIDC
-trusted publishing when `publish_nuget` is enabled; tag-triggered releases
-enable it automatically. The distribution consists of a small meta-package and
-six RID-specific payload packages. The release publishes the runtime packages
-before the meta-package so clients never resolve dependencies that are not yet
-available. Splitting the NativeAOT payloads keeps each package below
-NuGet.org's 250 MB package-size limit while preserving the existing
+The release job always publishes `Devolutions.Terminal.App` and
+`Devolutions.Terminal.Control` to NuGet.org through OIDC trusted publishing
+on non-dry-run tag and manual releases. The distribution consists of a small
+meta-package and six RID-specific payload packages. The release publishes the
+runtime packages before the meta-package so clients never resolve dependencies
+that are not yet available. Splitting the NativeAOT payloads keeps each package
+below NuGet.org's 250 MB package-size limit while preserving the existing
 `PackageReference` and MSBuild import behavior.
 
 Configure the `publish-test` and `publish-prod` environments as trusted
 publishers for the package IDs on NuGet.org, and bootstrap the RID and pointer
-packages before enabling publication for a manual release. Dry runs and manual
-releases with `publish_nuget` disabled do not request a NuGet API key or publish
-the packages; all `.nupkg` files remain included in the GitHub Release assets.
+packages before the first publication. Dry runs do not request a NuGet API key
+or publish the packages; all `.nupkg` files remain included in the GitHub
+Release assets.
 
 ## NuGet package (`Devolutions.Terminal.Control`)
 
