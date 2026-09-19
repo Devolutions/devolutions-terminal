@@ -408,7 +408,9 @@ public sealed class KittyGraphicsTests
     {
         var (engine, responses) = CreateEngine();
         var bytes = Encoding.ASCII.GetBytes("Ga=q,f=32,s=1,v=1,i=1;" + B64(new byte[] { 1, 2, 3, 4 }));
-        engine.Feed(new byte[] { 0x9F }.Concat(bytes).Concat(new byte[] { 0x9C }).ToArray());
+        // The 8-bit C1 string terminator (0x9C) is ambiguous with UTF-8 continuation bytes,
+        // so only the 7-bit ST (ESC \) is recognized here.
+        engine.Feed(new byte[] { 0x9F }.Concat(bytes).Concat(new byte[] { 0x1B, (byte)'\\' }).ToArray());
         Assert.Equal([$"{Esc}_Gi=1;OK{Esc}\\"], responses);
     }
 

@@ -36,6 +36,9 @@ public partial class MainWindow :
     IWindowSummonOperations
 {
     private static readonly SemaphoreSlim JumpListRefreshGate = new(1, 1);
+    private static readonly FontFamily TabTitleFontFamily = OperatingSystem.IsMacOS()
+        ? new FontFamily("SF Pro Text, Zapf Dingbats")
+        : FontFamily.Default;
     private static string? _lastJumpListFingerprint;
     private static long _lastSystemToastTick;
     private AppSettings _settings;
@@ -969,6 +972,7 @@ public partial class MainWindow :
                 Text = tab.Title,
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 VerticalAlignment = VerticalAlignment.Center,
+                FontFamily = TabTitleFontFamily,
                 FontWeight = presentation.HasUnseenActivity ? FontWeight.Bold : FontWeight.Normal,
             };
             Grid.SetColumn(title, 1);

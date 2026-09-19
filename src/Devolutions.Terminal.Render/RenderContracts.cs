@@ -96,7 +96,7 @@ public sealed record TerminalRendererSettings
     public int FontWeight { get; init; } = 400;
     public IReadOnlyList<string> FallbackFontFamilies { get; init; } =
         OperatingSystem.IsMacOS()
-            ? ["Cascadia Mono", "Menlo", "Apple Color Emoji"]
+            ? ["Cascadia Mono", "Menlo", "Zapf Dingbats", "Apple Symbols", "Symbol", "Apple Color Emoji"]
             : ["Cascadia Mono", "Consolas", "Segoe UI Emoji"];
     public IReadOnlyList<TerminalFontSource> FontSources { get; init; } = [];
     public int GlyphCacheCapacity { get; init; } = 4096;

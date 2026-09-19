@@ -159,7 +159,7 @@ public sealed class VtParser
             {
                 _state = State.StringEscape;
             }
-            else if (value is 0x07 or 0x9C)
+            else if (value == 0x07)
             {
                 _state = State.Ground;
             }
@@ -521,7 +521,7 @@ public sealed class VtParser
             _state = State.Ground;
             _dispatch.ExecuteC0(value);
         }
-        else if (value is 0x07 or 0x9C)
+        else if (value == 0x07)
         {
             FinishOsc();
         }
@@ -604,10 +604,6 @@ public sealed class VtParser
             _state = State.Ground;
             _dispatch.ExecuteC0(value);
         }
-        else if (value is 0x9C)
-        {
-            FinishApc();
-        }
         else if (value == 0x1B)
         {
             _state = State.ApcEscape;
@@ -652,12 +648,6 @@ public sealed class VtParser
         {
             CancelDcs();
             _dispatch.ExecuteC0(value);
-            return;
-        }
-
-        if (value == 0x9C)
-        {
-            TerminateDcs(_state == State.DcsPassthrough);
             return;
         }
 

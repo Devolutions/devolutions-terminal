@@ -210,6 +210,27 @@ public sealed class SkiaTerminalRendererTests
     }
 
     [Fact]
+    public void ClaudeHeaderSymbolUsesMacOsDingbatsFallback()
+    {
+        if (!OperatingSystem.IsMacOS())
+        {
+            return;
+        }
+
+        using var renderer = new SkiaTerminalRenderer(new TerminalRendererSettings
+        {
+            FallbackFontFamilies = ["Zapf Dingbats"],
+        });
+        var frame = CreateFrame("\u2733");
+        using var bitmap = NewBitmap(renderer, frame);
+        using var canvas = new SKCanvas(bitmap);
+
+        Draw(renderer, canvas, frame);
+
+        Assert.Equal("Zapf Dingbats", renderer.LastResolvedFontFamily);
+    }
+
+    [Fact]
     public void DpiChangeInvalidatesDeviceIndependentGlyphResources()
     {
         using var renderer = new SkiaTerminalRenderer();
