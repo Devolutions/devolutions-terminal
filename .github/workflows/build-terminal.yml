@@ -696,7 +696,7 @@ jobs:
       - name: Set up WinApp CLI
         uses: microsoft/setup-WinAppCli@v0.1
         with:
-          version: v0.6.0
+          version: v0.6.1
 
       - name: Download x64 publish
         uses: actions/download-artifact@v4
@@ -840,7 +840,7 @@ jobs:
       - name: Set up WinApp CLI
         uses: microsoft/setup-WinAppCli@v0.1
         with:
-          version: v0.6.0
+          version: v0.6.1
 
       - name: Resolve binary signing mode
         id: signing-mode
@@ -1244,6 +1244,23 @@ jobs:
             -ArtifactSigningProfileName $env:TRUSTED_SIGNING_PROFILE_NAME `
             -ArtifactSigningAccessToken $accessToken `
             -TimestampServer $timestampServer
+
+      - name: Validate signed MSIX block map integrity
+        if: steps.signing-mode.outputs.should_sign == 'true'
+        shell: pwsh
+        run: |
+          # Package-signing (psign-tool, running in cross-platform "portable" mode) is
+          # a separate step from building the MSIX, and has been observed to re-write
+          # the package's zip entries out of the strict order that Windows' native AppX
+          # package reader requires, even though the build step itself produced (and
+          # validated) a correctly-ordered, unsigned package. That corruption is not
+          # caught by hash verification, nor necessarily by an "unpack" round trip, so
+          # it must be checked explicitly on the final signed artifact - the thing that
+          # actually ships - not just the pre-signing build output. See Test-Packages.ps1
+          # (used on the unsigned build in the msix job) for the equivalent check that
+          # runs before signing.
+          $msixPackages = Get-ChildItem ./artifacts/msix-packages -File | Where-Object Extension -eq ".msix"
+          ./src/Devolutions.Terminal.Package/Scripts/Test-MsixBlockMapOrder.ps1 -PackagePath $msixPackages.FullName
 
       - name: Stage release assets
         shell: pwsh

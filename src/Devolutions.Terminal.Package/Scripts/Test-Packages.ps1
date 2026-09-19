@@ -109,6 +109,15 @@ begin {
     function Test-Msix {
         param([string] $Path)
 
+        # Validate the package's physical zip entry order against its AppxBlockMap.xml
+        # file order. This catches a class of corruption that "makeappx unpack" alone
+        # does not: the payload must be listed in strict case-insensitive ordinal
+        # order, or Windows' native AppX package reader rejects the package with
+        # HRESULT 0x80080205 ("The Appx package's block map is invalid") even though
+        # every individual block hash is correct. Run first so a bad package fails
+        # fast with a precise diagnostic instead of a generic makeappx error.
+        & "$PSScriptRoot/Test-MsixBlockMapOrder.ps1" -PackagePath $Path
+
         $extractPath = Join-Path ([IO.Path]::GetTempPath()) ("wt-msix-" + [guid]::NewGuid())
         New-Item -ItemType Directory -Path $extractPath | Out-Null
         try {
