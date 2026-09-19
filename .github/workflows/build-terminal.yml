@@ -684,11 +684,19 @@ jobs:
         run: bash scripts/Test-LinuxArm64Runtime.sh artifacts/linux-arm64-packages
 
   msix:
-    name: Unsigned MSIX packages
+    name: MSIX packages
     needs:
       - native-aot
       - release-metadata
     runs-on: windows-latest
+    permissions:
+      contents: read
+      id-token: write
+    environment:
+      # Ordinary (non-release) builds are bound to the low-stakes dry-run environment so they never
+      # wait on approval/protection rules meant for real signing releases; only an actual release
+      # trigger (workflow_dispatch or a tag push) is bound to the real signing environment.
+      name: ${{ (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')) && needs.release-metadata.outputs.publish_environment || 'publish-dry-run' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -696,7 +704,7 @@ jobs:
       - name: Set up WinApp CLI
         uses: microsoft/setup-WinAppCli@v0.1
         with:
-          version: v0.6.0
+          version: v0.6.1
 
       - name: Download x64 publish
         uses: actions/download-artifact@v4
@@ -718,18 +726,119 @@ jobs:
           -OutputDirectory ./artifacts/msix
           -Version "${{ needs.release-metadata.outputs.msix_version }}"
 
+      - name: Resolve signing mode
+        id: signing-mode
+        shell: pwsh
+        env:
+          IS_RELEASE_EVENT: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          TRUSTED_SIGNING_ENDPOINT: ${{ secrets.TRUSTED_SIGNING_ENDPOINT }}
+          TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.TRUSTED_SIGNING_ACCOUNT_NAME }}
+          TRUSTED_SIGNING_PROFILE_NAME: ${{ secrets.TRUSTED_SIGNING_PROFILE_NAME }}
+        run: |
+          # Ordinary (non-release) CI runs never attempt MSIX signing: they are not gated on
+          # signing secrets being configured, so they must not fail when those secrets are absent.
+          if ($env:IS_RELEASE_EVENT -ne "true") {
+            "should_sign=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            Write-Host "Not a release build; skipping MSIX signing."
+            exit 0
+          }
+
+          $dryRun = [System.Boolean]::Parse('${{ needs.release-metadata.outputs.dry_run }}')
+          $signDryRun = [System.Boolean]::Parse('${{ needs.release-metadata.outputs.sign_dry_run }}')
+          $required = @(
+            "AZURE_CLIENT_ID",
+            "AZURE_TENANT_ID",
+            "AZURE_SUBSCRIPTION_ID",
+            "TRUSTED_SIGNING_ENDPOINT",
+            "TRUSTED_SIGNING_ACCOUNT_NAME",
+            "TRUSTED_SIGNING_PROFILE_NAME"
+          )
+          $missing = @($required | Where-Object { [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_)) })
+
+          if ($dryRun -and -not $signDryRun) {
+            "should_sign=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            Write-Host "Dry run will not sign MSIX packages."
+            exit 0
+          }
+
+          if ($missing.Count -gt 0) {
+            if ($dryRun) {
+              "should_sign=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+              Write-Host "::notice::Skipping dry-run MSIX signing because these secrets are unavailable: $($missing -join ', ')"
+              exit 0
+            }
+
+            throw "Missing Azure Artifact Signing secrets: $($missing -join ', ')"
+          }
+
+          "should_sign=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Azure login for Trusted Signing
+        if: steps.signing-mode.outputs.should_sign == 'true'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign MSIX packages with Azure Artifact Signing
+        if: steps.signing-mode.outputs.should_sign == 'true'
+        shell: pwsh
+        env:
+          TRUSTED_SIGNING_ENDPOINT: ${{ secrets.TRUSTED_SIGNING_ENDPOINT }}
+          TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.TRUSTED_SIGNING_ACCOUNT_NAME }}
+          TRUSTED_SIGNING_PROFILE_NAME: ${{ secrets.TRUSTED_SIGNING_PROFILE_NAME }}
+        run: |
+          # MSIX packages are signed here, on a real Windows runner, using WinApp CLI's
+          # native `az-sign` command (real Win32 SignerSignEx3 / AppxSip.dll) rather than
+          # psign-tool's cross-platform "--mode portable" MSIX signing path used for the
+          # .msi container and bundled binaries elsewhere in this workflow. Portable-mode
+          # MSIX signing has been found to corrupt the package's central directory relative
+          # to the AXCD digest embedded in its own AppxSignature.p7x, which Windows rejects
+          # at install time with HRESULT 0x80080205 ("The Appx package's block map is
+          # invalid") even though the package is otherwise well-formed. Native signing on
+          # Windows uses the real OS AppX signing component and does not have this bug.
+          $metadata = [ordered]@{
+            Endpoint = $env:TRUSTED_SIGNING_ENDPOINT
+            CodeSigningAccountName = $env:TRUSTED_SIGNING_ACCOUNT_NAME
+            CertificateProfileName = $env:TRUSTED_SIGNING_PROFILE_NAME
+          }
+          $metadataPath = Join-Path $env:RUNNER_TEMP "msix-artifact-signing-metadata.json"
+          $metadata | ConvertTo-Json -Compress | Set-Content -LiteralPath $metadataPath -Encoding utf8
+
+          $msixPackages = Get-ChildItem ./artifacts/msix/packages -File | Where-Object Extension -eq ".msix"
+          foreach ($package in $msixPackages) {
+            winapp az-sign $package.FullName --metadata-file $metadataPath
+            if ($LASTEXITCODE -ne 0) {
+              throw "winapp az-sign failed for '$($package.FullName)' with exit code $LASTEXITCODE."
+            }
+          }
+
       - name: Validate package structure
         shell: pwsh
-        run: >
-          ./src/Devolutions.Terminal.Package/Scripts/Test-Packages.ps1
-          -PackagePath (Get-ChildItem ./artifacts/msix/packages -File |
-          Where-Object Extension -eq ".msix" |
-          ForEach-Object FullName)
+        env:
+          SHOULD_SIGN: ${{ steps.signing-mode.outputs.should_sign }}
+        run: |
+          $packagePaths = Get-ChildItem ./artifacts/msix/packages -File |
+            Where-Object Extension -eq ".msix" |
+            ForEach-Object FullName
 
-      - name: Upload unsigned MSIX artifacts
+          $arguments = @{
+            PackagePath = $packagePaths
+          }
+          if ($env:SHOULD_SIGN -eq "true") {
+            $arguments["RequireSignature"] = $true
+          }
+
+          ./src/Devolutions.Terminal.Package/Scripts/Test-Packages.ps1 @arguments
+
+      - name: Upload MSIX artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: DevolutionsTerminal-MSIX-unsigned
+          name: DevolutionsTerminal-MSIX-packages
           path: artifacts/msix/packages
           if-no-files-found: error
 
@@ -840,7 +949,7 @@ jobs:
       - name: Set up WinApp CLI
         uses: microsoft/setup-WinAppCli@v0.1
         with:
-          version: v0.6.0
+          version: v0.6.1
 
       - name: Resolve binary signing mode
         id: signing-mode
@@ -1022,10 +1131,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download Windows unsigned MSIX
+      - name: Download Windows signed MSIX
         uses: actions/download-artifact@v4
         with:
-          name: DevolutionsTerminal-MSIX-unsigned
+          name: DevolutionsTerminal-MSIX-packages
           path: artifacts/msix-packages
 
       - name: Download Windows unsigned MSI
@@ -1227,15 +1336,13 @@ jobs:
             throw "Failed to acquire an Azure Trusted Signing access token."
           }
 
-          ./src/Devolutions.Terminal.Package/Scripts/Sign-Packages.ps1 `
-            -PackageDirectory ./artifacts/msix-packages `
-            -Version $env:MSIX_VERSION `
-            -ArtifactSigningEndpoint $env:TRUSTED_SIGNING_ENDPOINT `
-            -ArtifactSigningAccountName $env:TRUSTED_SIGNING_ACCOUNT_NAME `
-            -ArtifactSigningProfileName $env:TRUSTED_SIGNING_PROFILE_NAME `
-            -ArtifactSigningAccessToken $accessToken `
-            -TimestampServer $timestampServer
-
+          # MSIX packages are already signed on windows-latest in the msix job (via
+          # WinApp CLI's native `az-sign`), not here. psign-tool's cross-platform
+          # "--mode portable" MSIX signing (which is what this ubuntu-latest job would
+          # otherwise use) has been found to corrupt the package's central directory
+          # relative to the AXCD digest embedded in its own AppxSignature.p7x, which
+          # Windows rejects at install time with HRESULT 0x80080205 ("The Appx
+          # package's block map is invalid"). Only the .msi container is signed here.
           ./src/Devolutions.Terminal.Package/Scripts/Sign-Packages.ps1 `
             -PackageDirectory ./artifacts/msi-packages `
             -Version $env:MSIX_VERSION `
