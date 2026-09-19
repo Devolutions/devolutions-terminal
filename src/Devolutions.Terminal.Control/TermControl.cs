@@ -1964,6 +1964,9 @@ public sealed class TermControl : Avalonia.Controls.Control
                     "Cascadia Mono",
                     "Menlo",
                     "Monaco",
+                    "Zapf Dingbats",
+                    "Apple Symbols",
+                    "Symbol",
                     "Noto Color Emoji",
                     "Apple Color Emoji",
                 ]

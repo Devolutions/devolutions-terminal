@@ -67,16 +67,60 @@ public sealed class DcsParserTests
     }
 
     [Fact]
-    public void C1DcsAndStringTerminatorAreAccepted()
+    public void C1DcsEntryWithSevenBitStringTerminatorIsAccepted()
     {
+        // The 8-bit C1 string terminator (0x9C) is intentionally NOT accepted here: it is
+        // indistinguishable from a UTF-8 continuation byte (0x80-0xBF) that can legitimately
+        // appear inside DCS payload text, so only the unambiguous 7-bit ST (ESC \) is honored.
         var dispatch = new RecordingDispatch();
         var parser = new VtParser(dispatch);
 
-        parser.Process([0x90, (byte)'1', (byte)'q', (byte)'~', 0x9C]);
+        parser.Process([0x90, (byte)'1', (byte)'q', (byte)'~', 0x1B, (byte)'\\']);
 
         var dcs = Assert.Single(dispatch.Dcs);
         Assert.Equal([1], dcs.Parameters);
         Assert.Equal("~", Encoding.ASCII.GetString(dcs.Data));
+    }
+
+    [Fact]
+    public void RawC1StringTerminatorDoesNotPrematurelyEndDcsPayload()
+    {
+        // Regression test: 0x9C must not be treated as a DCS terminator, because it also
+        // occurs as the second byte of common 3-byte UTF-8 sequences (e.g. U+2733 "✳" is
+        // encoded as E2 9C B3). Treating it as ST would truncate the payload and corrupt
+        // the remaining bytes once processing incorrectly falls back to Ground state.
+        var dispatch = new RecordingDispatch();
+        var parser = new VtParser(dispatch);
+
+        parser.Process([0x90, (byte)'1', (byte)'q', 0xE2, 0x9C, 0xB3, 0x1B, (byte)'\\']);
+
+        var dcs = Assert.Single(dispatch.Dcs);
+        Assert.Equal([1], dcs.Parameters);
+        Assert.Equal("\u2733", Encoding.UTF8.GetString(dcs.Data));
+    }
+
+    [Fact]
+    public void OscTitleContainingUtf8ContinuationByteIsNotCorrupted()
+    {
+        // Regression test for the "Claude Code" window title bug: OSC 0 (set title) with
+        // a "✳" (U+2733, UTF-8: E2 9C B3) must not be truncated because 0x9C is the second
+        // byte of that sequence and was previously mistaken for the 8-bit ST terminator.
+        var dispatch = new RecordingDispatch();
+        var parser = new VtParser(dispatch);
+
+        parser.Process(
+        [
+            0x1B, (byte)']', (byte)'0', (byte)';',
+            0xE2, 0x9C, 0xB3, (byte)' ',
+            (byte)'C', (byte)'l', (byte)'a', (byte)'u', (byte)'d', (byte)'e',
+            (byte)' ', (byte)'C', (byte)'o', (byte)'d', (byte)'e',
+            0x07,
+        ]);
+
+        var osc = Assert.Single(dispatch.Osc);
+        Assert.Equal(0, osc.Command);
+        Assert.Equal("\u2733 Claude Code", osc.Data);
+        Assert.Equal(string.Empty, dispatch.Printed.ToString());
     }
 
     [Theory]
@@ -260,8 +304,8 @@ public sealed class DcsParserTests
             OnDcsDispatch?.Invoke();
         }
 
-        public void OscDispatch(int command, ReadOnlySpan<char> data)
-        {
-        }
+        public List<(int Command, string Data)> Osc { get; } = [];
+
+        public void OscDispatch(int command, ReadOnlySpan<char> data) => Osc.Add((command, data.ToString()));
     }
 }
