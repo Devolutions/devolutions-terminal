@@ -67,6 +67,9 @@ address.
 dotnet run --project src/Devolutions.Terminal.Browser.Host -- --wwwroot artifacts/browser-wasm/wwwroot
 ```
 
+On Linux and macOS, building the loopback host also builds and copies the
+`dt-pty-host` helper needed to launch local shells.
+
 This is a local development bridge, not remote access. `GET /pty/health`
 returns `X-Dterm-Host: pty` and `X-Dterm-Control: /dt`. Azure Cloud Shell
 profiles are listed and cannot be launched here. A page with no control
