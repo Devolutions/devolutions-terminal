@@ -65,6 +65,11 @@ public sealed class TerminalConnectionFactory
 
     private static IRestartableTerminalConnection CreateLocalConnection()
     {
+        if (OperatingSystem.IsBrowser())
+        {
+            return new BrowserShellConnection();
+        }
+
         if (OperatingSystem.IsWindows())
         {
             return new ConPtyConnection();
@@ -81,7 +86,7 @@ public sealed class TerminalConnectionFactory
         }
 
         throw new PlatformNotSupportedException(
-            "Local terminal sessions require Windows ConPTY or a Unix PTY host.");
+            "Local terminal sessions require Windows ConPTY, a Unix PTY host, or the browser shell.");
     }
 
     [System.Runtime.Versioning.SupportedOSPlatform("linux")]

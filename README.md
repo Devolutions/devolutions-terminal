@@ -91,11 +91,13 @@ The compiled-XAML settings editor is documented in
 Devolutions.Terminal.Core         VT parser + text buffer + terminal engine
 Devolutions.Terminal.Ghostty      NativeAOT-safe libghostty-vt engine adapter
 Devolutions.Terminal.Render       Immutable plans + HarfBuzz/Skia glyph renderer
-Devolutions.Terminal.Connection   ConPTY + Linux PTY + Azure Cloud Shell
+Devolutions.Terminal.Connection   ConPTY + Linux PTY + Azure Cloud Shell + browser shell
 Devolutions.Terminal.Settings     Layered Windows Terminal-compatible JSON settings
 Devolutions.Terminal.Control      Avalonia TermControl renderer
 Devolutions.Terminal.App   Tabs, title bar, panes, actions, window behavior
 Devolutions.Terminal       NativeAOT executable and composition root
+Devolutions.Terminal.Browser      Avalonia WebAssembly host (in-process dt-wasm shell)
+Devolutions.Terminal.Browser.Host Loopback server for profile tabs and a real PTY
 ```
 
 The measured remaining parity contract is in
@@ -107,6 +109,7 @@ Control, clipboard, IME, and accessibility contracts are documented in
 Advanced VT protocols are documented in
 [docs/advanced-vt-protocols.md](docs/advanced-vt-protocols.md).
 Azure Cloud Shell is documented in [docs/azure-cloud-shell.md](docs/azure-cloud-shell.md).
+The browser WASM host is documented in [docs/browser.md](docs/browser.md).
 Build and release gates are documented in [docs/release.md](docs/release.md).
 
 `Devolutions.Terminal.Control` is also published to

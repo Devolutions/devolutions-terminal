@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk.WebAssembly">
+  <PropertyGroup>
+    <TargetFramework>net10.0-browser</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>Devolutions.Terminal.Browser</RootNamespace>
+    <AssemblyName>Devolutions.Terminal.Browser</AssemblyName>
+    <Description>Avalonia WebAssembly host for Devolutions Terminal.</Description>
+    <PublishAot>false</PublishAot>
+    <IsAotCompatible>false</IsAotCompatible>
+    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+    <WasmBuildNative>true</WasmBuildNative>
+    <OverrideHtmlAssetPlaceholders>true</OverrideHtmlAssetPlaceholders>
+    <WasmFingerprintAssets>false</WasmFingerprintAssets>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Browser" />
+    <PackageReference Include="Avalonia.Themes.Fluent" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Devolutions.Terminal.Control\Devolutions.Terminal.Control.csproj" />
+    <!-- Control marks these PrivateAssets=all, so the WASM host must reference them directly. -->
+    <ProjectReference Include="..\Devolutions.Terminal.Connection\Devolutions.Terminal.Connection.csproj" />
+    <ProjectReference Include="..\Devolutions.Terminal.Core\Devolutions.Terminal.Core.csproj" />
+    <ProjectReference Include="..\Devolutions.Terminal.Render\Devolutions.Terminal.Render.csproj" />
+    <ProjectReference Include="..\Devolutions.Terminal.Settings\Devolutions.Terminal.Settings.csproj" />
+  </ItemGroup>
+</Project>

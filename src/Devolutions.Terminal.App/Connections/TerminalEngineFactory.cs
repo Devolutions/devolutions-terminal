@@ -10,6 +10,11 @@ public static class TerminalEngineFactory
     {
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(profile);
+        if (OperatingSystem.IsBrowser())
+        {
+            return new TerminalEngine(historySize: profile.HistorySize);
+        }
+
         return (profile.TerminalEngine ??
                 settings.ProfileDefaults.TerminalEngine ??
                 settings.TerminalEngine) switch

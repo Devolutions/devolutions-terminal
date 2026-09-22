@@ -430,6 +430,14 @@ public sealed class ProfileSettings
         Origin = SettingsOrigin.Generated,
     };
 
+    public static ProfileSettings CreateBrowserShell() => new()
+    {
+        Guid = "{8f3d9c12-6a47-4e5b-9f10-2c8d4a7b1e90}",
+        Name = "Browser Shell",
+        Commandline = "dt-wasm",
+        Origin = SettingsOrigin.Generated,
+    };
+
     public ColorScheme ResolveScheme() => Core.ColorScheme.FromName(ColorScheme);
     public string ExpandCommandline() => System.Environment.ExpandEnvironmentVariables(Commandline);
 

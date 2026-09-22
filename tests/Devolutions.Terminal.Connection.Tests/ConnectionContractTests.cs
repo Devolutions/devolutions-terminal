@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
@@ -791,6 +792,64 @@ public sealed class ConnectionContractTests
     }
 
     [Fact(Skip = "ConPTY is Windows-only.", SkipUnless = nameof(IsWindows))]
+    public async Task RawModeBurstReachesWslReader()
+    {
+        var distro = FindWslDistro();
+        if (distro is null)
+        {
+            Assert.Skip("No WSL distribution is installed.");
+        }
+
+        const string script = """
+            import os, sys, tty, termios, select
+            fd = sys.stdin.fileno()
+            old = termios.tcgetattr(fd)
+            tty.setraw(fd)
+            sys.stdout.write("READY\n")
+            sys.stdout.flush()
+            data = bytearray()
+            while len(data) < 7:
+                ready, _, _ = select.select([fd], [], [], 3.0)
+                if not ready:
+                    break
+                chunk = os.read(fd, 64)
+                if not chunk:
+                    break
+                data.extend(chunk)
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+            sys.stdout.write("BYTES " + data.hex() + "\n")
+            sys.stdout.flush()
+            """;
+        InstallWslScript(distro, "/tmp/dterm-pace.py", script);
+
+        await using var connection = new ConPtyConnection();
+        var output = new List<byte>();
+        connection.OutputReceived += (_, bytes) =>
+        {
+            lock (output)
+            {
+                output.AddRange(bytes.ToArray());
+            }
+        };
+        await connection.StartAsync(
+            $"wsl.exe -d {distro} -- python3 -u /tmp/dterm-pace.py",
+            null,
+            80,
+            24);
+        await WaitForOutputAsync(output, "READY", TimeSpan.FromSeconds(20));
+
+        // No gap between submissions. ConPTY used to keep only the first byte
+        // while the Linux reader was in raw/no-echo mode, which truncated sudo
+        // passwords typed at full speed.
+        foreach (var value in "secret\r"u8)
+        {
+            connection.Write([(byte)value]);
+        }
+
+        await WaitForOutputAsync(output, "BYTES 7365637265740d", TimeSpan.FromSeconds(5));
+    }
+
+    [Fact(Skip = "ConPTY is Windows-only.", SkipUnless = nameof(IsWindows))]
     public async Task ConcurrentWritesNeverSplitSequence()
     {
         // Pins the ConPTY injection lesson: query responses (engine, PTY thread) and
@@ -871,9 +930,73 @@ public sealed class ConnectionContractTests
         await connection.DisposeAsync();
     }
 
-    private static async Task WaitForOutputAsync(List<byte> output, string expected)
+    private static string? FindWslDistro()
     {
-        var deadline = DateTime.UtcNow.AddSeconds(5);
+        try
+        {
+            using var process = Process.Start(new ProcessStartInfo("wsl.exe", "-l -q")
+            {
+                RedirectStandardOutput = true,
+                StandardOutputEncoding = Encoding.Unicode,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            });
+            if (process is null)
+            {
+                return null;
+            }
+
+            var output = process.StandardOutput.ReadToEndAsync().WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
+            if (!process.WaitForExit(2_000))
+            {
+                return null;
+            }
+
+            foreach (var line in output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+            {
+                var name = line.Trim().TrimStart('\uFEFF');
+                if (name.Length > 0 && !name.Contains(' ') && !name.Contains('\t') && !name.Contains('"'))
+                {
+                    return name;
+                }
+            }
+        }
+        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
+        {
+            return null;
+        }
+
+        return null;
+    }
+
+    private static void InstallWslScript(string distro, string path, string script)
+    {
+        var start = new ProcessStartInfo("wsl.exe")
+        {
+            RedirectStandardInput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        start.ArgumentList.Add("-d");
+        start.ArgumentList.Add(distro);
+        start.ArgumentList.Add("--");
+        start.ArgumentList.Add("tee");
+        start.ArgumentList.Add(path);
+        using var process = Process.Start(start)
+            ?? throw new InvalidOperationException("wsl.exe did not start.");
+        process.StandardInput.Write(script);
+        process.StandardInput.Close();
+        Assert.True(process.WaitForExit(15_000), "Installing the WSL reader timed out.");
+        Assert.Equal(0, process.ExitCode);
+    }
+
+    private static Task WaitForOutputAsync(List<byte> output, string expected) =>
+        WaitForOutputAsync(output, expected, TimeSpan.FromSeconds(5));
+
+    private static async Task WaitForOutputAsync(List<byte> output, string expected, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
         while (DateTime.UtcNow < deadline)
         {
             lock (output)

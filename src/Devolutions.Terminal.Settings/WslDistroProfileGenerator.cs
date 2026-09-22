@@ -65,12 +65,19 @@ public sealed class WslDistroProfileGenerator : IDynamicProfileGenerator
         Name = name,
         Source = Source,
         Origin = SettingsOrigin.Generated,
-        Commandline = $"\"{Path.Combine(_environment.SystemDirectory, "wsl.exe")}\" -d \"{name}\"",
+        Commandline = $"\"{Path.Combine(_environment.SystemDirectory, "wsl.exe")}\" -d {FormatDistroArgument(name)}",
         StartingDirectory = "~",
         Icon = ProfileIcon,
         ColorScheme = "Campbell",
         PathTranslationStyle = "wsl",
     };
+
+    // wsl.exe treats quotes as part of the distribution name when it is the
+    // ConPTY console process. Quote only names that CreateProcess would split.
+    private static string FormatDistroArgument(string name) =>
+        name.IndexOfAny([' ', '\t', '"']) >= 0
+            ? "\"" + name.Replace("\"", "\\\"") + "\""
+            : name;
 
     private DynamicProfileGeneratorResult Failure(string code, string message) => new(
         [],

@@ -171,7 +171,11 @@ public sealed class DynamicProfileGeneratorTests
             Assert.Equal("~", profile.StartingDirectory);
             Assert.Equal("wsl", profile.PathTranslationStyle);
             Assert.StartsWith($"\"{fixture.PathOf("System32", "wsl.exe")}\" -d ", profile.Commandline);
+            Assert.DoesNotContain(" -d \"", profile.Commandline, StringComparison.Ordinal);
         });
+        Assert.Equal(
+            $"\"{fixture.PathOf("System32", "wsl.exe")}\" -d Ubuntu",
+            result.Profiles.Single(profile => profile.Name == "Ubuntu").Commandline);
         Assert.Equal(["--list", "--quiet"], runner.LastCommand!.Arguments);
         Assert.Equal(Encoding.Unicode.WebName, runner.LastCommand.StandardOutputEncoding!.WebName);
     }

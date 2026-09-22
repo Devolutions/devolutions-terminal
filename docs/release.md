@@ -21,8 +21,8 @@ CI workflows:
 - `build-ghostty.yml` — compile `libghostty-vt` for every RID and upload
   artifacts (optional cache; not required to develop).
 - `build-terminal.yml` — restore natives from source, test, NativeAOT, Linux
-  packages, macOS `.app`/zip, MSIX, and the `Devolutions.Terminal.Control`
-  NuGet package.
+  packages, macOS `.app`/zip, MSIX, the `Devolutions.Terminal.Control`
+  NuGet package, and the browser WASM host.
 
 ## Developer build
 

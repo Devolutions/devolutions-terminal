@@ -469,8 +469,19 @@ public static class KeyMapper
         TerminalKeyEventType eventType,
         ushort repeatCount)
     {
+        // A modifier key-down has no character. ConPTY still turns that record
+        // into a NUL on the PTY, so a shifted password arrives as "\0P\0@ss..."
+        // and sudo rejects it. The character key carries the modifier state.
+        if (IsModifierKey(key))
+        {
+            return null;
+        }
+
         var virtualKey = VirtualKey(key);
-        var unicode = TrySingleRune(keySymbol, out var rune) ? rune.Value : 0;
+        var unicode = key is Key.Return or Key.LineFeed
+            ? (int)'\r'
+            : ControlCharacter(key, modifiers)
+                ?? (TrySingleRune(keySymbol, out var rune) ? rune.Value : LegacyCharacter(key));
         if (virtualKey == 0 && unicode == 0)
         {
             return null;
@@ -485,6 +496,39 @@ public static class KeyMapper
             CultureInfo.InvariantCulture,
             $"\u001b[{virtualKey};0;{unicode};{keyDown};{controlState};{Math.Max(1, (int)repeatCount)}_");
     }
+
+    // Ctrl+C must be U+0003, not 'c'. ConPTY writes the Unicode field to the
+    // PTY; only ETX raises SIGINT while sudo is waiting for a password.
+    private static int? ControlCharacter(Key key, KeyModifiers modifiers)
+    {
+        if (!modifiers.HasFlag(KeyModifiers.Control) ||
+            modifiers.HasFlag(KeyModifiers.Alt) ||
+            modifiers.HasFlag(KeyModifiers.Shift) ||
+            key is < Key.A or > Key.Z)
+        {
+            return null;
+        }
+
+        return key - Key.A + 1;
+    }
+
+    private static bool IsModifierKey(Key key) => key is
+        Key.LeftShift or Key.RightShift or
+        Key.LeftCtrl or Key.RightCtrl or
+        Key.LeftAlt or Key.RightAlt or
+        Key.LWin or Key.RWin;
+
+    // Browser hosts often omit KeySymbol for non-character keys. ConPTY's
+    // Win32 input translator drops VK_RETURN when the character is 0, so
+    // Command Prompt never sees Enter. PowerShell accepts the virtual key alone.
+    private static int LegacyCharacter(Key key) => key switch
+    {
+        Key.Tab => '\t',
+        Key.Back => '\b',
+        Key.Escape => '\u001b',
+        Key.Space => ' ',
+        _ => 0,
+    };
 
     private static int VirtualKey(Key key) => key switch
     {

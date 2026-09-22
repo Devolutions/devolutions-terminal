@@ -2,7 +2,7 @@
   <PropertyGroup>
     <RootNamespace>Devolutions.Terminal.Connection</RootNamespace>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <Description>ConPTY and Azure Cloud Shell connections for the .NET Windows Terminal port.</Description>
+    <Description>ConPTY, Unix PTY, Azure Cloud Shell, and browser WASM connections.</Description>
     <!-- Not published standalone; bundled into the Devolutions.Terminal.Control NuGet package. -->
     <IsPackable>false</IsPackable>
   </PropertyGroup>

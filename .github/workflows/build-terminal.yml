@@ -1398,3 +1398,76 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             throw "Failed to upload release assets."
           }
+
+  browser-wasm:
+    name: Browser WASM publish and E2E
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install wasm-tools
+        run: dotnet workload install wasm-tools --skip-manifest-update
+
+      - name: Install Playwright operating-system dependencies
+        run: |
+          dotnet build tests/Devolutions.Terminal.Browser.E2E -c Release
+          pwsh tests/Devolutions.Terminal.Browser.E2E/bin/Release/net10.0/playwright.ps1 install --with-deps chromium
+
+      - name: Publish browser host
+        run: >
+          dotnet publish src/Devolutions.Terminal.Browser/Devolutions.Terminal.Browser.csproj
+          -c Release
+          -o artifacts/browser-wasm
+
+      - name: Run Playwright E2E
+        env:
+          DTERM_BROWSER_E2E: "1"
+          DTERM_BROWSER_WWWROOT: ${{ github.workspace }}/artifacts/browser-wasm/wwwroot
+        run: |
+          dotnet test tests/Devolutions.Terminal.Browser.E2E -c Release --filter BrowserHostBootsAndRunsShellCommands
+
+      - name: Run host-bridge Playwright E2E
+        env:
+          DTERM_HOST_PTY_URL: http://127.0.0.1:5235/
+          DTERM_BROWSER_WWWROOT: ${{ github.workspace }}/artifacts/browser-wasm/wwwroot
+        run: |
+          set -euo pipefail
+          dotnet build src/Devolutions.Terminal.Browser.Host -c Release
+          mkdir -p artifacts
+          dotnet run --project src/Devolutions.Terminal.Browser.Host -c Release --no-build -- --wwwroot "$DTERM_BROWSER_WWWROOT" --port 5235 > artifacts/browser-host.log 2>&1 &
+          echo $! > artifacts/browser-host.pid
+          ready=0
+          for _ in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:5235/pty/health >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" -ne 1 ]; then
+            echo "Loopback host did not become ready."
+            cat artifacts/browser-host.log || true
+            exit 1
+          fi
+          set +e
+          dotnet test tests/Devolutions.Terminal.Browser.E2E -c Release --filter HostPtyPageRunsRealShell
+          status=$?
+          set -e
+          kill "$(cat artifacts/browser-host.pid)" || true
+          if [ "$status" -ne 0 ]; then
+            cat artifacts/browser-host.log || true
+          fi
+          exit "$status"
+
+      - name: Upload browser site
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: DevolutionsTerminal-browser-wasm
+          path: artifacts/browser-wasm/wwwroot
+          if-no-files-found: error

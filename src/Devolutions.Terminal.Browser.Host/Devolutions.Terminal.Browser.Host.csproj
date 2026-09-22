@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Devolutions.Terminal.Browser.Host</RootNamespace>
+    <Description>Loopback server that serves the Avalonia WASM host and a real local PTY over WebSocket.</Description>
+    <IsAotCompatible>false</IsAotCompatible>
+    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+    <NativeRestore>pty</NativeRestore>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Devolutions.Terminal.Connection\Devolutions.Terminal.Connection.csproj" />
+    <ProjectReference Include="..\Devolutions.Terminal.Settings\Devolutions.Terminal.Settings.csproj" />
+  </ItemGroup>
+  <Import Project="..\..\native\NativeLibraries.targets" />
+</Project>

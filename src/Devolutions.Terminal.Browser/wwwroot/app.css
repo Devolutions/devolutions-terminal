@@ -1,0 +1,38 @@
+html, body {
+    margin: 0;
+    overflow: hidden;
+    height: 100%;
+    width: 100%;
+    background: #0c0c0c;
+}
+
+.avalonia-splash {
+    position: absolute;
+    height: 100%;
+    width: 100%;
+    background: #0c0c0c;
+    color: #f2f2f2;
+    font-family: "Cascadia Mono", "Consolas", monospace;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 0.5rem;
+    pointer-events: none;
+}
+
+.avalonia-splash h2 {
+    font-weight: 500;
+    font-size: 1.25rem;
+    margin: 0;
+}
+
+.avalonia-splash p {
+    color: #9a9a9a;
+    margin: 0;
+}
+
+.avalonia-splash.splash-close {
+    display: none;
+    opacity: 0;
+}
