@@ -5,6 +5,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Devolutions.Terminal.Connection\Devolutions.Terminal.Connection.csproj" />
+    <ProjectReference Include="..\..\src\Devolutions.Terminal.Browser.Host\Devolutions.Terminal.Browser.Host.csproj" />
   </ItemGroup>
   <Import Project="..\..\native\NativeLibraries.targets" />
 </Project>

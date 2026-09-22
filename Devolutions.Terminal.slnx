@@ -7,6 +7,7 @@
     <Project Path="src/Devolutions.Terminal.Render/Devolutions.Terminal.Render.csproj" />
     <Project Path="src/Devolutions.Terminal.Settings/Devolutions.Terminal.Settings.csproj" />
     <Project Path="src/Devolutions.Terminal.Broker/Devolutions.Terminal.Broker.csproj" />
+    <Project Path="src/Devolutions.Terminal.Browser.Host/Devolutions.Terminal.Browser.Host.csproj" />
     <Project Path="src/Devolutions.Terminal.Cli/Devolutions.Terminal.Cli.csproj" />
     <Project Path="src/Devolutions.Terminal.App/Devolutions.Terminal.App.csproj" />
     <Project Path="src/Devolutions.Terminal.Interop/Devolutions.Terminal.Interop.csproj" />
@@ -29,6 +30,7 @@
     <Project Path="tests/Devolutions.Terminal.Settings.Editor.Tests/Devolutions.Terminal.Settings.Editor.Tests.csproj" />
     <Project Path="tests/Devolutions.Terminal.Package.Tests/Devolutions.Terminal.Package.Tests.csproj" />
     <Project Path="tests/Devolutions.Terminal.UI.Tests/Devolutions.Terminal.UI.Tests.csproj" />
+    <Project Path="tests/Devolutions.Terminal.Browser.E2E/Devolutions.Terminal.Browser.E2E.csproj" />
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/Devolutions.Terminal.PortInventory/Devolutions.Terminal.PortInventory.csproj" />

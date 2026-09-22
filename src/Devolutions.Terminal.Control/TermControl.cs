@@ -339,6 +339,11 @@ public sealed class TermControl : Avalonia.Controls.Control
 
     private static IRestartableTerminalConnection CreateDefaultConnection()
     {
+        if (OperatingSystem.IsBrowser())
+        {
+            return new BrowserShellConnection();
+        }
+
         if (OperatingSystem.IsWindows())
         {
             return new ConPtyConnection();

@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Devolutions.Terminal.Browser/Devolutions.Terminal.Browser.csproj" />
+    <Project Path="src/Devolutions.Terminal.Browser.Host/Devolutions.Terminal.Browser.Host.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Devolutions.Terminal.Browser.E2E/Devolutions.Terminal.Browser.E2E.csproj" />
+  </Folder>
+</Solution>

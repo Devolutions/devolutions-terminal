@@ -160,6 +160,11 @@ public static class SettingsService
             return Path.GetFullPath(Environment.ExpandEnvironmentVariables(basePath));
         }
 
+        if (OperatingSystem.IsBrowser())
+        {
+            return "/tmp/devolutions-terminal";
+        }
+
         if (!OperatingSystem.IsLinux())
         {
             return Path.Combine(
@@ -186,7 +191,7 @@ public static class SettingsService
             return SettingsDirectory;
         }
 
-        if (!OperatingSystem.IsLinux())
+        if (OperatingSystem.IsBrowser() || !OperatingSystem.IsLinux())
         {
             return SettingsDirectory;
         }

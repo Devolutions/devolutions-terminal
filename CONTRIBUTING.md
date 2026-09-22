@@ -9,6 +9,19 @@ dotnet test Devolutions.Terminal.slnx
 dotnet run --project src/Devolutions.Terminal
 ```
 
+Browser WASM (requires `wasm-tools`):
+
+```powershell
+scripts/Test-BrowserWasm.ps1
+dotnet run --project src/Devolutions.Terminal.Browser
+dotnet run --project src/Devolutions.Terminal.Browser.Host -- --wwwroot artifacts/browser-wasm/wwwroot
+```
+
+The host binds loopback only. `/dt` lists settings profiles and launches each
+as a tab on `/pty/{id}` (`ws` on this HTTP host, `wss` when the page is HTTPS).
+The browser never supplies a command line, and the host does not send one back.
+Elevated profiles are listed and refused.
+
 Warnings are errors. Prefer small, reviewable changes that keep NativeAOT publish green.
 
 ## NativeAOT

@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text;
@@ -262,11 +263,7 @@ public sealed class ConPtyConnection : IRestartableTerminalConnection
                 ObjectDisposedException.ThrowIf(_disposed, this);
                 _session = session;
                 _writer = new OrderedInputWriter(
-                    async (data, token) =>
-                    {
-                        await session.Input.WriteAsync(data, token).ConfigureAwait(false);
-                        await session.Input.FlushAsync(token).ConfigureAwait(false);
-                    },
+                    CreatePacedInputWrite(session.Input),
                     error =>
                     {
                         if (session.Lifetime.IsCancellationRequested || session.ExitPublished)
@@ -412,6 +409,37 @@ public sealed class ConPtyConnection : IRestartableTerminalConnection
             _ = Kernel32.TerminateProcess(session.Process, 0);
         }
     }
+
+    /// <summary>
+    /// ConPTY drops input while the console client reads in raw/no-echo mode
+    /// (WSL <c>sudo</c>/<c>su</c>) if another <c>WriteFile</c> arrives before the
+    /// previous event is consumed. Cooked line input accepts bursts, so typed
+    /// commands still echo while a quickly typed password is truncated. Space
+    /// each pipe write so the client can read it before the next one is submitted.
+    /// A paste stays one write and is not split.
+    /// </summary>
+    private static Func<ReadOnlyMemory<byte>, CancellationToken, ValueTask> CreatePacedInputWrite(Stream input)
+    {
+        var clock = Stopwatch.StartNew();
+        long lastWriteTick = -1;
+        return async (data, token) =>
+        {
+            if (lastWriteTick >= 0)
+            {
+                var wait = MinimumInputWriteIntervalMs - (clock.ElapsedMilliseconds - lastWriteTick);
+                if (wait > 0)
+                {
+                    await Task.Delay((int)wait, token).ConfigureAwait(false);
+                }
+            }
+
+            await input.WriteAsync(data, token).ConfigureAwait(false);
+            await input.FlushAsync(token).ConfigureAwait(false);
+            lastWriteTick = clock.ElapsedMilliseconds;
+        };
+    }
+
+    private const int MinimumInputWriteIntervalMs = 16;
 
     private OrderedInputWriter GetWriter()
     {
@@ -694,7 +722,7 @@ public sealed class ConPtyConnection : IRestartableTerminalConnection
             nLength = Marshal.SizeOf<Kernel32.SecurityAttributes>(),
         };
         var threadSecurity = processSecurity;
-        var commandBuffer = (options.CommandLine + '\0').ToCharArray();
+        var commandBuffer = (WslCommandLine.Normalize(options.CommandLine) + '\0').ToCharArray();
         var currentDirectory = string.IsNullOrWhiteSpace(options.WorkingDirectory)
             ? null
             : Environment.ExpandEnvironmentVariables(options.WorkingDirectory);

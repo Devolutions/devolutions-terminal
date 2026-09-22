@@ -349,7 +349,23 @@ public sealed class KeyMapperTests
             repeatCount: 2);
 
         Assert.Equal("\u001b[27;5;97~", modified);
-        Assert.Equal("\u001b[65;0;97;0;8;2_", win32Release);
+        Assert.Equal("\u001b[65;0;1;0;8;2_", win32Release);
+    }
+
+    [Fact]
+    public void Win32EnterWithoutSymbolStillCarriesCarriageReturn()
+    {
+        var win32 = new TerminalInputMode(true, false, false, KittyKeyboardFlags.None, 0, true);
+
+        Assert.Equal(
+            "\u001b[13;0;13;1;0;1_",
+            KeyMapper.ToVt(Key.Return, KeyModifiers.None, PhysicalKey.Enter, null, win32));
+        Assert.Equal(
+            "\u001b[13;0;13;1;0;1_",
+            KeyMapper.ToVt(Key.Return, KeyModifiers.None, PhysicalKey.NumPadEnter, "\n", win32));
+        Assert.Equal(
+            "\u001b[67;0;3;1;8;1_",
+            KeyMapper.ToVt(Key.C, KeyModifiers.Control, PhysicalKey.C, "c", win32));
     }
 
     [Fact]
@@ -357,9 +373,8 @@ public sealed class KeyMapperTests
     {
         var win32 = new TerminalInputMode(true, false, false, KittyKeyboardFlags.None, 0, true);
 
-        Assert.Equal(
-            "\u001b[16;0;0;1;16;1_",
-            KeyMapper.ToVt(Key.LeftShift, KeyModifiers.Shift, PhysicalKey.ShiftLeft, null, win32));
+        Assert.Null(KeyMapper.ToVt(Key.LeftShift, KeyModifiers.Shift, PhysicalKey.ShiftLeft, null, win32));
+        Assert.Null(KeyMapper.ToVt(Key.LeftCtrl, KeyModifiers.Control, PhysicalKey.ControlLeft, null, win32));
         Assert.Equal(
             "\u001b[68;0;68;1;16;1_",
             KeyMapper.ToVt(Key.D, KeyModifiers.Shift, PhysicalKey.D, "D", win32));
