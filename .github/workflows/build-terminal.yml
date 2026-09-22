@@ -1417,8 +1417,7 @@ jobs:
       - name: Install Playwright operating-system dependencies
         run: |
           dotnet build tests/Devolutions.Terminal.Browser.E2E -c Release
-          sudo ./tests/Devolutions.Terminal.Browser.E2E/bin/Release/net10.0/playwright.sh install-deps chromium
-          ./tests/Devolutions.Terminal.Browser.E2E/bin/Release/net10.0/playwright.sh install chromium
+          pwsh tests/Devolutions.Terminal.Browser.E2E/bin/Release/net10.0/playwright.ps1 install --with-deps chromium
 
       - name: Publish browser host
         run: >
