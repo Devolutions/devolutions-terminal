@@ -72,7 +72,7 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
     private int _modifyOtherKeys;
     private bool _win32InputMode;
     private bool _allowKittyKeyboard = true;
-    private bool _sixelDisplayMode = true;
+    private bool _sixelDisplayMode;
     private double _cellWidth = 10;
     private double _cellHeight = 20;
     private int _cursorStyle;
@@ -252,7 +252,7 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         _alternateScroll = false;
         _inBandResize = false;
         _titleStack.Clear();
-        _sixelDisplayMode = true;
+        _sixelDisplayMode = false;
         _vt52Graphics = false;
         _rectangularAttributeExtent = false;
         _drcsDesignator = null;
@@ -3039,7 +3039,7 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         _synchronizedOutputDepth = 0;
         _alternateScroll = false;
         _inBandResize = false;
-        _sixelDisplayMode = true;
+        _sixelDisplayMode = false;
         _vt52Graphics = false;
         _rectangularAttributeExtent = false;
         _sgr = CellAttributes.Default;

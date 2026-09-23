@@ -1,12 +1,11 @@
 # Advanced VT protocols
 
 > [!NOTE]
-> The public out-of-process Windows ConPTY may filter DCS payloads before they
-> reach a terminal client on some Windows builds, and APC sequences (kitty
-> graphics) can be affected the same way. The Core parser and renderer
-> support Sixel and kitty graphics when a connection transports those bytes
-> unchanged (for example, remote/Azure transports); local ConPTY support is
-> limited by the installed Windows pseudoconsole implementation.
+> Windows local sessions use the bundled Microsoft ConPTY runtime, including
+> `OpenConsole.exe`, rather than the OS copy that filters Sixel on some Windows
+> builds. With the built-in engine, Sixel producers such as `Get-XKCD -Show`
+> can render inline images. Other transports must likewise preserve graphics
+> payloads; the optional Ghostty engine does not expose image resources.
 
 `Devolutions.Terminal.Core` parses advanced string protocols without depending on Avalonia,
 Skia, Win32, or an image codec. It exposes decoded Sixel pixels and bounded
@@ -35,6 +34,9 @@ intermediate collection, passthrough, CAN/SUB cancellation, and an `ESC`
 terminator split across input chunks. BEL does not terminate DCS. An `ESC`
 followed by anything other than `\` aborts the DCS and starts the new escape
 sequence.
+
+DECSDM defaults to reset (scrolling mode): Sixel images anchor at the cursor
+unless the application explicitly selects display mode with `CSI ? 80 h`.
 
 ## Limits
 

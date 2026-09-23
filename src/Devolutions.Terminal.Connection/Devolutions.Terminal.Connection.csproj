@@ -7,6 +7,11 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Microsoft.Windows.Console.ConPTY" GeneratePathProperty="true" ExcludeAssets="build" />
     <ProjectReference Include="..\Devolutions.Terminal.Core\Devolutions.Terminal.Core.csproj" />
   </ItemGroup>
+  <PropertyGroup>
+    <ConPtyHostSourceRoot>$(PkgMicrosoft_Windows_Console_ConPTY)\build\native\runtimes</ConPtyHostSourceRoot>
+  </PropertyGroup>
+  <Import Project="ConPtyHost.targets" />
 </Project>

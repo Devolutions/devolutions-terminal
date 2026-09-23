@@ -69,15 +69,6 @@ internal static partial class Kernel32
     }
 
     [LibraryImport("kernel32.dll", SetLastError = true)]
-    internal static partial int CreatePseudoConsole(Coord size, SafeFileHandle hInput, SafeFileHandle hOutput, uint dwFlags, out nint phPC);
-
-    [LibraryImport("kernel32.dll", SetLastError = true)]
-    internal static partial int ResizePseudoConsole(SafePseudoConsoleHandle hPC, Coord size);
-
-    [LibraryImport("kernel32.dll", SetLastError = true)]
-    internal static partial void ClosePseudoConsole(nint hPC);
-
-    [LibraryImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static partial bool CreatePipe(out SafeFileHandle hReadPipe, out SafeFileHandle hWritePipe, nint lpPipeAttributes, uint nSize);
 
