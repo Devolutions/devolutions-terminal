@@ -22,6 +22,68 @@ public sealed class TerminalRenderPlannerTests
     }
 
     [Fact]
+    public void PresizesRunsWithoutChangingClusterOffsetsAcrossStylesAndWideCells()
+    {
+        var engine = new TerminalEngine(12, 2);
+        engine.Feed("a\u0301\u754c\u001b[31mb\U0001F600\u001b[0mc");
+
+        var runs = TerminalRenderPlanner.Create(engine.CreateSnapshot(), engine.Scheme).RowsData[0].Runs;
+
+        Assert.Equal("a\u0301\u754c", runs[0].Text[..3]);
+        Assert.Equal(new TerminalTextCluster(0, 2, 0, 1), runs[0].Clusters[0]);
+        Assert.Equal(new TerminalTextCluster(2, 1, 1, 2), runs[0].Clusters[1]);
+        Assert.Equal("b\U0001F600", runs[1].Text);
+        Assert.Equal(new TerminalTextCluster(1, 2, 4, 2), runs[1].Clusters[1]);
+        Assert.Equal(6, runs[2].StartColumn);
+    }
+
+    [Fact]
+    public void GrowsRowTextBufferForCombiningCharactersWithoutChangingClusters()
+    {
+        const int columns = 80;
+        var engine = new TerminalEngine(columns, 2);
+        engine.Feed(string.Concat(Enumerable.Repeat("e\u0301", columns)));
+
+        var run = TerminalRenderPlanner.Create(engine.CreateSnapshot(), engine.Scheme).RowsData[0].Runs[0];
+
+        Assert.Equal(string.Concat(Enumerable.Repeat("e\u0301", columns)), run.Text);
+        Assert.Equal(columns, run.Clusters.Count);
+        Assert.Equal(new TerminalTextCluster(158, 2, 79, 1), run.Clusters[^1]);
+    }
+
+    [Fact]
+    public void PlainAsciiClustersKeepOffsetsAcrossStyleRuns()
+    {
+        var engine = new TerminalEngine(8, 1);
+        engine.Feed("ab\u001b[31mcd");
+
+        var runs = TerminalRenderPlanner.Create(engine.CreateSnapshot(), engine.Scheme).RowsData[0].Runs;
+
+        Assert.Equal(
+            [new TerminalTextCluster(0, 1, 0, 1), new TerminalTextCluster(1, 1, 1, 1)],
+            runs[0].Clusters.ToArray());
+        Assert.Equal(
+            [new TerminalTextCluster(0, 1, 2, 1), new TerminalTextCluster(1, 1, 3, 1)],
+            runs[1].Clusters.ToArray());
+        Assert.Throws<ArgumentOutOfRangeException>(() => _ = runs[0].Clusters[-1]);
+        Assert.Throws<ArgumentOutOfRangeException>(() => _ = runs[0].Clusters[2]);
+    }
+
+    [Fact]
+    public void PlansRowsWiderThanStackBuffers()
+    {
+        const int columns = 300;
+        var engine = new TerminalEngine(columns, 2);
+        engine.Feed(new string('x', columns - 1));
+
+        var run = TerminalRenderPlanner.Create(engine.CreateSnapshot(), engine.Scheme).RowsData[0].Runs[0];
+
+        Assert.Equal(new string('x', columns - 1) + " ", run.Text);
+        Assert.Equal(columns, run.Clusters.Count);
+        Assert.Equal(new TerminalTextCluster(columns - 1, 1, columns - 1, 1), run.Clusters[^1]);
+    }
+
+    [Fact]
     public void ResolvesInverseAndFaintAttributes()
     {
         var attributes = CellAttributes.Default;

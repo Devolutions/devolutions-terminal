@@ -314,13 +314,15 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
             ReverseVideo)
         {
             Images = CreateSnapshotImages(includeHistory),
-            DrcsGlyphs = new ReadOnlyDictionary<int, DrcsGlyph>(
-                _drcsGlyphs.ToDictionary(
-                    static item => item.Key,
-                    static item => item.Value with
-                    {
-                        AlphaMask = item.Value.AlphaMask.ToArray(),
-                    })),
+            DrcsGlyphs = _drcsGlyphs.Count == 0
+                ? ReadOnlyDictionary<int, DrcsGlyph>.Empty
+                : new ReadOnlyDictionary<int, DrcsGlyph>(
+                    _drcsGlyphs.ToDictionary(
+                        static item => item.Key,
+                        static item => item.Value with
+                        {
+                            AlphaMask = item.Value.AlphaMask.ToArray(),
+                        })),
         };
     }
 
@@ -1970,6 +1972,11 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
 
     private TerminalImageOverlay[] CreateSnapshotImages(bool includeHistory)
     {
+        if (_images.Count == 0)
+        {
+            return [];
+        }
+
         var result = new List<TerminalImageOverlay>(_images.Count);
         foreach (var image in _images)
         {

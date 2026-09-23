@@ -83,60 +83,94 @@ public static class TerminalRenderPlanner
     {
         var cells = line.Cells;
         var runs = new List<TerminalRenderRun>();
+        Span<char> textBuffer = cells.Count <= 256
+            ? stackalloc char[cells.Count]
+            : new char[cells.Count];
+        Span<TerminalTextCluster> clusterBuffer = cells.Count <= 256
+            ? stackalloc TerminalTextCluster[cells.Count]
+            : new TerminalTextCluster[cells.Count];
         var column = 0;
         while (column < cells.Count)
         {
             var start = column;
             var first = cells[column];
             var resolved = Resolve(first.Attributes, first.HyperlinkUri, scheme, reverseScreen);
-            var text = new StringBuilder();
-            var clusters = new List<TerminalTextCluster>();
+            var end = start + 1;
+            while (end < cells.Count &&
+                   Resolve(cells[end].Attributes, cells[end].HyperlinkUri, scheme, reverseScreen) == resolved)
+            {
+                end++;
+            }
+
+            var textLength = 0;
+            var clusterCount = 0;
+            var asciiOnly = true;
             Rune? previousRune = null;
-            do
+            for (; column < end; column++)
             {
                 var cell = cells[column];
+                if (cell.IsWideContinuation ||
+                    cell.Rune.Value is < 0x20 or > 0x7e ||
+                    cell.DisplayWidth != 1 ||
+                    !string.IsNullOrEmpty(cell.CombiningCharacters))
+                {
+                    asciiOnly = false;
+                }
+
                 if (!cell.IsWideContinuation)
                 {
-                    var offset = text.Length;
-                    text.Append(cell.Rune);
-                    text.Append(cell.CombiningCharacters);
+                    var offset = textLength;
+                    var required = textLength + cell.Rune.Utf16SequenceLength +
+                                   (cell.CombiningCharacters?.Length ?? 0);
+                    if (required > textBuffer.Length)
+                    {
+                        var grown = new char[Math.Max(required, textBuffer.Length * 2)];
+                        textBuffer[..textLength].CopyTo(grown);
+                        textBuffer = grown;
+                    }
+
+                    textLength += cell.Rune.EncodeToUtf16(textBuffer[textLength..]);
+                    if (cell.CombiningCharacters is { } combining)
+                    {
+                        combining.AsSpan().CopyTo(textBuffer[textLength..]);
+                        textLength += combining.Length;
+                    }
+
                     var cellWidth = cell.DisplayWidth;
-                    if (clusters.Count > 0 &&
-                        (EndsWithJoiner(text, offset) ||
+                    if (clusterCount > 0 &&
+                        (offset > 0 && textBuffer[offset - 1] == '\u200D' ||
                          (previousRune is { } prior &&
                           IsContextualScript(prior) &&
                           IsContextualScript(cell.Rune))))
                     {
-                        var previous = clusters[^1];
-                        clusters[^1] = previous with
+                        var previous = clusterBuffer[clusterCount - 1];
+                        clusterBuffer[clusterCount - 1] = previous with
                         {
-                            TextLength = text.Length - previous.TextOffset,
+                            TextLength = textLength - previous.TextOffset,
                             CellCount = (column + cellWidth) - previous.StartColumn,
                         };
                     }
                     else
                     {
-                        clusters.Add(new TerminalTextCluster(
+                        clusterBuffer[clusterCount++] = new TerminalTextCluster(
                             offset,
-                            text.Length - offset,
+                            textLength - offset,
                             column,
-                            cellWidth));
+                            cellWidth);
                     }
 
                     previousRune = cell.Rune;
                 }
-
-                column++;
             }
-            while (column < cells.Count &&
-                   Resolve(cells[column].Attributes, cells[column].HyperlinkUri, scheme, reverseScreen) == resolved);
 
             runs.Add(new TerminalRenderRun(
                 start,
-                column - start,
-                text.ToString(),
+                end - start,
+                new string(textBuffer[..textLength]),
                 resolved,
-                clusters.ToArray()));
+                asciiOnly
+                    ? new AsciiClusters(start, clusterCount)
+                    : clusterBuffer[..clusterCount].ToArray()));
         }
 
         return new TerminalRenderRow(rowIndex, runs)
@@ -144,9 +178,6 @@ public static class TerminalRenderPlanner
             Rendition = line.Rendition,
         };
     }
-
-    private static bool EndsWithJoiner(StringBuilder text, int currentOffset) =>
-        currentOffset > 0 && text[currentOffset - 1] == '\u200D';
 
     private static bool IsContextualScript(Rune rune) =>
         rune.Value is >= 0x0590 and <= 0x109F or
@@ -163,5 +194,25 @@ public static class TerminalRenderPlanner
                ((uint)(red / 2) << 16) |
                ((uint)(green / 2) << 8) |
                (byte)(blue / 2);
+    }
+
+    private sealed class AsciiClusters(int startColumn, int count) : IReadOnlyList<TerminalTextCluster>
+    {
+        public int Count => count;
+
+        public TerminalTextCluster this[int index] =>
+            (uint)index < (uint)count
+                ? new TerminalTextCluster(index, 1, startColumn + index, 1)
+                : throw new ArgumentOutOfRangeException(nameof(index));
+
+        public IEnumerator<TerminalTextCluster> GetEnumerator()
+        {
+            for (var index = 0; index < count; index++)
+            {
+                yield return this[index];
+            }
+        }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 }

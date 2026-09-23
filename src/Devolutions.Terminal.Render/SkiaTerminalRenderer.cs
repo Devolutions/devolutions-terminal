@@ -9,6 +9,9 @@ namespace Devolutions.Terminal.Render;
 public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
 {
     private const float DipsPerPoint = 96f / 72f;
+    private static readonly string[] AsciiGlyphs = Enumerable.Range(0x21, 0x7e - 0x21 + 1)
+        .Select(static codepoint => ((char)codepoint).ToString())
+        .ToArray();
     private readonly object _gate = new();
     private readonly SKPaint _paint = new() { IsAntialias = true };
     private readonly SKPaint _strokePaint = new()
@@ -22,10 +25,13 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
     private TerminalRendererSettings _settings;
     private FontResolver _fonts;
     private BoundedResourceCache<GlyphKey, CachedGlyph> _glyphs;
+    private BoundedResourceCache<RowPictureKey, SKPicture>? _rowPictures;
+    private HashSet<RowPictureKey>? _rowPictureCandidates;
     private readonly Dictionary<long, CachedImage> _images = [];
     private readonly HashSet<long> _invalidImages = [];
     private long _imageBytes;
     private readonly Func<GlyphKey, CachedGlyph> _shapeFactory;
+    private readonly Func<RowPictureKey, SKPicture> _recordRowFactory;
     private RenderViewport _viewport;
     private float _baseline;
     private bool _disposed;
@@ -35,7 +41,10 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
         _settings = Normalize(settings ?? new TerminalRendererSettings());
         _fonts = new FontResolver(_settings);
         _glyphs = CreateGlyphCache();
+        _rowPictures = CreateRowPictureCache();
+        _rowPictureCandidates = CreateRowPictureCandidates();
         _shapeFactory = Shape;
+        _recordRowFactory = RecordRow;
         MeasureCell();
     }
 
@@ -48,6 +57,17 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
             lock (_gate)
             {
                 return _glyphs.Statistics;
+            }
+        }
+    }
+
+    public GlyphCacheStatistics RowCacheStatistics
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _rowPictures?.Statistics ?? default;
             }
         }
     }
@@ -72,6 +92,8 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
             _settings = normalized;
             _fonts = new FontResolver(_settings);
             _glyphs = CreateGlyphCache();
+            _rowPictures = CreateRowPictureCache();
+            _rowPictureCandidates = CreateRowPictureCandidates();
             MeasureCell();
             ResourceGeneration++;
         }
@@ -86,6 +108,8 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
             var normalized = viewport with { Scale = scale };
             if (Math.Abs(_viewport.Scale - normalized.Scale) > 0.001)
             {
+                _rowPictures?.Clear();
+                _rowPictureCandidates?.Clear();
                 _glyphs.Clear();
                 _viewport = normalized;
                 MeasureCell();
@@ -102,6 +126,8 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            _rowPictures?.Clear();
+            _rowPictureCandidates?.Clear();
             _glyphs.Clear();
             ResourceGeneration++;
         }
@@ -132,7 +158,38 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
 
             for (var rowIndex = 0; rowIndex < frame.RowsData.Count; rowIndex++)
             {
-                DrawRow(canvas, frame, frame.RowsData[rowIndex], padding);
+                var row = frame.RowsData[rowIndex];
+                // DRCS glyphs are frame-specific and cannot be replayed from a recorded row.
+                if (_rowPictures is null ||
+                    row.Rendition != LineRendition.SingleWidth ||
+                    frame.DrcsGlyphs.Count != 0)
+                {
+                    DrawRow(canvas, row, frame.Background, frame.Columns, frame.DrcsGlyphs, padding);
+                    continue;
+                }
+
+                var key = new RowPictureKey(row, frame.Background);
+                if (!_rowPictures.TryGetValue(key, out var picture))
+                {
+                    if (!_rowPictureCandidates!.Remove(key))
+                    {
+                        if (_rowPictureCandidates.Count >= _settings.RowPictureCacheCapacity)
+                        {
+                            _rowPictureCandidates.Clear();
+                        }
+
+                        _rowPictureCandidates.Add(key);
+                        DrawRow(canvas, row, frame.Background, frame.Columns, frame.DrcsGlyphs, padding);
+                        continue;
+                    }
+
+                    picture = _rowPictures.GetOrAdd(key, _recordRowFactory);
+                }
+
+                canvas.Save();
+                canvas.Translate(padding, padding + (row.RowIndex * (float)CellSize.Height));
+                canvas.DrawPicture(picture);
+                canvas.Restore();
             }
 
             // Kitty placements with a non-negative z-index composite over text.
@@ -253,8 +310,10 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
 
     private void DrawRow(
         SKCanvas canvas,
-        TerminalRenderFrame frame,
         TerminalRenderRow row,
+        uint background,
+        int columns,
+        IReadOnlyDictionary<int, DrcsGlyph>? drcsGlyphs,
         float padding)
     {
         var top = padding + ((float)row.RowIndex * (float)CellSize.Height);
@@ -265,7 +324,7 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
             canvas.ClipRect(new SKRect(
                 padding,
                 top,
-                padding + (frame.Columns * (float)CellSize.Width),
+                padding + (columns * (float)CellSize.Width),
                 top + (float)CellSize.Height));
             var doubleHeight = row.Rendition is
                 LineRendition.DoubleHeightTop or LineRendition.DoubleHeightBottom;
@@ -282,7 +341,7 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
             var run = row.Runs[runIndex];
             var runLeft = padding + (run.StartColumn * (float)CellSize.Width);
             var runWidth = run.CellCount * (float)CellSize.Width;
-            if (run.Attributes.Background != frame.Background)
+            if (run.Attributes.Background != background)
             {
                 _paint.Color = ToColor(run.Attributes.Background);
                 canvas.DrawRect(runLeft, top, runWidth, (float)CellSize.Height, _paint);
@@ -290,7 +349,7 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
 
             if ((run.Attributes.Flags & CellFlags.Invisible) == 0)
             {
-                DrawClusters(canvas, run, top, padding, drcsGlyphs: frame.DrcsGlyphs);
+                DrawClusters(canvas, run, top, padding, drcsGlyphs: drcsGlyphs);
             }
 
             DrawDecorations(canvas, run, top, padding);
@@ -670,10 +729,13 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
                 continue;
             }
 
+            var asciiGlyph = _settings.ReuseAsciiGlyphs && CanReuseAsciiGlyph(run.Text, cluster)
+                ? AsciiGlyphs[run.Text[cluster.TextOffset] - 0x21]
+                : null;
             var key = new GlyphKey(
-                run.Text,
-                cluster.TextOffset,
-                cluster.TextLength,
+                asciiGlyph ?? run.Text,
+                asciiGlyph is null ? cluster.TextOffset : 0,
+                asciiGlyph is null ? cluster.TextLength : 1,
                 run.Attributes.Flags & (CellFlags.Bold | CellFlags.Italic),
                 _settings.FontSize,
                 _viewport.Scale);
@@ -1236,6 +1298,8 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
 
     private void ReleaseResources()
     {
+        _rowPictures?.Dispose();
+        _rowPictureCandidates?.Clear();
         _glyphs.Dispose();
         _fonts.Dispose();
         foreach (var image in _images.Values)
@@ -1251,6 +1315,30 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
     private BoundedResourceCache<GlyphKey, CachedGlyph> CreateGlyphCache() =>
         new(_settings.GlyphCacheCapacity);
 
+    private BoundedResourceCache<RowPictureKey, SKPicture>? CreateRowPictureCache() =>
+        _settings.RowPictureCacheCapacity > 0
+            ? new(_settings.RowPictureCacheCapacity, RowPictureKeyComparer.Instance)
+            : null;
+
+    private HashSet<RowPictureKey>? CreateRowPictureCandidates() =>
+        _settings.RowPictureCacheCapacity > 0
+            ? new(RowPictureKeyComparer.Instance)
+            : null;
+
+    private SKPicture RecordRow(RowPictureKey key)
+    {
+        using var recorder = new SKPictureRecorder();
+        var width = (float)CellSize.Width;
+        var height = (float)CellSize.Height;
+        var lastColumn = key.Row.Runs.Count == 0
+            ? 0
+            : key.Row.Runs[^1].StartColumn + key.Row.Runs[^1].CellCount;
+        var canvas = recorder.BeginRecording(
+            new SKRect(-width, -height, (lastColumn + 1) * width, 2 * height));
+        DrawRow(canvas, key.Row with { RowIndex = 0 }, key.Background, 0, null, 0);
+        return recorder.EndRecording() ?? throw new InvalidOperationException("Skia could not record a terminal row.");
+    }
+
     private static TerminalRendererSettings Normalize(TerminalRendererSettings settings) =>
         settings with
         {
@@ -1260,6 +1348,7 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
             FontSize = Math.Clamp(settings.FontSize, 1, 100) * DipsPerPoint,
             FontWeight = Math.Clamp(settings.FontWeight, 100, 1000),
             GlyphCacheCapacity = Math.Max(1, settings.GlyphCacheCapacity),
+            RowPictureCacheCapacity = Math.Max(0, settings.RowPictureCacheCapacity),
             DecodedImageCacheByteCapacity = Math.Max(
                 4L * 1024 * 1024,
                 settings.DecodedImageCacheByteCapacity),
@@ -1276,6 +1365,15 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
         }
 
         return true;
+    }
+
+    private static bool CanReuseAsciiGlyph(string text, TerminalTextCluster cluster)
+    {
+        var offset = cluster.TextOffset;
+        return cluster.TextLength == 1 &&
+               text[offset] is >= '\u0021' and <= '\u007e' &&
+               (offset == 0 || text[offset - 1] is >= '\u0020' and <= '\u007e') &&
+               (offset + 1 == text.Length || text[offset + 1] is >= '\u0020' and <= '\u007e');
     }
 
     private float PhysicalPixel => 1f / (float)Math.Max(0.1, _viewport.Scale == 0 ? 1 : _viewport.Scale);
@@ -1334,6 +1432,65 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
             hash.Add(Offset);
             hash.Add(Length);
             hash.Add(Text, StringComparer.Ordinal);
+            return hash.ToHashCode();
+        }
+    }
+
+    private readonly record struct RowPictureKey(TerminalRenderRow Row, uint Background);
+
+    private sealed class RowPictureKeyComparer : IEqualityComparer<RowPictureKey>
+    {
+        public static RowPictureKeyComparer Instance { get; } = new();
+
+        public bool Equals(RowPictureKey x, RowPictureKey y)
+        {
+            if (x.Background != y.Background || x.Row.Runs.Count != y.Row.Runs.Count)
+            {
+                return false;
+            }
+
+            for (var index = 0; index < x.Row.Runs.Count; index++)
+            {
+                var a = x.Row.Runs[index];
+                var b = y.Row.Runs[index];
+                if (a.StartColumn != b.StartColumn ||
+                    a.CellCount != b.CellCount ||
+                    a.Attributes != b.Attributes ||
+                    !string.Equals(a.Text, b.Text, StringComparison.Ordinal) ||
+                    a.Clusters.Count != b.Clusters.Count)
+                {
+                    return false;
+                }
+
+                for (var cluster = 0; cluster < a.Clusters.Count; cluster++)
+                {
+                    if (a.Clusters[cluster] != b.Clusters[cluster])
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        public int GetHashCode(RowPictureKey key)
+        {
+            var hash = new HashCode();
+            hash.Add(key.Background);
+            for (var index = 0; index < key.Row.Runs.Count; index++)
+            {
+                var run = key.Row.Runs[index];
+                hash.Add(run.StartColumn);
+                hash.Add(run.CellCount);
+                hash.Add(run.Attributes);
+                hash.Add(run.Text, StringComparer.Ordinal);
+                for (var clusterIndex = 0; clusterIndex < run.Clusters.Count; clusterIndex++)
+                {
+                    hash.Add(run.Clusters[clusterIndex]);
+                }
+            }
+
             return hash.ToHashCode();
         }
     }

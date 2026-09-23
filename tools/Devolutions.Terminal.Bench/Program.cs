@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
 using Avalonia;
 using Avalonia.Headless;
 using Avalonia.Threading;
@@ -19,9 +20,12 @@ namespace Devolutions.Terminal.Bench;
 ///             ConPTY ReadLoop; the UI dispatcher drains invalidations via RunJobs.
 ///             Reports engine invalidations vs posts vs actual UI drains (the
 ///             coalescing ratio).
+///   render  — snapshot/planning and CPU Skia rasterization, measured separately
+///             for a static screen, one-row updates, and scrolling screens.
+///   corpus  — write the deterministic VT input for reuse with Ghostty benchmarks.
 ///
-/// Caveat: headless mode does not paint, so drain cost covers dispatch + listener
-/// fan-out, not Skia rendering.
+/// Caveat: control mode does not paint. Render mode uses a raster surface, not
+/// Avalonia's GPU/compositor or Ghostty's OpenGL/Metal renderer.
 /// </summary>
 internal static class Program
 {
@@ -33,9 +37,52 @@ internal static class Program
         var megabytes = GetOption(args, "--mb", 8);
         var runs = GetOption(args, "--runs", 5);
         var chunkKb = GetOption(args, "--chunk-kb", 16);
+        var data = GetStringOption(args, "--data");
+        var corpus = data is null
+            ? Corpus.Build(checked(megabytes * 1024 * 1024))
+            : File.ReadAllBytes(data);
+        if (corpus.Length == 0)
+        {
+            throw new ArgumentException("the benchmark corpus must not be empty");
+        }
 
-        var corpus = Corpus.Build(megabytes * 1024 * 1024);
-        Console.WriteLine($"mode={mode} corpus={corpus.Length / (1024.0 * 1024):F1} MiB chunk={chunkKb} KiB runs={runs}");
+        Console.WriteLine(
+            $"mode={mode} corpus={corpus.Length / (1024.0 * 1024):F1} MiB " +
+            $"sha256={Convert.ToHexString(SHA256.HashData(corpus))}" +
+            (mode == "corpus" ? "" : $" chunk={chunkKb} KiB runs={runs}"));
+
+        if (mode == "corpus")
+        {
+            File.WriteAllBytes(
+                GetStringOption(args, "--output")
+                    ?? throw new ArgumentException("corpus mode requires --output <path>"),
+                corpus);
+            return 0;
+        }
+
+        if (mode == "render")
+        {
+            var asciiCache = GetOption(args, "--ascii-cache", 1, allowZero: true);
+            if (asciiCache > 1)
+            {
+                throw new ArgumentException("--ascii-cache must be 0 or 1");
+            }
+
+            RendererBench.Run(
+                corpus,
+                GetOption(args, "--columns", 120),
+                GetOption(args, "--rows", 30),
+                checked(chunkKb * 1024),
+                GetOption(args, "--frames", 8),
+                GetOption(args, "--samples", 60),
+                GetOption(args, "--warmup", 2),
+                runs,
+                GetOption(args, "--glyph-cache", 4096),
+                GetOption(args, "--row-cache", 256, allowZero: true),
+                asciiCache == 1,
+                Array.IndexOf(args, "--verify") >= 0);
+            return 0;
+        }
 
         if (mode == "control")
         {
@@ -56,7 +103,7 @@ internal static class Program
             {
                 "engine" => RunEngine(corpus, chunkKb * 1024),
                 "control" => RunControl(corpus, chunkKb * 1024),
-                _ => throw new ArgumentException($"unknown mode '{mode}' (expected engine|control)"),
+                _ => throw new ArgumentException($"unknown mode '{mode}' (expected engine|control|render|corpus)"),
             };
             samples.Add(mbPerSec);
             Console.WriteLine($"  run {run + 1}: {mbPerSec:F1} MB/s");
@@ -67,12 +114,38 @@ internal static class Program
         return 0;
     }
 
-    private static int GetOption(string[] args, string name, int fallback)
+    private static int GetOption(string[] args, string name, int fallback, bool allowZero = false)
     {
         var index = Array.IndexOf(args, name);
-        return index >= 0 && index + 1 < args.Length && int.TryParse(args[index + 1], out var value)
-            ? value
-            : fallback;
+        if (index < 0)
+        {
+            return fallback;
+        }
+
+        if (index + 1 >= args.Length ||
+            !int.TryParse(args[index + 1], out var value) ||
+            value < (allowZero ? 0 : 1))
+        {
+            throw new ArgumentException($"{name} requires a {(allowZero ? "non-negative" : "positive")} integer");
+        }
+
+        return value;
+    }
+
+    private static string? GetStringOption(string[] args, string name)
+    {
+        var index = Array.IndexOf(args, name);
+        if (index < 0)
+        {
+            return null;
+        }
+
+        if (index + 1 >= args.Length || args[index + 1].StartsWith("--", StringComparison.Ordinal))
+        {
+            throw new ArgumentException($"{name} requires a value");
+        }
+
+        return args[index + 1];
     }
 
     private static double RunEngine(byte[] corpus, int chunkSize)
