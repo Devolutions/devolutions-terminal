@@ -66,6 +66,10 @@ repaints once so the static cursor is solid.
 through a fake connection with dispatcher drains paced at 60 Hz, reporting
 engine invalidations vs posts vs drains alongside MB/s (medians over runs).
 Coalescing takes an 8 MiB burst from 514 drains to roughly one per frame.
+The separate `render` mode measures snapshot/planning and CPU Skia rasterization
+of static, one-row-update, and scrolling screens. See
+[renderer benchmarks](renderer-benchmarks.md) for reproducible inputs, results
+and the limits of comparing those measurements with Ghostty.
 
 ## Performance contract
 

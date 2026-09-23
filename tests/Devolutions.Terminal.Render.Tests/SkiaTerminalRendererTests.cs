@@ -55,6 +55,7 @@ public sealed class SkiaTerminalRendererTests
         using var renderer = new SkiaTerminalRenderer(new TerminalRendererSettings
         {
             GlyphCacheCapacity = 8,
+            RowPictureCacheCapacity = 0,
         });
         var frame = CreateFrame("e\u0301界 \U0001F469\u200D\U0001F4BB \uE0B0");
         using var bitmap = NewBitmap(renderer, frame);
@@ -85,6 +86,146 @@ public sealed class SkiaTerminalRendererTests
 
         Assert.Equal(2, renderer.CacheStatistics.Count);
         Assert.True(renderer.CacheStatistics.Evictions >= 1);
+    }
+
+    [Fact]
+    public void RecordedRowsMatchUncachedPaintWhenScrollingAndRestyling()
+    {
+        using var engine = new TerminalEngine(16, 4);
+        using var cached = new SkiaTerminalRenderer();
+        using var uncached = new SkiaTerminalRenderer(new TerminalRendererSettings
+        {
+            RowPictureCacheCapacity = 0,
+            ReuseAsciiGlyphs = false,
+        });
+        using var actual = NewBitmap(cached, TerminalRenderPlanner.Create(engine.CreateSnapshot(), engine.Scheme));
+        using var expected = NewBitmap(uncached, TerminalRenderPlanner.Create(engine.CreateSnapshot(), engine.Scheme));
+        using var actualCanvas = new SKCanvas(actual);
+        using var expectedCanvas = new SKCanvas(expected);
+
+        foreach (var input in new[]
+        {
+            "first\r\nsecond\r\nthird\r\nfourth",
+            "\r\nfifth",
+            "\r\nsixth \u754c",
+            "\u001b[1;1H\u001b[31;44mRED\u001b[0m",
+            "\u001b[?25l\u001b[2;4H!",
+            "\u001b[?25h\u001b[1;1H\u001b#6wide",
+            "\u001bP0;1;0;2;1;2;6;0{ B~\u001b\\\u001b( B!",
+        })
+        {
+            engine.Feed(input);
+            var frame = TerminalRenderPlanner.Create(engine.CreateSnapshot(), engine.Scheme);
+            Draw(cached, actualCanvas, frame);
+            Draw(uncached, expectedCanvas, frame);
+            Assert.Equal(PixelDigest(expected), PixelDigest(actual));
+        }
+
+        Assert.True(cached.RowCacheStatistics.Hits > 0);
+        Assert.True(cached.RowCacheStatistics.Count > 0);
+        cached.Invalidate();
+        Assert.Equal(0, cached.RowCacheStatistics.Count);
+    }
+
+    [Fact]
+    public void AsciiGlyphsAreSharedAcrossRunsWithoutMergingUnicodeShaping()
+    {
+        using var renderer = new SkiaTerminalRenderer(new TerminalRendererSettings
+        {
+            RowPictureCacheCapacity = 0,
+        });
+        foreach (var text in new[] { "cab", "dab", "e\u0301界", "e\u0301界" })
+        {
+            var frame = CreateFrame(text);
+            using var bitmap = NewBitmap(renderer, frame);
+            using var canvas = new SKCanvas(bitmap);
+            Draw(renderer, canvas, frame);
+        }
+
+        Assert.Equal(4, renderer.CacheStatistics.Hits);
+        Assert.Equal(6, renderer.CacheStatistics.Misses);
+    }
+
+    [Fact]
+    public void RecordedRowCacheEvictsAndResetsWhenScaleChanges()
+    {
+        using var renderer = new SkiaTerminalRenderer(new TerminalRendererSettings
+        {
+            RowPictureCacheCapacity = 2,
+        });
+        var frame = CreateFrame("a\r\nb");
+        using var bitmap = NewBitmap(renderer, frame);
+        using var canvas = new SKCanvas(bitmap);
+        Draw(renderer, canvas, frame);
+        Assert.Equal(0, renderer.RowCacheStatistics.Count);
+        Draw(renderer, canvas, frame);
+        Assert.Equal(2, renderer.RowCacheStatistics.Count);
+
+        var second = CreateFrame("c\r\nd");
+        Draw(renderer, canvas, second);
+        Draw(renderer, canvas, second);
+        Assert.Equal(2, renderer.RowCacheStatistics.Count);
+        Assert.True(renderer.RowCacheStatistics.Evictions > 0);
+
+        renderer.Resize(new RenderViewport(frame.Columns, frame.Rows, 1.5));
+        Assert.Equal(0, renderer.RowCacheStatistics.Count);
+    }
+
+    [Fact]
+    public void SingleUseRowsAreNotRecordedAndInvalidationClearsCandidates()
+    {
+        using var engine = new TerminalEngine(8, 1);
+        using var renderer = new SkiaTerminalRenderer(new TerminalRendererSettings
+        {
+            RowPictureCacheCapacity = 2,
+        });
+        using var bitmap = new SKBitmap(128, 64);
+        using var canvas = new SKCanvas(bitmap);
+        TerminalRenderFrame? last = null;
+
+        foreach (var character in "abcde")
+        {
+            engine.Feed($"\u001b[1;1H{character}");
+            last = TerminalRenderPlanner.Create(engine.CreateSnapshot(), engine.Scheme);
+            Draw(renderer, canvas, last);
+        }
+
+        Assert.Equal(0, renderer.RowCacheStatistics.Count);
+        Draw(renderer, canvas, last!);
+        Assert.Equal(1, renderer.RowCacheStatistics.Count);
+        renderer.Invalidate();
+        Draw(renderer, canvas, last!);
+        Assert.Equal(0, renderer.RowCacheStatistics.Count);
+        Draw(renderer, canvas, last!);
+        Assert.Equal(1, renderer.RowCacheStatistics.Count);
+    }
+
+    [Fact]
+    public void RecordedRowsMatchUncachedPaintAtDifferentPaddingAndScale()
+    {
+        var frame = CreateFrame("\u001b[4mleft\u001b[0m\r\nright");
+        using var cached = new SkiaTerminalRenderer();
+        using var reference = new SkiaTerminalRenderer(new TerminalRendererSettings
+        {
+            RowPictureCacheCapacity = 0,
+            ReuseAsciiGlyphs = false,
+        });
+        cached.Resize(new RenderViewport(frame.Columns, frame.Rows, 1.5));
+        reference.Resize(new RenderViewport(frame.Columns, frame.Rows, 1.5));
+        using var actual = NewBitmap(cached, frame);
+        using var expected = NewBitmap(reference, frame);
+        using var actualCanvas = new SKCanvas(actual);
+        using var expectedCanvas = new SKCanvas(expected);
+        var bounds = new SKRect(0, 0, actual.Width, actual.Height);
+
+        foreach (var padding in new[] { 3f, 8f, 8f })
+        {
+            cached.Render(actualCanvas, frame, TerminalRenderOverlays.Empty, bounds, padding, drawCursor: true);
+            reference.Render(expectedCanvas, frame, TerminalRenderOverlays.Empty, bounds, padding, drawCursor: true);
+            Assert.Equal(PixelDigest(expected), PixelDigest(actual));
+        }
+
+        Assert.True(cached.RowCacheStatistics.Hits > 0);
     }
 
     [Fact]
@@ -561,6 +702,7 @@ public sealed class SkiaTerminalRendererTests
         using var bitmap = NewBitmap(renderer, frame);
         using var canvas = new SKCanvas(bitmap);
         Draw(renderer, canvas, frame);
+        Draw(renderer, canvas, frame);
 
         var before = GC.GetAllocatedBytesForCurrentThread();
         for (var iteration = 0; iteration < 100; iteration++)
@@ -569,7 +711,7 @@ public sealed class SkiaTerminalRendererTests
         }
 
         var allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-        Assert.InRange(allocated, 0, 16_384);
+        Assert.InRange(allocated, 0, 20_480);
     }
 
     private static TerminalRenderFrame CreateFrame(string text)

@@ -20,18 +20,30 @@ internal sealed class BoundedResourceCache<TKey, TValue> : IDisposable
     public GlyphCacheStatistics Statistics =>
         new(_entries.Count, _capacity, _hits, _misses, _evictions);
 
-    public TValue GetOrAdd(TKey key, Func<TKey, TValue> factory)
+    public bool TryGetValue(TKey key, out TValue value)
     {
         if (_entries.TryGetValue(key, out var node))
         {
             _hits++;
             _lru.Remove(node);
             _lru.AddFirst(node);
-            return node.Value.Value;
+            value = node.Value.Value;
+            return true;
+        }
+
+        value = default!;
+        return false;
+    }
+
+    public TValue GetOrAdd(TKey key, Func<TKey, TValue> factory)
+    {
+        if (TryGetValue(key, out var value))
+        {
+            return value;
         }
 
         _misses++;
-        var value = factory(key);
+        value = factory(key);
         var added = _lru.AddFirst(new Entry(key, value));
         _entries.Add(key, added);
         if (_entries.Count > _capacity)

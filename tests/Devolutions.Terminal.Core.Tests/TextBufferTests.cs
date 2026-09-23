@@ -6,6 +6,18 @@ namespace Devolutions.Terminal.Core.Tests;
 public sealed class TextBufferTests
 {
     [Fact]
+    public void EmptyGlyphSnapshotRemainsEmptyAfterGlyphDownload()
+    {
+        using var engine = new TerminalEngine(8, 2);
+        var before = engine.CreateSnapshot();
+
+        engine.Feed("\u001bP0;1;0;2;1;2;6;0{ B~\u001b\\");
+
+        Assert.Empty(before.DrcsGlyphs);
+        Assert.Single(engine.CreateSnapshot().DrcsGlyphs);
+    }
+
+    [Fact]
     public void ResizePreservesWrapPendingAtDoubleWidthBoundary()
     {
         using var engine = new TerminalEngine(10, 3);
