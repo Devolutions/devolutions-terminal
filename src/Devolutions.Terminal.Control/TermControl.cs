@@ -1065,8 +1065,13 @@ public sealed class TermControl : Avalonia.Controls.Control
         {
             var scale = TopLevel.GetTopLevel(this)?.RenderScaling ?? 1;
             _renderer.Resize(new RenderViewport(Engine.Columns, Engine.Rows, scale));
-            MeasureGlyph(deferInvalidation: true);
-            ResizeEngine(Engine.Columns, Engine.Rows);
+            var measureInvalidated = MeasureGlyph(deferInvalidation: true);
+            if (!measureInvalidated &&
+                (checked((uint)Math.Max(1, Math.Round(_renderer.CellSize.Width * scale))) != _engineCellWidthPixels ||
+                 checked((uint)Math.Max(1, Math.Round(_renderer.CellSize.Height * scale))) != _engineCellHeightPixels))
+            {
+                Dispatcher.UIThread.Post(InvalidateMeasure, DispatcherPriority.Background);
+            }
             snapshot = Engine.CreateSnapshot();
         }
         var profile = Profile;
@@ -1606,14 +1611,14 @@ public sealed class TermControl : Avalonia.Controls.Control
         return (Math.Clamp(x, 0, Engine.Columns - 1), y);
     }
 
-    private void MeasureGlyph(bool deferInvalidation = false)
+    private bool MeasureGlyph(bool deferInvalidation = false)
     {
         var width = _renderer.CellSize.Width;
         var height = _renderer.CellSize.Height;
         if (Math.Abs(_cellWidth - width) < 0.001 &&
             Math.Abs(_cellHeight - height) < 0.001)
         {
-            return;
+            return false;
         }
 
         _cellWidth = width;
@@ -1626,6 +1631,7 @@ public sealed class TermControl : Avalonia.Controls.Control
         {
             InvalidateMeasure();
         }
+        return true;
     }
 
     private void UpdateSearchHighlights()
