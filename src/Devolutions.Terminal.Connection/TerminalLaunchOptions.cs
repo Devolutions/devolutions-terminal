@@ -34,4 +34,6 @@ public sealed record TerminalLaunchOptions
         TerminalCloseOnExitPolicy.Automatic;
 
     public bool IsDefaultTerminalSession { get; init; }
+
+    public bool Elevate { get; init; }
 }

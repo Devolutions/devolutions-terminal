@@ -385,7 +385,7 @@ public partial class MainWindow :
         menu.Open(sender as Control);
     }
 
-    private List<MenuItem> BuildNewTabMenu()
+    internal List<MenuItem> BuildNewTabMenu()
     {
         var resolvedItems = NewTabMenuResolver.Resolve(_settings);
         var items = resolvedItems
@@ -506,7 +506,31 @@ public partial class MainWindow :
         {
             menu.Icon = CreateTabIcon(ProfileVisualDefaults.Icon(item.Profile));
             menu.InputGesture = ProfileMenuGesture(item.Profile);
-            menu.Command = new RelayCommand(() => _ = CreateTabAsync(item.Profile));
+            var profile = item.Profile;
+            var shiftHeld = false;
+            if (OperatingSystem.IsWindows())
+            {
+                ToolTip.SetTip(menu, profile.Elevate
+                    ? "Opens as administrator"
+                    : "Shift-click to open as administrator");
+                menu.AddHandler(
+                    PointerPressedEvent,
+                    (_, e) => shiftHeld = e.KeyModifiers.HasFlag(KeyModifiers.Shift),
+                    RoutingStrategies.Tunnel,
+                    handledEventsToo: true);
+                menu.AddHandler(
+                    KeyDownEvent,
+                    (_, e) => shiftHeld = e.KeyModifiers.HasFlag(KeyModifiers.Shift),
+                    RoutingStrategies.Tunnel,
+                    handledEventsToo: true);
+            }
+
+            menu.Command = new RelayCommand(() =>
+            {
+                var elevate = shiftHeld;
+                shiftHeld = false;
+                _ = CreateTabAsync(NewTabMenuResolver.ForMenuLaunch(profile, elevate));
+            });
         }
         else if (item.ActionId is { } actionId &&
                  _settings.ActionMap.AvailableActions.TryGetValue(actionId, out var action))
@@ -572,13 +596,10 @@ public partial class MainWindow :
             profile,
             control,
             presentation);
+        pane.Presentation.IsAdministrator = OperatingSystem.IsWindows() && profile.Elevate;
         control.TitleChanged += (_, title) =>
         {
-            pane.Title = profile.SuppressApplicationTitle ||
-                         string.IsNullOrWhiteSpace(title) ||
-                         IsExecutableTitle(profile, title)
-                ? (string.IsNullOrWhiteSpace(profile.TabTitle) ? profile.Name : profile.TabTitle)
-                : title;
+            pane.Title = ResolveTerminalTitle(profile, title);
             var tab = FindTab(pane);
             if (tab is null)
             {
@@ -612,6 +633,57 @@ public partial class MainWindow :
         return pane;
     }
 
+    internal static string ResolveTerminalTitle(ProfileSettings profile, string title) =>
+        profile.SuppressApplicationTitle ||
+        string.IsNullOrWhiteSpace(title) ||
+        IsExecutableTitle(profile, title) ||
+        IsElevatedLaunchTitle(profile, title)
+            ? (string.IsNullOrWhiteSpace(profile.TabTitle) ? profile.Name : profile.TabTitle)
+            : title;
+
+    private static bool IsElevatedLaunchTitle(ProfileSettings profile, string title)
+    {
+        const string administratorPrefix = "Administrator: ";
+        if (!profile.Elevate ||
+            !title.StartsWith(administratorPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var commandTitle = title[administratorPrefix.Length..].Trim();
+        if (IsExecutableTitle(profile, commandTitle))
+        {
+            return true;
+        }
+
+        var titleExecutable = commandTitle.Trim('"');
+        if (LooksLikeExecutablePath(titleExecutable) &&
+            FileName(titleExecutable).Equals(
+                FileName(ProfileExecutable(profile.ExpandCommandline().Trim())),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var index = commandTitle.IndexOf("gsudo.exe", StringComparison.OrdinalIgnoreCase);
+        return index >= 0 &&
+               (index == 0 || commandTitle[index - 1] is '\\' or '/' or '"') &&
+               (index + "gsudo.exe".Length == commandTitle.Length ||
+                commandTitle[index + "gsudo.exe".Length] is ' ' or '"') &&
+               (index == 0 || LooksLikeExecutablePath(commandTitle[..index]));
+    }
+
+    private static string FileName(string path) =>
+        path[(path.LastIndexOfAny(['\\', '/']) + 1)..];
+
+    private static string ProfileExecutable(string commandLine)
+    {
+        var closingQuote = commandLine.StartsWith('"') ? commandLine.IndexOf('"', 1) : -1;
+        return (closingQuote > 1
+            ? commandLine[1..closingQuote]
+            : commandLine.Split(' ', 2)[0]).Trim().Trim('"');
+    }
+
     private static bool IsExecutableTitle(ProfileSettings profile, string title)
     {
         var commandLine = profile.ExpandCommandline().Trim();
@@ -621,12 +693,7 @@ public partial class MainWindow :
             return true;
         }
 
-        var closingQuote = commandLine.StartsWith('"') ? commandLine.IndexOf('"', 1) : -1;
-        var executable = closingQuote > 1
-            ? commandLine[1..closingQuote]
-            : commandLine.Split(' ', 2)[0];
-        executable = executable.Trim().Trim('"');
-        return normalizedTitle.Equals(executable, StringComparison.OrdinalIgnoreCase) &&
+        return normalizedTitle.Equals(ProfileExecutable(commandLine), StringComparison.OrdinalIgnoreCase) &&
                LooksLikeExecutablePath(normalizedTitle);
     }
 
@@ -961,9 +1028,17 @@ public partial class MainWindow :
                 prefix.Children.Add(CreateTabIcon(presentation.Icon));
             }
 
-            if (presentation.IsAdministrator && !compact)
+            if (presentation.IsAdministrator && _settings.ShowAdminShield)
             {
-                prefix.Children.Add(new TextBlock { Text = "◆" });
+                var shield = new TextBlock
+                {
+                    Text = "\uEA18",
+                    FontFamily = new FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"),
+                    FontSize = 14,
+                    VerticalAlignment = VerticalAlignment.Center,
+                };
+                AutomationProperties.SetName(shield, "Administrator");
+                prefix.Children.Add(shield);
             }
 
             content.Children.Add(prefix);
@@ -1039,6 +1114,11 @@ public partial class MainWindow :
                 ContextMenu = CreateTabContextMenu(tab),
                 Width = tabWidth,
             };
+            if (presentation.IsAdministrator)
+            {
+                AutomationProperties.SetName(button, $"Administrator: {tab.Title}");
+                ToolTip.SetTip(button, $"Administrator: {tab.Title}");
+            }
             if (OperatingSystem.IsMacOS())
             {
                 button.Classes.Add("macos");
@@ -4016,6 +4096,7 @@ public partial class MainWindow :
         _settingsChanged?.Invoke(_settings);
         RefreshJumpList(_settings);
         PopulateCommandPalette();
+        RebuildTabs();
     }
 
     private void RefreshJumpList(AppSettings? settings = null)

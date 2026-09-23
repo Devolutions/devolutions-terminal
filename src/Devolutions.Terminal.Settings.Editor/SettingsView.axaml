@@ -355,9 +355,9 @@
           </controls:SettingsRow.Value>
         </controls:SettingsRow>
         <controls:SettingsRow Header="Run this profile as Administrator"
-                              Description="Not supported yet: elevation is not implemented. Saved for compatibility only.">
+                              Description="On Windows, launch this profile through gsudo in an elevated tab. Requires gsudo.exe on PATH.">
           <controls:SettingsRow.Value>
-            <controls:SettingsToggle IsEnabled="False" AutomationProperties.Name="Run this profile as Administrator (not supported)" IsChecked="{Binding SelectedProfile.Elevate}" />
+            <controls:SettingsToggle IsEnabled="{Binding SelectedProfile.CanElevate}" AutomationProperties.Name="Run this profile as Administrator" IsChecked="{Binding SelectedProfile.Elevate}" />
           </controls:SettingsRow.Value>
         </controls:SettingsRow>
         <controls:SettingsRow Header="Hide profile from dropdown"
@@ -786,9 +786,9 @@
           </controls:SettingsRow.Value>
         </controls:SettingsRow>
         <controls:SettingsRow Header="Show admin shield"
-                              Description="Not supported yet: elevation badges are not shown. Saved for compatibility only.">
+                              Description="Show a shield on elevated Windows tabs, including compact tabs.">
           <controls:SettingsRow.Value>
-            <controls:SettingsToggle IsEnabled="False" AutomationProperties.Name="Show admin shield (not supported)" IsChecked="{Binding ShowAdminShield}" />
+            <controls:SettingsToggle IsEnabled="{Binding CanShowAdminShield}" AutomationProperties.Name="Show admin shield" IsChecked="{Binding ShowAdminShield}" />
           </controls:SettingsRow.Value>
         </controls:SettingsRow>
         <controls:SettingsRow Header="Enable color selection"

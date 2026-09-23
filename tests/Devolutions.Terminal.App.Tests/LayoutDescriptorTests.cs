@@ -55,6 +55,7 @@ public sealed class LayoutDescriptorTests
                             Session = second,
                             Presentation = new()
                             {
+                                IsAdministrator = true,
                                 IsReadOnly = true,
                                 HasBellIndicator = true,
                                 ProgressState = TerminalProgressState.Normal,
@@ -80,6 +81,7 @@ public sealed class LayoutDescriptorTests
         Assert.Equal("work", tab.Title);
         Assert.Equal(0.333333, tab.Root.Ratio);
         Assert.True(tab.Root.Second!.Presentation.IsReadOnly);
+        Assert.True(tab.Root.Second.Presentation.IsAdministrator);
         Assert.Equal(0.42, tab.Root.Second.Presentation.Progress);
     }
 

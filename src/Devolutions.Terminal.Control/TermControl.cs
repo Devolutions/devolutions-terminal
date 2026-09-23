@@ -310,6 +310,12 @@ public sealed class TermControl : Avalonia.Controls.Control
         }
         try
         {
+            if (profile.Elevate && connection is not ConPtyConnection)
+            {
+                throw new PlatformNotSupportedException(
+                    "Only local Windows profiles can run as Administrator through gsudo.");
+            }
+
             await connection.StartAsync(
                 new TerminalLaunchOptions
                 {
@@ -320,6 +326,7 @@ public sealed class TermControl : Avalonia.Controls.Control
                     ReloadEnvironmentVariables = profile.ReloadEnvironmentVariables,
                     EnvironmentVariables = BuildTerminalEnvironment(profile),
                     CloseOnExit = ToConnectionPolicy(profile.CloseOnExit),
+                    Elevate = profile.Elevate,
                 }).ConfigureAwait(true);
         }
         catch
@@ -1058,7 +1065,7 @@ public sealed class TermControl : Avalonia.Controls.Control
         {
             var scale = TopLevel.GetTopLevel(this)?.RenderScaling ?? 1;
             _renderer.Resize(new RenderViewport(Engine.Columns, Engine.Rows, scale));
-            MeasureGlyph();
+            MeasureGlyph(deferInvalidation: true);
             ResizeEngine(Engine.Columns, Engine.Rows);
             snapshot = Engine.CreateSnapshot();
         }
@@ -1599,7 +1606,7 @@ public sealed class TermControl : Avalonia.Controls.Control
         return (Math.Clamp(x, 0, Engine.Columns - 1), y);
     }
 
-    private void MeasureGlyph()
+    private void MeasureGlyph(bool deferInvalidation = false)
     {
         var width = _renderer.CellSize.Width;
         var height = _renderer.CellSize.Height;
@@ -1611,7 +1618,14 @@ public sealed class TermControl : Avalonia.Controls.Control
 
         _cellWidth = width;
         _cellHeight = height;
-        InvalidateMeasure();
+        if (deferInvalidation)
+        {
+            Dispatcher.UIThread.Post(InvalidateMeasure, DispatcherPriority.Background);
+        }
+        else
+        {
+            InvalidateMeasure();
+        }
     }
 
     private void UpdateSearchHighlights()
