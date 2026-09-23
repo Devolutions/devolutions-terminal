@@ -65,4 +65,20 @@ public sealed class NewTabMenuResolverTests
 
         Assert.Equal("visible", Assert.Single(menu).Name);
     }
+
+    [Fact]
+    public void ShiftOpeningAProfileElevatesOnlyThatLaunchOnWindows()
+    {
+        var local = ProfileSettings.CreateCmd();
+        var normal = NewTabMenuResolver.ForMenuLaunch(local, shiftHeld: false);
+        var shifted = NewTabMenuResolver.ForMenuLaunch(local, shiftHeld: true);
+
+        Assert.Same(local, normal);
+        Assert.Equal(OperatingSystem.IsWindows(), shifted.Elevate);
+        Assert.False(local.Elevate);
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.NotSame(local, shifted);
+        }
+    }
 }

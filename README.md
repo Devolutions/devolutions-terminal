@@ -19,6 +19,16 @@ dotnet test Devolutions.Terminal.slnx
 dotnet run --project src/Devolutions.Terminal
 ```
 
+On Windows, **Shift-click a profile** in the new-tab dropdown to open it in an
+elevated tab without elevating the Terminal window. Elevated tabs show a shield,
+including in compact view; **Show admin shield** in Settings controls the badge.
+Install [gsudo](https://gerardog.github.io/gsudo/) and ensure `gsudo.exe` is on
+`PATH` before starting Terminal. To always elevate a profile, enable
+**Run this profile as Administrator** in its settings (`elevate: true`). The
+`newTab`/`splitPane` action's `elevate` argument can override that default.
+Elevation is only available for local Windows sessions; UAC approval is still
+required, and cancelling it does not launch an unelevated shell.
+
 ## NativeAOT publish
 
 ```powershell

@@ -1,4 +1,6 @@
 using Avalonia.Headless.XUnit;
+using Avalonia.Automation;
+using Avalonia.Controls;
 using Avalonia.Threading;
 using Devolutions.Terminal.Settings;
 using Devolutions.Terminal.App.Routing;
@@ -9,6 +11,26 @@ namespace Devolutions.Terminal.UI.Tests;
 
 public sealed class WindowActionRegistrationTests
 {
+    [AvaloniaFact]
+    public void NewTabDropdownUsesExistingProfileEntriesForShiftLaunch()
+    {
+        var window = new MainWindow();
+
+        var menu = window.BuildNewTabMenu();
+
+        Assert.DoesNotContain(menu, item => Equals(item.Header, "Open as administrator"));
+        var profiles = menu.Where(item =>
+            AutomationProperties.GetAutomationId(item)?.StartsWith(
+                "NewTabMenuItem_Profile_", StringComparison.Ordinal) == true).ToArray();
+        Assert.NotEmpty(profiles);
+        foreach (var profile in profiles)
+        {
+            Assert.Equal(
+                OperatingSystem.IsWindows() ? "Shift-click to open as administrator" : null,
+                ToolTip.GetTip(profile));
+        }
+    }
+
     [AvaloniaFact]
     public void RegistersMarkColorAndWindowDialogActions()
     {

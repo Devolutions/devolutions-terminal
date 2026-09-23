@@ -245,6 +245,7 @@ public sealed class ProfileItemViewModel(ProfileSettings profile, Action changed
     public string? TabColor { get => profile.TabColor; set => Change(profile.TabColor, value, v => profile.TabColor = v); }
     public bool SuppressApplicationTitle { get => profile.SuppressApplicationTitle; set => Change(profile.SuppressApplicationTitle, value, v => profile.SuppressApplicationTitle = v); }
     public bool Elevate { get => profile.Elevate; set => Change(profile.Elevate, value, v => profile.Elevate = v); }
+    public bool CanElevate => OperatingSystem.IsWindows();
     public string DarkColorScheme { get => profile.DarkColorScheme; set => Change(profile.DarkColorScheme, value, v => profile.DarkColorScheme = v); }
     public string LightColorScheme { get => profile.LightColorScheme; set => Change(profile.LightColorScheme, value, v => profile.LightColorScheme = v); }
     public string FontFace { get => profile.FontFace; set => Change(profile.FontFace, value, v => profile.FontFace = v); }
@@ -844,6 +845,7 @@ public sealed class ExtensionsSettingsViewModel(AppSettings settings, Action cha
     public bool AlwaysShowNotificationIcon { get => settings.AlwaysShowNotificationIcon; set => Change(settings.AlwaysShowNotificationIcon, value, v => settings.AlwaysShowNotificationIcon = v); }
     public bool MinimizeToNotificationArea { get => settings.MinimizeToNotificationArea; set => Change(settings.MinimizeToNotificationArea, value, v => settings.MinimizeToNotificationArea = v); }
     public bool ShowAdminShield { get => settings.ShowAdminShield; set => Change(settings.ShowAdminShield, value, v => settings.ShowAdminShield = v); }
+    public bool CanShowAdminShield => OperatingSystem.IsWindows();
     public bool EnableColorSelection { get => settings.EnableColorSelection; set => Change(settings.EnableColorSelection, value, v => settings.EnableColorSelection = v); }
     public bool EnableShellCompletionMenu { get => settings.EnableShellCompletionMenu; set => Change(settings.EnableShellCompletionMenu, value, v => settings.EnableShellCompletionMenu = v); }
     public string SearchWebDefaultQueryUrl { get => settings.SearchWebDefaultQueryUrl; set => Change(settings.SearchWebDefaultQueryUrl, value, v => settings.SearchWebDefaultQueryUrl = v); }

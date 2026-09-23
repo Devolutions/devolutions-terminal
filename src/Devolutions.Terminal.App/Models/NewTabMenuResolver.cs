@@ -20,6 +20,14 @@ public sealed record ResolvedNewTabMenuItem(
 
 public static class NewTabMenuResolver
 {
+    public static ProfileSettings ForMenuLaunch(ProfileSettings profile, bool shiftHeld)
+    {
+        ArgumentNullException.ThrowIfNull(profile);
+        return shiftHeld && OperatingSystem.IsWindows()
+            ? profile.WithOverrides(new NewTerminalArgs(Elevate: true))
+            : profile;
+    }
+
     public static IReadOnlyList<ResolvedNewTabMenuItem> Resolve(AppSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);

@@ -722,7 +722,13 @@ public sealed class ConPtyConnection : IRestartableTerminalConnection
             nLength = Marshal.SizeOf<Kernel32.SecurityAttributes>(),
         };
         var threadSecurity = processSecurity;
-        var commandBuffer = (WslCommandLine.Normalize(options.CommandLine) + '\0').ToCharArray();
+        var commandLine = WslCommandLine.Normalize(options.CommandLine);
+        if (options.Elevate)
+        {
+            commandLine = WindowsElevation.WrapCommandLine(commandLine);
+        }
+
+        var commandBuffer = (commandLine + '\0').ToCharArray();
         var currentDirectory = string.IsNullOrWhiteSpace(options.WorkingDirectory)
             ? null
             : Environment.ExpandEnvironmentVariables(options.WorkingDirectory);

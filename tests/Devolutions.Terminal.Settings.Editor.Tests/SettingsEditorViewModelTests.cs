@@ -324,11 +324,9 @@ public sealed class SettingsEditorViewModelTests
     [AvaloniaTheory]
     [InlineData(SettingsPage.Appearance, "Disable animations")]
     [InlineData(SettingsPage.Appearance, "Acrylic tab row")]
-    [InlineData(SettingsPage.Profiles, "Run this profile as Administrator")]
     [InlineData(SettingsPage.ProfileAppearance, "Use acrylic")]
     [InlineData(SettingsPage.Compatibility, "Enable unfocused acrylic")]
     [InlineData(SettingsPage.Extensions, "Language")]
-    [InlineData(SettingsPage.Extensions, "Show admin shield")]
     public void UnsupportedTogglesAreDisabledAndExplained(SettingsPage page, string header)
     {
         var editor = CreateEditor();
@@ -340,6 +338,36 @@ public sealed class SettingsEditorViewModelTests
             row => row.Header == header);
         Assert.Contains("Not supported", row.Description, StringComparison.Ordinal);
         Assert.False(Assert.IsAssignableFrom<Control>(row.Value).IsEnabled);
+    }
+
+    [AvaloniaFact]
+    public void AdministratorProfileToggleIsAvailableOnWindows()
+    {
+        var editor = CreateEditor();
+        editor.SelectPage(SettingsPage.Profiles);
+        var view = new SettingsView(editor);
+        var content = Assert.Single(view.DataTemplates, template => template.Match(editor.CurrentPage)).Build(editor.CurrentPage)!;
+        content.DataContext = editor.CurrentPage;
+        var row = Assert.Single(content.GetLogicalDescendants().OfType<SettingsRow>(),
+            candidate => candidate.Header == "Run this profile as Administrator");
+        var toggle = Assert.IsType<SettingsToggle>(row.Value);
+
+        Assert.Equal(OperatingSystem.IsWindows(), toggle.IsEnabled);
+        Assert.Contains("gsudo", row.Description, StringComparison.Ordinal);
+    }
+
+    [AvaloniaFact]
+    public void AdminShieldToggleIsAvailableOnWindows()
+    {
+        var editor = CreateEditor();
+        editor.SelectPage(SettingsPage.Extensions);
+        var view = new SettingsView(editor);
+        var content = Assert.Single(view.DataTemplates, template => template.Match(editor.CurrentPage)).Build(editor.CurrentPage)!;
+        content.DataContext = editor.CurrentPage;
+        var row = Assert.Single(content.GetLogicalDescendants().OfType<SettingsRow>(),
+            candidate => candidate.Header == "Show admin shield");
+
+        Assert.Equal(OperatingSystem.IsWindows(), Assert.IsType<SettingsToggle>(row.Value).IsEnabled);
     }
 
     [AvaloniaFact]
