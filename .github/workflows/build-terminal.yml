@@ -1013,7 +1013,7 @@ jobs:
           }
 
           New-Item -Path $toolRoot -ItemType Directory -Force | Out-Null
-          gh release download --repo Devolutions/psign --pattern "psign-tool-windows-x64.zip" --dir $toolRoot --clobber
+          gh release download v0.7.0 --repo Devolutions/psign --pattern "psign-tool-windows-x64.zip" --dir $toolRoot --clobber
 
           $toolArchivePath = Join-Path $toolRoot "psign-tool-windows-x64.zip"
           if (-not (Test-Path -LiteralPath $toolArchivePath -PathType Leaf)) {
@@ -1289,7 +1289,7 @@ jobs:
           }
 
           New-Item -Path $extractRoot -ItemType Directory -Force | Out-Null
-          gh release download --repo Devolutions/psign --pattern "psign-tool-linux-x64.zip" --dir $toolRoot --clobber
+          gh release download v0.7.0 --repo Devolutions/psign --pattern "psign-tool-linux-x64.zip" --dir $toolRoot --clobber
 
           $toolArchivePath = Join-Path $toolRoot "psign-tool-linux-x64.zip"
           if (-not (Test-Path -LiteralPath $toolArchivePath -PathType Leaf)) {
