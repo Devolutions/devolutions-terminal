@@ -82,6 +82,7 @@ public partial class MainWindow :
     private readonly DispatcherTimer _notificationTimer;
     private PixelPoint? _normalPosition;
     private WindowSizeState _normalSize = new();
+    private KeyModifiers _newTabButtonModifiers;
 
     public MainWindow() : this(0, string.Empty, null)
     {
@@ -145,11 +146,12 @@ public partial class MainWindow :
         var newTabShortcut = _settings.ActionMap
             .GetKeyBindingForAction("Terminal.OpenNewTab")?
             .ToDisplayString();
-        ToolTip.SetTip(
-            NewTabButton,
-            string.IsNullOrWhiteSpace(newTabShortcut)
-                ? "New tab"
-                : $"New tab ({newTabShortcut})");
+        ToolTip.SetTip(NewTabButton, NewTabButtonTooltip(newTabShortcut));
+        NewTabButton.AddHandler(
+            PointerPressedEvent,
+            (_, e) => _newTabButtonModifiers = e.KeyModifiers,
+            RoutingStrategies.Tunnel,
+            handledEventsToo: true);
         ApplyWindowChrome();
         RefreshJumpList();
         _stateStore = stateStore ?? SettingsService.LoadApplicationState();
@@ -373,8 +375,28 @@ public partial class MainWindow :
           } &&
           terminal == new NewTerminalArgs()));
 
-    private async void NewTab_OnClick(object? sender, RoutedEventArgs e) =>
-        await CreateTabAsync(_settings.GetDefaultProfile()).ConfigureAwait(true);
+    private async void NewTab_OnClick(object? sender, RoutedEventArgs e)
+    {
+        var modifiers = _newTabButtonModifiers;
+        _newTabButtonModifiers = KeyModifiers.None;
+        await LaunchProfileAsync(_settings.GetDefaultProfile(), modifiers).ConfigureAwait(true);
+    }
+
+    private static string NewTabButtonTooltip(string? newTabShortcut)
+    {
+        var lines = new List<string>
+        {
+            string.IsNullOrWhiteSpace(newTabShortcut) ? "New tab" : $"New tab ({newTabShortcut})",
+            "Alt+Click to split the current window",
+            "Shift+Click to open a new window",
+        };
+        if (OperatingSystem.IsWindows())
+        {
+            lines.Add("Ctrl+Click to open as administrator");
+        }
+
+        return string.Join(Environment.NewLine, lines);
+    }
 
     private void Menu_OnClick(object? sender, RoutedEventArgs e)
     {
@@ -507,29 +529,26 @@ public partial class MainWindow :
             menu.Icon = CreateTabIcon(ProfileVisualDefaults.Icon(item.Profile));
             menu.InputGesture = ProfileMenuGesture(item.Profile);
             var profile = item.Profile;
-            var shiftHeld = false;
-            if (OperatingSystem.IsWindows())
-            {
-                ToolTip.SetTip(menu, profile.Elevate
-                    ? "Opens as administrator"
-                    : "Shift-click to open as administrator");
-                menu.AddHandler(
-                    PointerPressedEvent,
-                    (_, e) => shiftHeld = e.KeyModifiers.HasFlag(KeyModifiers.Shift),
-                    RoutingStrategies.Tunnel,
-                    handledEventsToo: true);
-                menu.AddHandler(
-                    KeyDownEvent,
-                    (_, e) => shiftHeld = e.KeyModifiers.HasFlag(KeyModifiers.Shift),
-                    RoutingStrategies.Tunnel,
-                    handledEventsToo: true);
-            }
+            var pressedModifiers = KeyModifiers.None;
+            ToolTip.SetTip(
+                menu,
+                profile.Elevate ? "Opens as administrator" : NewTabButtonTooltip(newTabShortcut: null));
+            menu.AddHandler(
+                PointerPressedEvent,
+                (_, e) => pressedModifiers = e.KeyModifiers,
+                RoutingStrategies.Tunnel,
+                handledEventsToo: true);
+            menu.AddHandler(
+                KeyDownEvent,
+                (_, e) => pressedModifiers = e.KeyModifiers,
+                RoutingStrategies.Tunnel,
+                handledEventsToo: true);
 
             menu.Command = new RelayCommand(() =>
             {
-                var elevate = shiftHeld;
-                shiftHeld = false;
-                _ = CreateTabAsync(NewTabMenuResolver.ForMenuLaunch(profile, elevate));
+                var modifiers = pressedModifiers;
+                pressedModifiers = KeyModifiers.None;
+                _ = LaunchProfileAsync(profile, modifiers);
             });
         }
         else if (item.ActionId is { } actionId &&
@@ -543,6 +562,51 @@ public partial class MainWindow :
         }
 
         return menu;
+    }
+
+    private void OpenNewWindow(INewContentArgs? content)
+    {
+        content ??= new NewTerminalArgs();
+        if (_newWindowRequested is not null)
+        {
+            _newWindowRequested(new(
+                null,
+                null,
+                null,
+                null,
+                TerminalWindowLaunchMode.Default,
+                [new(ShortcutAction.NewTab, new NewTabArgs(content))]));
+        }
+        else
+        {
+            new MainWindow(ResolveProfile(content)).Show();
+        }
+    }
+
+    /// <summary>
+    /// Launches <paramref name="profile"/> honoring the same click modifiers as Windows Terminal:
+    /// Alt splits the current pane, Shift opens a new window, and Ctrl opens elevated (Windows only).
+    /// </summary>
+    private async Task LaunchProfileAsync(ProfileSettings profile, KeyModifiers modifiers)
+    {
+        var elevate = OperatingSystem.IsWindows() && modifiers.HasFlag(KeyModifiers.Control);
+        var effectiveProfile = NewTabMenuResolver.ForMenuLaunch(profile, elevate);
+
+        if (modifiers.HasFlag(KeyModifiers.Alt))
+        {
+            await SplitActivePaneAsync(PaneSplitOrientation.Vertical, effectiveProfile).ConfigureAwait(true);
+            return;
+        }
+
+        if (modifiers.HasFlag(KeyModifiers.Shift))
+        {
+            OpenNewWindow(new NewTerminalArgs(
+                Profile: profile.Guid ?? profile.Name,
+                Elevate: elevate ? true : null));
+            return;
+        }
+
+        await CreateTabAsync(effectiveProfile).ConfigureAwait(true);
     }
 
     private async Task CreateTabAsync(ProfileSettings profile)
@@ -2023,22 +2087,7 @@ public partial class MainWindow :
         });
         Register(ShortcutAction.NewWindow, ActionScope.Application, _ => true, action =>
         {
-            var content = (action.Args as NewWindowArgs)?.ContentArgs ?? new NewTerminalArgs();
-            if (_newWindowRequested is not null)
-            {
-                _newWindowRequested(new(
-                    null,
-                    null,
-                    null,
-                    null,
-                    TerminalWindowLaunchMode.Default,
-                    [new(ShortcutAction.NewTab, new NewTabArgs(content))]));
-            }
-            else
-            {
-                new MainWindow(ResolveProfile(content)).Show();
-            }
-
+            OpenNewWindow((action.Args as NewWindowArgs)?.ContentArgs);
             return Task.CompletedTask;
         });
         Register(ShortcutAction.CloseWindow, ActionScope.Window, _ => true, _ =>

@@ -67,18 +67,18 @@ public sealed class NewTabMenuResolverTests
     }
 
     [Fact]
-    public void ShiftOpeningAProfileElevatesOnlyThatLaunchOnWindows()
+    public void CtrlClickOpeningAProfileElevatesOnlyThatLaunchOnWindows()
     {
         var local = ProfileSettings.CreateCmd();
-        var normal = NewTabMenuResolver.ForMenuLaunch(local, shiftHeld: false);
-        var shifted = NewTabMenuResolver.ForMenuLaunch(local, shiftHeld: true);
+        var normal = NewTabMenuResolver.ForMenuLaunch(local, elevate: false);
+        var elevated = NewTabMenuResolver.ForMenuLaunch(local, elevate: true);
 
         Assert.Same(local, normal);
-        Assert.Equal(OperatingSystem.IsWindows(), shifted.Elevate);
+        Assert.Equal(OperatingSystem.IsWindows(), elevated.Elevate);
         Assert.False(local.Elevate);
         if (OperatingSystem.IsWindows())
         {
-            Assert.NotSame(local, shifted);
+            Assert.NotSame(local, elevated);
         }
     }
 }
