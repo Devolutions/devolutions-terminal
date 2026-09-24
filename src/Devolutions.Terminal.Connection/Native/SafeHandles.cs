@@ -21,7 +21,7 @@ internal sealed class SafePseudoConsoleHandle : SafeHandleZeroOrMinusOneIsInvali
 
     protected override bool ReleaseHandle()
     {
-        Kernel32.ClosePseudoConsole(handle);
+        ConPty.ClosePseudoConsole(handle);
         return true;
     }
 }

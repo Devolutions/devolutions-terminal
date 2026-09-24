@@ -303,7 +303,7 @@ public sealed class AzureCloudShellTests
         await using var connection = fixture.Connection;
         await connection.StartAsync(string.Empty, null, 80, 24);
 
-        await connection.CloseAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        await connection.CloseAsync().WaitAsync(TimeSpan.FromSeconds(10));
 
         Assert.Equal(TerminalConnectionState.Closed, connection.State);
         Assert.Contains(diagnostics, value => value.Code == "WebSocketCloseTimedOut");

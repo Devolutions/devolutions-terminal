@@ -382,8 +382,19 @@ public sealed class AdvancedProtocolEngineTests
         engine.Feed("\u001b[?80$p\u001b[?80l\u001b[?80$p\u001b[?80h\u001b[?80$p");
 
         Assert.Equal(
-            ["\u001b[?80;1$y", "\u001b[?80;2$y", "\u001b[?80;1$y"],
+            ["\u001b[?80;2$y", "\u001b[?80;2$y", "\u001b[?80;1$y"],
             responses);
+    }
+
+    [Fact]
+    public void SixelWithoutDecsdmSequenceIsAnchoredAtCursorByDefault()
+    {
+        var engine = new TerminalEngine(10, 5);
+        engine.Feed("\u001b[3;4H\u001bP7q~\u001b\\");
+
+        var image = Assert.Single(engine.Images);
+        Assert.Equal(3, image.AnchorColumn);
+        Assert.Equal(2, image.AnchorRow);
     }
 
     [Fact]

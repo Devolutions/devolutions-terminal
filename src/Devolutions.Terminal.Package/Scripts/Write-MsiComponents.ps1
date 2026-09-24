@@ -27,7 +27,7 @@ function Get-ParentPath {
         return ''
     }
 
-    $normalized = $Path.Replace('\\', '/')
+    $normalized = $Path.Replace('\', '/')
     $index = $normalized.LastIndexOf('/')
     if ($index -lt 0) {
         return ''
@@ -54,13 +54,13 @@ function Get-RelativePath {
             return '.'
         }
 
-        return $relative.Replace('\\', '/')
+        return $relative.Replace('\', '/')
     }
 
     $baseUri = [Uri]::new(($baseFull + [IO.Path]::DirectorySeparatorChar))
     $targetUri = [Uri]::new($targetFull)
     $relative = [Uri]::UnescapeDataString($baseUri.MakeRelativeUri($targetUri).ToString())
-    return $relative.Replace('\\', '/')
+    return $relative.Replace('\', '/')
 }
 
 foreach ($file in $files) {
@@ -120,7 +120,7 @@ foreach ($file in $files) {
         $directoryId = 'INSTALLLOCATION'
     }
     else {
-        $directoryId = $directoryIds[$relativeDirectory.Replace('\\', '/')]
+        $directoryId = $directoryIds[$relativeDirectory.Replace('\', '/')]
     }
 
     $componentId = 'cmp_' + (($relativePath -replace '[^A-Za-z0-9_]', '_').Trim('_'))

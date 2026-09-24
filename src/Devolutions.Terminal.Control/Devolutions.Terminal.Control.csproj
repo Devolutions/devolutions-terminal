@@ -36,6 +36,7 @@
     <PackageReference Include="SkiaSharp.HarfBuzz" />
     <PackageReference Include="SkiaSharp.NativeAssets.Linux" />
     <PackageReference Include="HarfBuzzSharp.NativeAssets.Linux" />
+    <PackageReference Include="Microsoft.Windows.Console.ConPTY" GeneratePathProperty="true" ExcludeAssets="build" />
   </ItemGroup>
   <ItemGroup>
     <!--
@@ -62,6 +63,14 @@
                       Link="Assets\Fonts\NotoColorEmoji.ttf" />
   </ItemGroup>
   <Import Project="..\..\native\noto-emoji\NotoEmoji.targets" />
+  <ItemGroup>
+    <None Include="..\Devolutions.Terminal.Connection\ConPtyHost.targets"
+          Pack="true" PackagePath="buildTransitive\Devolutions.Terminal.Control.targets" />
+    <None Include="..\Devolutions.Terminal.Connection\THIRD-PARTY-NOTICES-CONPTY.txt"
+          Pack="true" PackagePath="buildTransitive" />
+    <None Include="$(PkgMicrosoft_Windows_Console_ConPTY)\build\native\runtimes\**\OpenConsole.exe"
+          Pack="true" PackagePath="tools\conpty" />
+  </ItemGroup>
 
   <!--
     Bundle the build outputs of the internal, non-packable project
@@ -81,4 +90,3 @@
     </ItemGroup>
   </Target>
 </Project>
-

@@ -545,6 +545,32 @@ public sealed class SkiaTerminalRendererTests
         Assert.Equal(new SKColor(12, 12, 12), bitmap.GetPixel(13, 12));
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(1.25)]
+    [InlineData(1.5)]
+    [InlineData(2)]
+    public void SixelPhysicalCellGeometryIsConvertedToDips(double scale)
+    {
+        var engine = new TerminalEngine(16, 4);
+        engine.Resize(16, 4, 20 * scale, 40 * scale);
+        engine.Feed("\u001bPq\"1;1;10;6#2;2;100;0;0!10~\u001b\\");
+        var frame = TerminalRenderPlanner.Create(engine.CreateSnapshot(), engine.Scheme);
+        using var renderer = new SkiaTerminalRenderer();
+        renderer.Resize(new RenderViewport(frame.Columns, frame.Rows, scale));
+        using var bitmap = NewBitmap(renderer, frame);
+        using var canvas = new SKCanvas(bitmap);
+
+        renderer.Render(
+            canvas, frame, TerminalRenderOverlays.Empty,
+            new SKRect(0, 0, bitmap.Width, bitmap.Height), 8, drawCursor: false);
+
+        Assert.Equal(SKColors.Red, bitmap.GetPixel(8, 8));
+        Assert.Equal(SKColors.Red, bitmap.GetPixel(27, 19));
+        Assert.Equal(new SKColor(12, 12, 12), bitmap.GetPixel(28, 19));
+        Assert.Equal(new SKColor(12, 12, 12), bitmap.GetPixel(27, 20));
+    }
+
     [Fact]
     public void ImageAnchorColumnScalesWithDoubleWidthRendition()
     {

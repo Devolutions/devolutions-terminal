@@ -12,7 +12,17 @@ Commands are relative to the repository root.
 - WinApp CLI 0.6.0 for MSIX creation and validation
 - A trusted code-signing certificate for distributable MSIX artifacts
 
-Windows local sessions use ConPTY. Linux and macOS local sessions use the
+Windows local sessions use the pinned `Microsoft.Windows.Console.ConPTY` NuGet
+runtime. Ship `conpty.dll` and the architecture-specific `OpenConsole.exe`
+subdirectories together: without its host, ConPTY can fall back to the OS copy
+and silently lose Sixel output. `ConPtyHost.targets` supplies these files for
+RID-less builds, RID-specific publishes, and Control NuGet consumers, including
+the ARM64 host required by x64 processes running under emulation. Because
+`conpty.dll` lands under `runtimes\<rid>\native` for RID-less builds but at the
+output root once a RID is applied, the hosts are emitted in both layouts; a RID
+does not reliably flow to referenced projects, so the placement cannot depend on
+it.
+Linux and macOS local sessions use the
 bundled `forkpty` relay. The Avalonia shell, settings, renderer, and terminal
 engines are shared.
 
@@ -400,9 +410,9 @@ that `Control` needs, or a project that needs direct access to
 
 ## Platform constraints
 
-- Public out-of-process ConPTY can filter or alter DCS/APC payloads on some
-  Windows builds. Sixel works when the selected connection passes DCS bytes
-  through unchanged.
+- The OS-provided ConPTY can filter graphics payloads on some Windows builds.
+  Local sessions use the bundled runtime to preserve Sixel; remote connections
+  must also transport image sequences unchanged.
 - Avalonia 12 exposes the terminal as a readable UIA Document/Value provider,
   but does not provide a public bridge for native UIA TextPattern/TextPattern2
   or LiveSetting events. Managed ranges and visible notification text remain

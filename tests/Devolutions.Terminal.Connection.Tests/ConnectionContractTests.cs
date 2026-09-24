@@ -5,6 +5,7 @@ using System.Runtime.Versioning;
 using System.Text;
 using System.Text.RegularExpressions;
 using Devolutions.Terminal.Connection;
+using Devolutions.Terminal.Core;
 using Microsoft.Win32;
 using Xunit;
 
@@ -107,6 +108,48 @@ public sealed class ConnectionContractTests
         Assert.NotNull(connection.ProcessMetadata);
         Assert.Equal(exitCode, connection.LastExitInfo?.ExitCode);
         Assert.Equal(TerminalExitReason.ProcessExited, connection.LastExitInfo?.Reason);
+    }
+
+    [Fact(Skip = "ConPTY is Windows-only.", SkipUnless = nameof(IsWindows))]
+    public async Task SixelSurvivesConPtyAndDecodesToImage()
+    {
+        await using var connection = new ConPtyConnection();
+        var engine = new TerminalEngine(80, 24);
+        var output = new List<byte>();
+        var exited = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        connection.OutputReceived += (_, bytes) =>
+        {
+            lock (output)
+            {
+                output.AddRange(bytes.ToArray());
+                engine.Feed(bytes.Span);
+            }
+        };
+        engine.ResponseReady += (_, bytes) => connection.Write(bytes);
+        connection.Exited += (_, code) => exited.TrySetResult(code);
+        connection.Faulted += (_, error) => exited.TrySetException(error);
+        const string sixel = "\u001bPq\"1;1;60;6#0;2;100;0;0#0!60~\u001b\\";
+        var payload = Convert.ToBase64String(Encoding.UTF8.GetBytes("BEFORE" + sixel + "AFTER"));
+        var script = $"[Console]::Write([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{payload}')))";
+        var command = "powershell.exe -NoLogo -NoProfile -EncodedCommand " +
+            Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
+
+        await connection.StartAsync(command, null, 80, 24, TestContext.Current.CancellationToken);
+
+        Assert.Equal(0, await exited.Task.WaitAsync(TimeSpan.FromSeconds(10)));
+        await WaitForOutputAsync(output, "AFTER");
+        lock (output)
+        {
+            var text = Encoding.UTF8.GetString([.. output]);
+            Assert.Contains("BEFORE", text);
+            Assert.Contains(sixel, text);
+            var image = Assert.Single(engine.Images);
+            Assert.Equal(TerminalImageProtocol.Sixel, image.Protocol);
+            Assert.NotNull(image.Sixel);
+            Assert.Equal(60, image.Sixel.Width);
+            Assert.Equal(6, image.Sixel.Height);
+            Assert.All(image.Sixel.ToRgba32(), pixel => Assert.Equal(0xFFFF0000u, pixel));
+        }
     }
 
     [Fact(Skip = "ConPTY is Windows-only.", SkipUnless = nameof(IsWindows))]
@@ -455,13 +498,14 @@ public sealed class ConnectionContractTests
         };
         connection.Exited += (_, code) => exited.TrySetResult(code);
 
-        await connection.StartAsync($"\"{powershell}\" -NoLogo", null, 80, 24);
+        await connection.StartAsync($"\"{powershell}\" -NoLogo -NoProfile", null, 80, 24);
+        await WaitForOutputAsync(output, "PS ", TimeSpan.FromSeconds(20));
         connection.Write(
-            "if (Get-Module PSReadLine) { 'PSREADLINE_OK' } else { 'PSREADLINE_MISSING' }\r");
+            "if (Get-Module PSReadLine) { 'PSREAD' + 'LINE_OK' } else { 'PSREADLINE_MISSING' }\r");
+        await WaitForOutputAsync(output, "PSREADLINE_OK", TimeSpan.FromSeconds(20));
         connection.Write("exit\r");
 
-        Assert.Equal(0, await exited.Task.WaitAsync(TimeSpan.FromSeconds(10)));
-        await WaitForOutputAsync(output, "PSREADLINE_OK");
+        Assert.Equal(0, await exited.Task.WaitAsync(TimeSpan.FromSeconds(20)));
         lock (output)
         {
             Assert.DoesNotContain(

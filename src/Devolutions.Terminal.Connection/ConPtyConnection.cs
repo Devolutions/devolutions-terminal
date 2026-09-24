@@ -158,7 +158,7 @@ public sealed class ConPtyConnection : IRestartableTerminalConnection
             if (pseudoConsole is not null && !pseudoConsole.IsInvalid && !pseudoConsole.IsClosed)
             {
                 var size = new Kernel32.Coord { X = (short)validatedColumns, Y = (short)validatedRows };
-                var hr = Kernel32.ResizePseudoConsole(pseudoConsole, size);
+                var hr = ConPty.ResizePseudoConsole(pseudoConsole, size);
                 if (hr != 0)
                 {
                     Marshal.ThrowExceptionForHR(hr);
@@ -225,7 +225,7 @@ public sealed class ConPtyConnection : IRestartableTerminalConnection
                 X = (short)options.Columns,
                 Y = (short)options.Rows,
             };
-            var hr = Kernel32.CreatePseudoConsole(size, inputRead, outputWrite, 0, out var pseudoConsoleValue);
+            var hr = ConPty.CreatePseudoConsole(size, inputRead, outputWrite, 0, out var pseudoConsoleValue);
             if (hr != 0)
             {
                 Marshal.ThrowExceptionForHR(hr);

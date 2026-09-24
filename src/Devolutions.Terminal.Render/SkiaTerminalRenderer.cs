@@ -583,8 +583,9 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
         var naturalHeight = (float)bitmap.Height;
         if (image.Sixel is not null)
         {
-            var sixelWidth = naturalWidth * (float)(image.CellGeometry.CellWidth / 10);
-            var sixelHeight = naturalHeight * (float)(image.CellGeometry.CellHeight / 20);
+            // The engine retains physical cell pixels; the canvas uses DIPs.
+            var sixelWidth = naturalWidth * (float)(image.CellGeometry.CellWidth / 10) * PhysicalPixel;
+            var sixelHeight = naturalHeight * (float)(image.CellGeometry.CellHeight / 20) * PhysicalPixel;
             return SKRect.Create(
                 left,
                 top,

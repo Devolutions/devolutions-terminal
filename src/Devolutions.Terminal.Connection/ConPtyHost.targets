@@ -1,0 +1,34 @@
+<Project>
+  <PropertyGroup>
+    <ConPtyHostSourceRoot Condition="'$(ConPtyHostSourceRoot)' == ''">$(MSBuildThisFileDirectory)..\tools\conpty</ConPtyHostSourceRoot>
+  </PropertyGroup>
+  <!-- ConPTY resolves the host for the native OS architecture relative to conpty.dll,
+       and silently falls back to the OS conhost.exe (which strips DCS/sixel) when it is
+       missing. conpty.dll lands under runtimes\<rid>\native for RID-less builds and at the
+       output root for RID/self-contained publishes, so both layouts are populated: a RID
+       does not necessarily flow to this project when a referencing app is published.
+       ARM64 hosts are included for x64/x86 processes running under Windows emulation. -->
+  <Target Name="IncludeConPtyHosts" BeforeTargets="AssignTargetPaths">
+    <ItemGroup>
+      <_ConPtyArch Include="x86;x64;arm64" />
+      <_ConPtyRuntime Include="win-x86;win-x64;win-arm64" Condition="'$(RuntimeIdentifier)' == ''" />
+      <None Include="@(_ConPtyArch->'$(ConPtyHostSourceRoot)\%(Identity)\OpenConsole.exe')"
+            Link="%(_ConPtyArch.Identity)\OpenConsole.exe"
+            CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+      <None Include="@(_ConPtyRuntime->'$(ConPtyHostSourceRoot)\x86\OpenConsole.exe')"
+            Condition="'%(_ConPtyRuntime.Identity)' == 'win-x86'"
+            Link="runtimes\%(_ConPtyRuntime.Identity)\native\x86\OpenConsole.exe"
+            CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+      <None Include="@(_ConPtyRuntime->'$(ConPtyHostSourceRoot)\x64\OpenConsole.exe')"
+            Condition="'%(_ConPtyRuntime.Identity)' == 'win-x86' or '%(_ConPtyRuntime.Identity)' == 'win-x64'"
+            Link="runtimes\%(_ConPtyRuntime.Identity)\native\x64\OpenConsole.exe"
+            CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+      <None Include="@(_ConPtyRuntime->'$(ConPtyHostSourceRoot)\arm64\OpenConsole.exe')"
+            Link="runtimes\%(_ConPtyRuntime.Identity)\native\arm64\OpenConsole.exe"
+            CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+      <None Include="$(MSBuildThisFileDirectory)THIRD-PARTY-NOTICES-CONPTY.txt"
+            Link="THIRD-PARTY-NOTICES-CONPTY.txt"
+            CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
+  </Target>
+</Project>
