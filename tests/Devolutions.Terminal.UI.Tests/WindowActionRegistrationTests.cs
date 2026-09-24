@@ -12,7 +12,7 @@ namespace Devolutions.Terminal.UI.Tests;
 public sealed class WindowActionRegistrationTests
 {
     [AvaloniaFact]
-    public void NewTabDropdownUsesExistingProfileEntriesForShiftLaunch()
+    public void NewTabDropdownUsesExistingProfileEntriesForCtrlClickLaunch()
     {
         var window = new MainWindow();
 
@@ -25,9 +25,12 @@ public sealed class WindowActionRegistrationTests
         Assert.NotEmpty(profiles);
         foreach (var profile in profiles)
         {
+            var tip = Assert.IsType<string>(ToolTip.GetTip(profile));
+            Assert.Contains("Alt+Click to split the current window", tip);
+            Assert.Contains("Shift+Click to open a new window", tip);
             Assert.Equal(
-                OperatingSystem.IsWindows() ? "Shift-click to open as administrator" : null,
-                ToolTip.GetTip(profile));
+                OperatingSystem.IsWindows(),
+                tip.Contains("Ctrl+Click to open as administrator", StringComparison.Ordinal));
         }
     }
 

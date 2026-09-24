@@ -20,10 +20,10 @@ public sealed record ResolvedNewTabMenuItem(
 
 public static class NewTabMenuResolver
 {
-    public static ProfileSettings ForMenuLaunch(ProfileSettings profile, bool shiftHeld)
+    public static ProfileSettings ForMenuLaunch(ProfileSettings profile, bool elevate)
     {
         ArgumentNullException.ThrowIfNull(profile);
-        return shiftHeld && OperatingSystem.IsWindows()
+        return elevate && OperatingSystem.IsWindows()
             ? profile.WithOverrides(new NewTerminalArgs(Elevate: true))
             : profile;
     }
