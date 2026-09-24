@@ -498,13 +498,14 @@ public sealed class ConnectionContractTests
         };
         connection.Exited += (_, code) => exited.TrySetResult(code);
 
-        await connection.StartAsync($"\"{powershell}\" -NoLogo", null, 80, 24);
+        await connection.StartAsync($"\"{powershell}\" -NoLogo -NoProfile", null, 80, 24);
+        await WaitForOutputAsync(output, "PS ", TimeSpan.FromSeconds(20));
         connection.Write(
-            "if (Get-Module PSReadLine) { 'PSREADLINE_OK' } else { 'PSREADLINE_MISSING' }\r");
+            "if (Get-Module PSReadLine) { 'PSREAD' + 'LINE_OK' } else { 'PSREADLINE_MISSING' }\r");
+        await WaitForOutputAsync(output, "PSREADLINE_OK", TimeSpan.FromSeconds(20));
         connection.Write("exit\r");
 
-        Assert.Equal(0, await exited.Task.WaitAsync(TimeSpan.FromSeconds(10)));
-        await WaitForOutputAsync(output, "PSREADLINE_OK");
+        Assert.Equal(0, await exited.Task.WaitAsync(TimeSpan.FromSeconds(20)));
         lock (output)
         {
             Assert.DoesNotContain(
