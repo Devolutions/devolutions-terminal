@@ -11,10 +11,20 @@ namespace Devolutions.Terminal.UI.Tests;
 
 public sealed class WindowActionRegistrationTests
 {
+    private static readonly TerminalWindowActivation SettingsOnlyStartup = new(
+        null,
+        null,
+        null,
+        null,
+        TerminalWindowLaunchMode.Default,
+        [new ActionAndArgs(
+            ShortcutAction.OpenSettings,
+            new OpenSettingsArgs(SettingsTarget.SettingsUI))]);
+
     [AvaloniaFact]
     public void NewTabDropdownUsesExistingProfileEntriesForCtrlClickLaunch()
     {
-        var window = new MainWindow();
+        var window = new MainWindow(0, string.Empty, SettingsOnlyStartup);
 
         var menu = window.BuildNewTabMenu();
 
@@ -37,7 +47,7 @@ public sealed class WindowActionRegistrationTests
     [AvaloniaFact]
     public void RegistersMarkColorAndWindowDialogActions()
     {
-        var window = new MainWindow();
+        var window = new MainWindow(0, string.Empty, SettingsOnlyStartup);
 
         var expected = new[]
         {
@@ -69,7 +79,7 @@ public sealed class WindowActionRegistrationTests
     [AvaloniaFact]
     public async Task OpenSettingsCreatesReusableSettingsTab()
     {
-        var window = new MainWindow();
+        var window = new MainWindow(0, string.Empty, SettingsOnlyStartup);
 
         var first = await window.ActivateAsync(new TerminalWindowActivation(
             null,
@@ -103,7 +113,7 @@ public sealed class WindowActionRegistrationTests
     [AvaloniaFact]
     public async Task ClosedSettingsTabIsNotRestoredAsATerminal()
     {
-        var window = new MainWindow();
+        var window = new MainWindow(0, string.Empty, SettingsOnlyStartup);
 
         await window.ActivateAsync(new TerminalWindowActivation(
             null,
@@ -143,7 +153,7 @@ public sealed class WindowActionRegistrationTests
     [AvaloniaFact]
     public async Task TerminalOnlyActionsAreUnavailableOnTheSettingsTab()
     {
-        var window = new MainWindow();
+        var window = new MainWindow(0, string.Empty, SettingsOnlyStartup);
 
         await window.ActivateAsync(new TerminalWindowActivation(
             null,
@@ -193,7 +203,7 @@ public sealed class WindowActionRegistrationTests
     [AvaloniaFact]
     public async Task ActivatingAfterTheLastTabClosesDoesNotThrow()
     {
-        var window = new MainWindow();
+        var window = new MainWindow(0, string.Empty, SettingsOnlyStartup);
 
         await window.ActivateAsync(new TerminalWindowActivation(
             null,
@@ -204,6 +214,7 @@ public sealed class WindowActionRegistrationTests
             [new ActionAndArgs(
                 ShortcutAction.OpenSettings,
                 new OpenSettingsArgs(SettingsTarget.SettingsUI))]));
+        await window.InitialActivation;
         Dispatcher.UIThread.RunJobs();
 
         while (window.Tabs.Count > 0)
@@ -239,7 +250,7 @@ public sealed class WindowActionRegistrationTests
         var window = new MainWindow(
             7,
             "original",
-            null,
+            SettingsOnlyStartup,
             windowNameValidator: name => name != "duplicate");
 
         var renamed = await window.ActivateAsync(new TerminalWindowActivation(
@@ -272,7 +283,7 @@ public sealed class WindowActionRegistrationTests
         using var temporary = new TemporaryDirectory();
         var stateStore = new ApplicationStateStore(temporary.Path);
         stateStore.SaveWorkspace("existing", new WindowLayoutState());
-        var window = new MainWindow(9, "original", null, stateStore: stateStore);
+        var window = new MainWindow(9, "original", SettingsOnlyStartup, stateStore: stateStore);
 
         var result = await window.ActivateAsync(new TerminalWindowActivation(
             null,
@@ -320,7 +331,7 @@ public sealed class WindowActionRegistrationTests
             var window = new MainWindow(
                 1,
                 string.Empty,
-                null,
+                SettingsOnlyStartup,
                 stateStore: store,
                 workspaceRequested: name => requested = name);
 
