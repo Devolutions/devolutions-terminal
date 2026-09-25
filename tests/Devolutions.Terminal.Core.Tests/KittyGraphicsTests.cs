@@ -170,6 +170,33 @@ public sealed class KittyGraphicsTests
         Assert.StartsWith(expectedCode, error, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void PixelCountBoundaryDistinguishesExactLimitFromOnePixelOver()
+    {
+        Assert.True(KittyGraphicsDecoder.TryParse(
+            "a=t,f=32,s=4096,v=4096",
+            out var atLimit,
+            out _));
+        Assert.False(KittyGraphicsDecoder.TryDecodeImageData(
+            atLimit!,
+            Array.Empty<byte>(),
+            out _,
+            out var atLimitError));
+
+        Assert.True(KittyGraphicsDecoder.TryParse(
+            "a=t,f=32,s=4096,v=4097",
+            out var overLimit,
+            out _));
+        Assert.False(KittyGraphicsDecoder.TryDecodeImageData(
+            overLimit!,
+            Array.Empty<byte>(),
+            out _,
+            out var overLimitError));
+
+        Assert.StartsWith("EINVAL", atLimitError, StringComparison.Ordinal);
+        Assert.StartsWith("ETOOMANY", overLimitError, StringComparison.Ordinal);
+    }
+
     // --- engine ---
 
     [Fact]
@@ -243,6 +270,91 @@ public sealed class KittyGraphicsTests
         var overlay = Assert.Single(engine.Images);
         Assert.Equal(pixels, overlay.Kitty!.Data.Rgba32Pixels);
         Assert.Equal([$"{Esc}_Gi=9;OK{Esc}\\"], responses);
+    }
+
+    [Fact]
+    public void InvalidContinuationAbortsPendingChunksAndNextImageRecovers()
+    {
+        var (engine, responses) = CreateEngine();
+        var diagnostics = new List<TerminalEngineDiagnostic>();
+        engine.Diagnostic += (_, value) => diagnostics.Add(value);
+        engine.Feed(Apc("a=T,f=32,s=1,v=1,i=9,m=1", "AQID"));
+        engine.Feed(Apc("i=9,m=0", "!!!"));
+        engine.Feed(Apc("i=9,m=0", "BA=="));
+
+        Assert.Empty(engine.Images);
+        Assert.Equal(2, responses.Count);
+        Assert.All(responses, response => Assert.Contains("EINVAL", response, StringComparison.Ordinal));
+        Assert.Contains(diagnostics, value => value.Code == "image.kitty.rejected");
+
+        engine.Feed(Apc("a=T,f=32,s=1,v=1,i=10,C=1", "AQIDBA=="));
+        Assert.Equal(10u, Assert.Single(engine.Images).Kitty!.ImageId);
+        Assert.Equal([$"{Esc}_Gi=10;OK{Esc}\\"], responses.Skip(2));
+    }
+
+    [Fact]
+    public void MismatchedContinuationIdDoesNotPublishPartialImage()
+    {
+        var (engine, responses) = CreateEngine();
+        engine.Feed(Apc("a=T,f=32,s=1,v=1,i=9,m=1", "AQID"));
+        engine.Feed(Apc("i=10,m=0", "BA=="));
+
+        Assert.Empty(engine.Images);
+        Assert.Single(responses);
+        Assert.Contains("EINVAL", responses[0], StringComparison.Ordinal);
+        engine.Feed(Apc("a=T,f=32,s=1,v=1,i=11,C=1", "AQIDBA=="));
+        Assert.Equal(11u, Assert.Single(engine.Images).Kitty!.ImageId);
+    }
+
+    [Fact]
+    public void ChunkedApcSplitBeforeTerminatorDoesNotPublishUntilCompleted()
+    {
+        var (engine, responses) = CreateEngine();
+        var first = Apc("a=T,f=32,s=1,v=1,i=8,m=1", "AQID");
+        engine.Feed(first[..^1]);
+        Assert.Empty(engine.Images);
+        engine.Feed(first[^1..]);
+        Assert.Empty(engine.Images);
+        var last = Apc("i=8,m=0", "BA==");
+        engine.Feed(last[..^2]);
+        Assert.Empty(responses);
+        engine.Feed(last[^2..]);
+        Assert.Equal([1, 2, 3, 4], Assert.Single(engine.Images).Kitty!.Data.Rgba32Pixels);
+        Assert.Equal([$"{Esc}_Gi=8;OK{Esc}\\"], responses);
+    }
+
+    [Fact]
+    public void OversizedApcFragmentIsDiscardedAndNextTransmissionRecovers()
+    {
+        var (engine, responses) = CreateEngine();
+        engine.Feed($"{Esc}_Ga=T,f=32,s=1,v=1,i=4;{new string('A', 1024 * 1024 + 1)}{Esc}\\");
+        Assert.Empty(engine.Images);
+        Assert.Empty(responses);
+
+        engine.Feed(Apc("a=T,f=32,s=1,v=1,i=5,C=1", "AQIDBA=="));
+        Assert.Equal(5u, Assert.Single(engine.Images).Kitty!.ImageId);
+        Assert.Equal([$"{Esc}_Gi=5;OK{Esc}\\"], responses);
+    }
+
+    [Fact]
+    public void InflatedPayloadBeyondBoundIsRejectedWithoutPlacement()
+    {
+        var (engine, responses) = CreateEngine();
+        var diagnostics = new List<TerminalEngineDiagnostic>();
+        engine.Diagnostic += (_, value) => diagnostics.Add(value);
+        using var output = new MemoryStream();
+        using (var zlib = new ZLibStream(output, CompressionMode.Compress, leaveOpen: true))
+        {
+            var zeros = new byte[64 * 1024];
+            for (var i = 0; i <= TerminalImageLimits.MaximumKittyImageBytes / zeros.Length; i++)
+            {
+                zlib.Write(zeros);
+            }
+        }
+        engine.Feed(Apc("a=T,f=100,o=z,i=12", B64(output.ToArray())));
+        Assert.Empty(engine.Images);
+        Assert.Contains("ETOOMANY", Assert.Single(responses), StringComparison.Ordinal);
+        Assert.Contains(diagnostics, value => value.Code == "image.kitty.rejected");
     }
 
     [Fact]
@@ -328,6 +440,95 @@ public sealed class KittyGraphicsTests
     }
 
     [Fact]
+    public void PlacementDeletePreservesOtherKittyAndSixelAndStoredData()
+    {
+        var (engine, responses) = CreateEngine();
+        engine.Feed($"{Esc}P7q~{Esc}\\");
+        engine.Feed(Apc("a=t,f=32,s=1,v=1,i=5", "AQIDBA=="));
+        engine.Feed(Apc("a=p,i=5,p=1,X=0,Y=0,w=1,h=1,c=2,r=1"));
+        engine.Feed(Apc("a=p,i=5,p=2"));
+        engine.Feed(Apc("a=d,d=p,i=5,p=1"));
+
+        Assert.Equal(2, engine.Images.Count);
+        Assert.Contains(engine.Images, image => image.Protocol == TerminalImageProtocol.Sixel);
+        Assert.Equal(2u, Assert.Single(engine.Images, image => image.Kitty is not null).Kitty!.PlacementId);
+        engine.Feed(Apc("a=p,i=5,p=3"));
+        Assert.Equal(3u, engine.Images[^1].Kitty!.PlacementId);
+        Assert.Equal([1, 2, 3, 4], engine.Images[^1].Kitty!.Data.Rgba32Pixels);
+        Assert.Equal(4, responses.Count);
+    }
+
+    [Theory]
+    [InlineData('p')]
+    [InlineData('i')]
+    [InlineData('a')]
+    public void DeletingLastPlacementDoesNotFreeTransmittedKittyPixels(char mode)
+    {
+        var (engine, responses) = CreateEngine();
+        engine.Feed(Apc("a=t,f=32,s=1,v=1,i=14", "AQIDBA=="));
+        engine.Feed(Apc("a=p,i=14,p=1"));
+        Assert.Equal(1u, Assert.Single(engine.Images).Kitty!.PlacementId);
+        engine.Feed(Apc($"a=d,d={mode},i=14,p=1"));
+        Assert.Empty(engine.Images);
+
+        engine.Feed(Apc("a=p,i=14,p=2"));
+        var replacement = Assert.Single(engine.Images);
+        Assert.Equal(2u, replacement.Kitty!.PlacementId);
+        Assert.Equal([1, 2, 3, 4], replacement.Kitty.Data.Rgba32Pixels);
+        Assert.Equal($"{Esc}_Gi=14;OK{Esc}\\", responses[^1]);
+    }
+
+    [Theory]
+    [InlineData('c')]
+    [InlineData('x')]
+    [InlineData('y')]
+    [InlineData('z')]
+    [InlineData('n')]
+    public void UnsupportedTargetedDeleteDoesNotRemovePlacementOrData(char mode)
+    {
+        var (engine, responses) = CreateEngine();
+        engine.Feed(Apc("a=T,f=32,s=1,v=1,i=5,p=3,C=1", "AQIDBA=="));
+        var placed = Assert.Single(engine.Images);
+        engine.Feed(Apc($"a=d,d={mode},i=5,p=3"));
+        Assert.Same(placed, Assert.Single(engine.Images));
+        engine.Feed(Apc("a=p,i=5,p=4"));
+        Assert.Equal(4u, engine.Images[^1].Kitty!.PlacementId);
+        Assert.Equal(2, responses.Count); // deletes are silent, successful put responds
+    }
+
+    [Fact]
+    public void ReflowAndScrollbackKeepKittyAnchorUntilOwningSegmentIsEvicted()
+    {
+        var (engine, _) = CreateEngine(columns: 6, rows: 2);
+        engine.Feed("abcd" + Apc("a=T,f=32,s=1,v=1,i=6,C=1", "AQIDBA==") + "efgh");
+        engine.Resize(3, 3);
+        var anchor = Assert.Single(engine.CreateSnapshot(includeHistory: true).Images);
+        Assert.Equal(1, anchor.AnchorRow);
+        Assert.Equal(1, anchor.AnchorColumn);
+        Assert.Equal(6u, anchor.Kitty!.ImageId);
+        engine.Feed("\r\none\r\ntwo");
+        Assert.Equal(6u, Assert.Single(engine.CreateSnapshot(includeHistory: true).Images).Kitty!.ImageId);
+    }
+
+    [Fact]
+    public void AlternateKittyResetDoesNotRestorePreviousBufferPlacements()
+    {
+        var (engine, responses) = CreateEngine();
+        engine.Feed(Apc("a=T,f=32,s=1,v=1,i=1,C=1", "AQIDBA=="));
+        engine.Feed($"{Esc}[?1049h");
+        engine.Feed(Apc("a=T,f=32,s=1,v=1,i=2,C=1", "AQIDBA=="));
+        Assert.Equal(2, engine.Images.Count);
+        Assert.True(engine.Images[^1].AlternateBuffer);
+        engine.Feed($"{Esc}[?1049l");
+        engine.Reset();
+        Assert.Empty(engine.Images);
+        Assert.Empty(engine.CreateSnapshot(includeHistory: true).Images);
+        engine.Feed(Apc("a=p,i=1"));
+        engine.Feed(Apc("a=p,i=2"));
+        Assert.All(responses.TakeLast(2), response => Assert.Contains("ENOENT", response, StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void QuietFlagsSuppressResponses()
     {
         var (engine, responses) = CreateEngine();
@@ -348,6 +549,23 @@ public sealed class KittyGraphicsTests
         var (engine, responses) = CreateEngine();
         engine.Feed(Apc("a=f,i=1"));
         Assert.Contains("ENOTSUP", responses[0], StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData('f')]
+    [InlineData('s')]
+    public void FileAndSharedMemoryMediaAreRejectedWithoutPublishingImage(char medium)
+    {
+        var (engine, responses) = CreateEngine();
+        var diagnostics = new List<TerminalEngineDiagnostic>();
+        engine.Diagnostic += (_, value) => diagnostics.Add(value);
+
+        engine.Feed(Apc($"a=T,t={medium},f=100,i=7", B64([1, 2, 3])));
+
+        Assert.Empty(engine.Images);
+        Assert.Single(responses);
+        Assert.Contains("ENOTSUP", responses[0], StringComparison.Ordinal);
+        Assert.Contains(diagnostics, value => value.Code == "image.kitty.rejected");
     }
 
     [Fact]

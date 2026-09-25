@@ -1738,19 +1738,22 @@ public sealed class TextBuffer
         var joinedByZwj =
             previous.CombiningCharacters?.EndsWith('\u200D') == true &&
             IsExtendedPictographic(rune) &&
-            (IsExtendedPictographic(previous.Rune) ||
-             previous.CombiningCharacters.EnumerateRunes().Any(IsExtendedPictographic));
+            HasExtendedPictographicBeforeZwj(previous);
         var emojiPresentationSelector =
             rune.Value == 0xFE0F &&
             IsExtendedPictographic(previous.Rune);
         var regionalPair =
             IsRegionalIndicator(previous.Rune) &&
             IsRegionalIndicator(rune) &&
-            (previous.CombiningCharacters is null ||
-             !previous.CombiningCharacters.EnumerateRunes().Any(IsRegionalIndicator));
+            // GB12/13 count immediately adjacent RIs only. An intervening
+            // Extend or ZWJ terminates the run, even if it joined the RI cell.
+            previous.CombiningCharacters is null;
         var hangulSyllable = IsHangulContinuation(previous, rune);
         var spacingMark = Rune.GetUnicodeCategory(rune) == UnicodeCategory.SpacingCombiningMark;
-        var prepend = IsPrepend(previous.Rune);
+        // A Prepend scalar at the front of a completed cell is no longer
+        // pending: it applies only to the immediately following grapheme.
+        var prepend = IsPrepend(previous.Rune) &&
+            previous.CombiningCharacters is null;
         var indicConjunct = IsIndicConsonant(rune) && EndsWithIndicLinker(previous);
         if (!joinedByZwj &&
             !emojiPresentationSelector &&
@@ -1773,10 +1776,71 @@ public sealed class TextBuffer
     private static bool IsRegionalIndicator(Rune rune) =>
         rune.Value is >= 0x1F1E6 and <= 0x1F1FF;
 
+    private static bool HasExtendedPictographicBeforeZwj(Cell cell)
+    {
+        var runes = cell.Text.EnumerateRunes().ToArray();
+        var index = runes.Length - 2; // The final rune is ZWJ.
+        while (index >= 0 && IsGraphemeExtend(runes[index]))
+        {
+            index--;
+        }
+
+        return index >= 0 && IsExtendedPictographic(runes[index]);
+    }
+
+    private static bool IsGraphemeExtend(Rune rune) =>
+        Rune.GetUnicodeCategory(rune) is UnicodeCategory.NonSpacingMark or
+            UnicodeCategory.EnclosingMark ||
+        rune.Value is 0x200C or >= 0x1F3FB and <= 0x1F3FF or
+            >= 0xE0020 and <= 0xE007F;
+
+    // Merged contiguous Extended_Pictographic ranges from Unicode 16.0.0
+    // ucd/emoji/emoji-data.txt (SHA-256 F1365A5173EEE18E1F98B240CDC492E84A25F1CE7E0C9D1094EB29C41A22696A).
+    // Unicode License V3 is adjacent to the GraphemeBreakTest fixture in Core.Tests.
+    // Do not substitute
+    // the whole emoji block: regional indicators and many symbols are not EP.
     private static bool IsExtendedPictographic(Rune rune) =>
-        rune.Value is >= 0x1F000 and <= 0x1FAFF or
-            >= 0x2300 and <= 0x23FF or
-            >= 0x2600 and <= 0x27BF;
+        rune.Value is
+            0x00A9 or 0x00AE or 0x203C or 0x2049 or 0x2122 or 0x2139 or
+            >= 0x2194 and <= 0x2199 or >= 0x21A9 and <= 0x21AA or
+            >= 0x231A and <= 0x231B or 0x2328 or 0x2388 or 0x23CF or
+            >= 0x23E9 and <= 0x23F3 or >= 0x23F8 and <= 0x23FA or
+            0x24C2 or >= 0x25AA and <= 0x25AB or 0x25B6 or 0x25C0 or
+            >= 0x25FB and <= 0x25FE or
+            >= 0x2600 and <= 0x2605 or >= 0x2607 and <= 0x2612 or
+            >= 0x2614 and <= 0x2685 or >= 0x2690 and <= 0x2705 or
+            >= 0x2708 and <= 0x2712 or 0x2714 or 0x2716 or 0x271D or
+            0x2721 or 0x2728 or >= 0x2733 and <= 0x2734 or 0x2744 or
+            0x2747 or 0x274C or 0x274E or >= 0x2753 and <= 0x2755 or
+            0x2757 or >= 0x2763 and <= 0x2767 or
+            >= 0x2795 and <= 0x2797 or 0x27A1 or 0x27B0 or 0x27BF or
+            >= 0x2934 and <= 0x2935 or >= 0x2B05 and <= 0x2B07 or
+            >= 0x2B1B and <= 0x2B1C or 0x2B50 or 0x2B55 or 0x3030 or
+            0x303D or 0x3297 or 0x3299 or
+            >= 0x1F000 and <= 0x1F0FF or
+            >= 0x1F10D and <= 0x1F10F or 0x1F12F or
+            >= 0x1F16C and <= 0x1F171 or
+            >= 0x1F17E and <= 0x1F17F or 0x1F18E or
+            >= 0x1F191 and <= 0x1F19A or
+            >= 0x1F1AD and <= 0x1F1E5 or
+            >= 0x1F201 and <= 0x1F20F or 0x1F21A or 0x1F22F or
+            >= 0x1F232 and <= 0x1F23A or
+            >= 0x1F23C and <= 0x1F23F or
+            >= 0x1F249 and <= 0x1F3FA or
+            >= 0x1F400 and <= 0x1F53D or
+            >= 0x1F546 and <= 0x1F64F or
+            >= 0x1F680 and <= 0x1F6FF or
+            >= 0x1F774 and <= 0x1F77F or
+            >= 0x1F7D5 and <= 0x1F7FF or
+            >= 0x1F80C and <= 0x1F80F or
+            >= 0x1F848 and <= 0x1F84F or
+            >= 0x1F85A and <= 0x1F85F or
+            >= 0x1F888 and <= 0x1F88F or
+            >= 0x1F8AE and <= 0x1F8FF or
+            >= 0x1F90C and <= 0x1F93A or
+            >= 0x1F93C and <= 0x1F945 or
+            >= 0x1F947 and <= 0x1FAFF or
+            >= 0x1FC00 and <= 0x1FFFD;
 
     private enum HangulClass : byte
     {
@@ -1839,25 +1903,32 @@ public sealed class TextBuffer
             >= 0x11A84 and <= 0x11A89 or
             0x11D46;
 
-    private static bool IsIndicConsonant(Rune rune)
-    {
-        var value = rune.Value;
-        if (value is not (>= 0x0900 and <= 0x0DFF or
-                          >= 0x1000 and <= 0x109F or
-                          >= 0x1780 and <= 0x17FF or
-                          >= 0x1A20 and <= 0x1CFF or
-                          >= 0xA800 and <= 0xABFF or
-                          >= 0x11000 and <= 0x11FFF))
-        {
-            return false;
-        }
-
-        return Rune.GetUnicodeCategory(rune) is UnicodeCategory.OtherLetter;
-    }
+    // Unicode 16.0.0 DerivedCoreProperties.txt (SHA-256
+    // 39D35161F2954497F69E08BDB9E701493F476A3D30222DE20028FEDA36C1DABD),
+    // InCB=Consonant, with adjacent ranges merged. General_Category=Lo includes independent vowels,
+    // which must not trigger the Indic conjunct rule.
+    private static bool IsIndicConsonant(Rune rune) =>
+        rune.Value is
+            >= 0x0915 and <= 0x0939 or >= 0x0958 and <= 0x095F or
+            >= 0x0978 and <= 0x097F or >= 0x0995 and <= 0x09A8 or
+            >= 0x09AA and <= 0x09B0 or 0x09B2 or
+            >= 0x09B6 and <= 0x09B9 or >= 0x09DC and <= 0x09DD or
+            0x09DF or >= 0x09F0 and <= 0x09F1 or
+            >= 0x0A95 and <= 0x0AA8 or >= 0x0AAA and <= 0x0AB0 or
+            >= 0x0AB2 and <= 0x0AB3 or >= 0x0AB5 and <= 0x0AB9 or
+            0x0AF9 or >= 0x0B15 and <= 0x0B28 or
+            >= 0x0B2A and <= 0x0B30 or >= 0x0B32 and <= 0x0B33 or
+            >= 0x0B35 and <= 0x0B39 or >= 0x0B5C and <= 0x0B5D or
+            0x0B5F or 0x0B71 or >= 0x0C15 and <= 0x0C28 or
+            >= 0x0C2A and <= 0x0C39 or >= 0x0C58 and <= 0x0C5A or
+            >= 0x0D15 and <= 0x0D3A;
 
     private static bool EndsWithIndicLinker(Cell cell)
     {
-        if (cell.CombiningCharacters is not { Length: > 0 } combining)
+        // GB9c requires a preceding InCB consonant, not merely a linker
+        // appended to an arbitrary printable base such as ASCII 'a'.
+        if (!IsIndicConsonant(cell.Rune) ||
+            cell.CombiningCharacters is not { Length: > 0 } combining)
         {
             return false;
         }
@@ -1871,8 +1942,8 @@ public sealed class TextBuffer
             }
 
             if (category is not (UnicodeCategory.NonSpacingMark or
-                                 UnicodeCategory.SpacingCombiningMark or
-                                 UnicodeCategory.Format))
+                                 UnicodeCategory.Format) &&
+                !IsIndicSpacingExtend(rune))
             {
                 return false;
             }
@@ -1881,15 +1952,32 @@ public sealed class TextBuffer
         return false;
     }
 
+    // Unicode 16.0.0 InCB=Linker, not all script-specific virama signs.
     private static bool IsIndicLinker(Rune rune) =>
-        rune.Value is 0x094D or 0x09CD or 0x0A4D or 0x0ACD or 0x0B4D or 0x0BCD or
-            0x0C4D or 0x0CCD or 0x0D3B or 0x0D3C or 0x0D4D or 0x0DCA or 0x1039 or
-            0x103A or 0x1714 or 0x1734 or 0x17D2 or 0x1A60 or 0x1B44 or 0x1BAA or
-            0x1BAB or 0xA806 or 0xA8C4 or 0xA953 or 0xAAF6 or 0xABED or 0x10A3F or
-            0x11046 or 0x11070 or 0x11133 or 0x111C0 or 0x11235 or 0x112EA or
-            0x1134D or 0x11442 or 0x114C2 or 0x115BF or 0x1163F or 0x116B6 or
-            0x1172B or 0x11839 or 0x1193D or 0x119E0 or 0x11A34 or 0x11A47 or
-            0x11A99 or 0x11C3F or 0x11D44 or 0x11D45 or 0x11D97;
+        rune.Value is 0x094D or 0x09CD or 0x0ACD or 0x0B4D or 0x0C4D or 0x0D4D;
+
+    // InCB=Extend with General_Category=Mc in Unicode 16.0.0.
+    // Most spacing marks are GB9a, but are NOT InCB extenders for GB9c.
+    private static bool IsIndicSpacingExtend(Rune rune) =>
+        rune.Value is 0x09BE or 0x09D7 or 0x0B3E or 0x0B57 or
+            0x0BBE or 0x0BD7 or 0x0CC0 or 0x0CC2 or
+            >= 0x0CC7 and <= 0x0CC8 or
+            >= 0x0CCA and <= 0x0CCB or
+            >= 0x0CD5 and <= 0x0CD6 or
+            0x0D3E or 0x0D57 or 0x0DCF or 0x0DDF or 0x1715 or
+            0x1734 or 0x1B35 or 0x1B3B or 0x1B3D or
+            >= 0x1B43 and <= 0x1B44 or
+            0x1BAA or >= 0x1BF2 and <= 0x1BF3 or
+            >= 0x302E and <= 0x302F or
+            0xA953 or 0xA9C0 or 0x111C0 or 0x11235 or
+            0x1133E or 0x1134D or 0x11357 or
+            0x113B8 or 0x113C2 or 0x113C5 or
+            >= 0x113C7 and <= 0x113C9 or
+            0x113CF or 0x114B0 or 0x114BD or 0x115AF or
+            0x116B6 or 0x11930 or 0x1193D or 0x11F41 or
+            >= 0x16FF0 and <= 0x16FF1 or
+            >= 0x1D165 and <= 0x1D166 or
+            >= 0x1D16D and <= 0x1D172;
 
     private static void ClearGlyphAt(Cell[] row, int x)
     {

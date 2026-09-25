@@ -46,6 +46,8 @@ Limits are public constants on `TerminalImageLimits` and `VtResourceLimits`.
 | --- | ---: |
 | Collected DCS payload | 4 MiB |
 | Decoded OSC 1337 image | 768 KiB |
+| Collected OSC payload | 1 MiB + 16 KiB (base64 of a 768-KiB image plus bounded metadata) |
+| Collected APC payload per chunk | 1 MiB |
 | Assembled kitty image (decompressed) | 32 MiB |
 | Kitty pixel dimension / count | shared pixel limits below |
 | Sixel width or height | 4096 pixels |
@@ -66,7 +68,22 @@ dimensions and malformed macro hex/repeat payloads do not publish partial state.
 Macro definitions are rejected during macro invocation, and recursion plus total
 expansion are independently bounded. A failed Sixel decode does not modify
 persistent color registers. When the retained overlay budget is reached, Core
-evicts the oldest overlay before publishing the new one.
+evicts the oldest overlay before publishing the new one, including when
+different image protocols share that capacity.
+
+Kitty direct-media regressions pin the exact pixel-count boundary separately
+from the first value over it, and rejected file/shared-memory media report
+`ENOTSUP` without publishing an overlay or performing I/O.
+An inline OSC 1337 or single-part ConEmu transfer of exactly 768 KiB decoded
+bytes is accepted; one byte beyond that limit is rejected. OSC collection
+reserves enough room for the base64 expansion **and** its header, so an
+otherwise valid maximum-size image is not silently discarded before decoding.
+Split OSC/DCS/APC terminators publish no partial image, and malformed
+continuations of kitty chunks discard pending data (a mismatched nonzero
+image ID is rejected). Oversized individual APC fragments are discarded;
+subsequent valid transmissions still work. Sixel raster/repeat dimensions
+accept the 4096-pixel edge, reject the next pixel, and do not commit palette
+changes from a rejected image.
 
 ## Renderer contract
 
@@ -93,6 +110,16 @@ Overlay anchors retain a logical-line identity and logical cell offset.
 Snapshots resolve that anchor against the current scrollback/reflow layout, and
 the overlay is removed deterministically when its owning line segment is
 evicted. Main and alternate buffers retain independent identities.
+Regression tests exercise reflow, owning-line eviction, and reset independently
+for all four image protocols; reset clears both buffers' images, while kitty
+lowercase placement/all/id deletes remove overlays without freeing transmitted
+pixels (a later put can place the image again). Uppercase deletes free the
+corresponding image data. Kitty deletes leave unrelated Sixel overlays untouched.
+The Skia renderer
+uses only the available source pixels when a kitty crop extends beyond the
+right or bottom edge; the cropped region fills its requested cell rectangle.
+Invalid encoded inline data cannot paint an image, and a renderer reused after
+delete or reset does not paint stale cached pixels.
 
 ## Intentional gaps
 

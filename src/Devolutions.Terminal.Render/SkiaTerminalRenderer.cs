@@ -473,11 +473,13 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
             var destination = ImageDestination(image, cached.Bitmap, left, top, viewport);
             if (image.Kitty is { CropWidth: > 0, CropHeight: > 0 } cropped)
             {
+                var cropX = Math.Clamp(cropped.CropX, 0, cached.Bitmap.Width - 1);
+                var cropY = Math.Clamp(cropped.CropY, 0, cached.Bitmap.Height - 1);
                 var source = SKRect.Create(
-                    Math.Min(cropped.CropX, cached.Bitmap.Width - 1),
-                    Math.Min(cropped.CropY, cached.Bitmap.Height - 1),
-                    Math.Min(cropped.CropWidth, cached.Bitmap.Width),
-                    Math.Min(cropped.CropHeight, cached.Bitmap.Height));
+                    cropX,
+                    cropY,
+                    Math.Min(cropped.CropWidth, cached.Bitmap.Width - cropX),
+                    Math.Min(cropped.CropHeight, cached.Bitmap.Height - cropY));
                 canvas.DrawBitmap(cached.Bitmap, source, destination, _paint);
             }
             else
@@ -597,8 +599,12 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
         {
             // Source extent after crop; display size from c/r cells when given,
             // preserving aspect when only one axis is specified (kitty semantics).
-            var sourceWidth = kitty.CropWidth > 0 ? (float)kitty.CropWidth : naturalWidth;
-            var sourceHeight = kitty.CropHeight > 0 ? (float)kitty.CropHeight : naturalHeight;
+            var sourceWidth = kitty.CropWidth > 0 && kitty.CropHeight > 0
+                ? Math.Min(kitty.CropWidth, bitmap.Width - Math.Clamp(kitty.CropX, 0, bitmap.Width - 1))
+                : naturalWidth;
+            var sourceHeight = kitty.CropWidth > 0 && kitty.CropHeight > 0
+                ? Math.Min(kitty.CropHeight, bitmap.Height - Math.Clamp(kitty.CropY, 0, bitmap.Height - 1))
+                : naturalHeight;
             float kittyWidth;
             float kittyHeight;
             if (kitty.Columns > 0 && kitty.Rows > 0)
@@ -826,18 +832,18 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
                 DrawBlock(canvas, left, top, width, height / 2);
                 return true;
             case >= 0x2581 and <= 0x2588:
-            {
-                var fraction = rune.Value - 0x2580;
-                var blockHeight = height * fraction / 8;
-                DrawBlock(canvas, left, top + height - blockHeight, width, blockHeight);
-                return true;
-            }
+                {
+                    var fraction = rune.Value - 0x2580;
+                    var blockHeight = height * fraction / 8;
+                    DrawBlock(canvas, left, top + height - blockHeight, width, blockHeight);
+                    return true;
+                }
             case >= 0x2589 and <= 0x258F:
-            {
-                var fraction = 0x2590 - rune.Value;
-                DrawBlock(canvas, left, top, width * fraction / 8, height);
-                return true;
-            }
+                {
+                    var fraction = 0x2590 - rune.Value;
+                    DrawBlock(canvas, left, top, width * fraction / 8, height);
+                    return true;
+                }
             case 0x2590:
                 DrawBlock(canvas, left + (width / 2), top, width / 2, height);
                 return true;

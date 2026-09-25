@@ -101,8 +101,8 @@ process environment block.
 
 | Area | Status | Remaining acceptance |
 | --- | --- | --- |
-| Search | Implemented across both engines | Add canonical-equivalence/ZWJ cases and preserve selected matches across reflow/eviction |
-| Grapheme/emoji | Built-in supports Hangul, Indic conjuncts, prepend, spacing marks, RI pairs, emoji modifiers/selectors, and emoji ZWJ sequences at arbitrary UTF-8 feed boundaries; bundled Noto Color Emoji provides deterministic Linux fallback | Full Unicode GraphemeBreakTest conformance remains; the pinned Ghostty render ABI does not expose equivalent cluster geometry |
+| Search | Implemented across both engines; Core canonicalizes equivalent Unicode spellings and maps ZWJ/wide grapheme matches to cell ranges; built-in search anchors the selected match by logical-line ID and cell offset across reflow, duplicate lines, viewport scrolling, and bounded scrollback eviction, selecting the next surviving match if the selected line is lost | Ghostty projection regenerates line IDs, so selection uses a text/neighbor heuristic; its pinned render ABI does not expose equivalent cluster geometry |
+| Grapheme/emoji | Built-in supports Hangul, Indic conjuncts, prepend, spacing marks, RI pairs, emoji modifiers/selectors, and emoji ZWJ sequences at arbitrary UTF-8 feed boundaries; bundled Noto Color Emoji provides deterministic Linux fallback | Unicode 16.0.0 `GraphemeBreakTest.txt` is pinned: all 369 terminal-representable rows pass ordered-cell and chunk-invariance checks. The other 724 rows are classified as unsuitable for terminal-cell assertions, not claimed as pure-segmenter passes; full UAX #29 conformance outside the tested subset and equivalent Ghostty cluster geometry remain unavailable |
 | Row rendition | Built-in DECDWL/DECDHL parser, snapshots, logical cursor clipping, reflow preservation, and render transforms implemented | The pinned Ghostty C ABI does not expose row rendition; capability is explicitly unavailable there |
 | Sixel | Built-in decode/render, DECSDM scrolling/display behavior, retained cell geometry, and stable ownership implemented | The pinned Ghostty C ABI exposes no image resources and reports the capability unavailable |
 | OSC 1337 | Built-in bounded inline decode/render and stable ownership implemented; non-inline transfer is explicitly rejected without I/O | The pinned Ghostty C ABI exposes no image resources and reports the capability unavailable |
@@ -113,6 +113,22 @@ process environment block.
 | DRCS | Built-in parse/resource mapping, bounded snapshot masks, render planning, and downloaded-pixel rendering implemented | The pinned Ghostty C ABI does not expose DRCS resources; capability is explicitly unavailable there |
 | Extended keyboard | Built-in Kitty set/query/push/pop flags, CSI-u event bytes, `modifyOtherKeys`, Win32-input mode, and press/repeat/release encoding implemented | Kitty alternate-key reporting and associated-text reporting are not advertised; the pinned Ghostty C ABI exposes no keyboard protocol state and reports these capabilities unavailable |
 | Shader effects | Optional deterministic, bounded Skia retro/scanline pass, toggleable per active terminal | Custom arbitrary HLSL/pixel-shader files are not loaded or advertised |
+
+The image regression matrix covers split protocol feeds, exact/over-limit
+decoded payloads and Sixel dimensions, Kitty continuation recovery and
+placement/crop/delete behavior, as well as mixed-protocol reflow, scrollback,
+eviction, reset, and renderer-cache isolation. It does not allocate a full
+64-MiB assembled Kitty image in the test suite; decompression limits and
+per-sequence rejection are exercised directly.
+
+The Unicode fixture contains 1,093 cases. Its 724 terminal-cell exclusions
+comprise 259 control-code, 78 unassigned-scalar, 238 orphan zero-width,
+124 dangling-Prepend, and 25 blank-cell extender cases. CR/LF and C1 controls
+are tested as VT actions separately from Unicode segmentation. Core has no
+standalone pure grapheme segmenter; this result does not establish conformance
+for excluded cases or every possible printable string. Outside the fixture,
+Indic `Extend` still uses a category fallback rather than a complete Unicode
+16 InCB property table.
 
 Output bursts from the PTY read loop coalesce into one UI-thread invalidation
 drain per frame instead of one per 16 KiB chunk, and the cursor blink timer is

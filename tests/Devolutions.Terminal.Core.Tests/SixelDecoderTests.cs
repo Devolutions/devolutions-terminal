@@ -159,4 +159,24 @@ public sealed class SixelDecoderTests
 
         Assert.False(decoder.TryDecode(payload, 7, 1, 0, out _));
     }
+
+    [Fact]
+    public void RepeatAtMaximumWidthSucceedsButOnePixelBeyondDoesNotChangePalette()
+    {
+        var decoder = new SixelDecoder();
+        Assert.True(decoder.TryDecode(
+            Encoding.ASCII.GetBytes($"#5;2;100;0;0!{TerminalImageLimits.MaximumPixelDimension}~"),
+            7, 1, 0, out var boundary));
+        Assert.Equal(TerminalImageLimits.MaximumPixelDimension, boundary!.Width);
+        Assert.Equal(6, boundary.Height);
+        Assert.Equal(0xFFFF0000u, boundary.Palette.Span[5]);
+        Assert.Equal((ushort)5, boundary.PixelIndices.Span[^1]);
+
+        Assert.False(decoder.TryDecode(
+            Encoding.ASCII.GetBytes($"#5;2;0;100;0!{TerminalImageLimits.MaximumPixelDimension + 1}~"),
+            7, 1, 0, out var rejected));
+        Assert.Null(rejected);
+        Assert.True(decoder.TryDecode("#5~"u8, 7, 1, 0, out var after));
+        Assert.Equal(0xFFFF0000u, after!.Palette.Span[5]);
+    }
 }

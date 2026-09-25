@@ -5,5 +5,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Devolutions.Terminal.Core\Devolutions.Terminal.Core.csproj" />
+    <EmbeddedResource Include="UnicodeData\16.0.0\GraphemeBreakTest.txt" />
+    <EmbeddedResource Include="UnicodeData\16.0.0\Unicode-License.txt" />
   </ItemGroup>
 </Project>
