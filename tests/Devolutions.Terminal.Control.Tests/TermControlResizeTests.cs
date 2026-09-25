@@ -1,5 +1,4 @@
 using Avalonia;
-using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
 using Devolutions.Terminal.Connection;
@@ -14,10 +13,10 @@ public sealed class TermControlResizeTests
     public async Task StartAsyncDiscardsResizeFromBeforeStart()
     {
         var connection = new FakePtyConnection();
-        var (window, control) = CreateWindow(connection);
+        var control = CreateControl(connection);
         try
         {
-            window.Show();
+            ArrangeControl(control, 800, 600);
             Assert.True(control.Bounds.Width > 0);
             var arrangedColumns = control.Engine.Columns;
             var arrangedRows = control.Engine.Rows;
@@ -36,7 +35,6 @@ public sealed class TermControlResizeTests
         finally
         {
             await control.CloseAsync();
-            window.Close();
         }
     }
 
@@ -44,19 +42,16 @@ public sealed class TermControlResizeTests
     public async Task LayoutDuringStartFlushesLatestResizeAfterConnectionStarts()
     {
         var connection = new FakePtyConnection { StartGate = NewGate() };
-        var (window, control) = CreateWindow(connection);
+        var control = CreateControl(connection);
         try
         {
-            window.Show();
+            ArrangeControl(control, 800, 600);
             var start = control.StartAsync(new ProfileSettings { Commandline = "cmd.exe" }, 62, 19);
             await connection.StartEntered.Task;
 
-            window.Width += 120;
-            Dispatcher.UIThread.RunJobs();
+            ArrangeControl(control, 920, 600);
             var firstColumns = control.Engine.Columns;
-            window.Width += 120;
-            window.Height += 100;
-            Dispatcher.UIThread.RunJobs();
+            ArrangeControl(control, 1040, 700);
             var expectedColumns = control.Engine.Columns;
             var expectedRows = control.Engine.Rows;
             Assert.NotEqual(firstColumns, expectedColumns);
@@ -79,7 +74,6 @@ public sealed class TermControlResizeTests
         finally
         {
             await control.CloseAsync();
-            window.Close();
         }
     }
 
@@ -87,17 +81,15 @@ public sealed class TermControlResizeTests
     public async Task LayoutDuringRestartFlushesLatestResizeAfterConnectionRestarts()
     {
         var connection = new FakePtyConnection { RestartGate = NewGate() };
-        var (window, control) = CreateWindow(connection);
+        var control = CreateControl(connection);
         try
         {
-            window.Show();
+            ArrangeControl(control, 800, 600);
             await control.StartAsync(new ProfileSettings { Commandline = "cmd.exe" }, 62, 19);
             var restart = control.RestartAsync();
             await connection.RestartEntered.Task;
 
-            window.Width += 240;
-            window.Height += 100;
-            Dispatcher.UIThread.RunJobs();
+            ArrangeControl(control, 1040, 700);
             var expectedColumns = control.Engine.Columns;
             var expectedRows = control.Engine.Rows;
             Assert.True(expectedColumns != 62 || expectedRows != 19);
@@ -118,7 +110,6 @@ public sealed class TermControlResizeTests
         finally
         {
             await control.CloseAsync();
-            window.Close();
         }
     }
 
@@ -126,14 +117,13 @@ public sealed class TermControlResizeTests
     public async Task RestartRestoresCurrentGridAfterConnectionReusesLaunchSize()
     {
         var connection = new FakePtyConnection();
-        var (window, control) = CreateWindow(connection);
+        var control = CreateControl(connection);
         try
         {
-            window.Show();
+            ArrangeControl(control, 800, 600);
             await control.StartAsync(new ProfileSettings { Commandline = "cmd.exe" }, 62, 19);
 
-            window.Width += 240;
-            Dispatcher.UIThread.RunJobs();
+            ArrangeControl(control, 1040, 600);
             var expectedColumns = control.Engine.Columns;
             Assert.NotEqual(62, expectedColumns);
             await Task.Delay(80);
@@ -151,7 +141,6 @@ public sealed class TermControlResizeTests
         finally
         {
             await control.CloseAsync();
-            window.Close();
         }
     }
 
@@ -163,15 +152,14 @@ public sealed class TermControlResizeTests
             StartGate = NewGate(),
             StartFailure = new InvalidOperationException("start failed"),
         };
-        var (window, control) = CreateWindow(connection);
+        var control = CreateControl(connection);
         try
         {
-            window.Show();
+            ArrangeControl(control, 800, 600);
             var start = control.StartAsync(new ProfileSettings { Commandline = "cmd.exe" }, 62, 19);
             await connection.StartEntered.Task;
 
-            window.Width += 240;
-            Dispatcher.UIThread.RunJobs();
+            ArrangeControl(control, 1040, 600);
             Assert.NotEqual(62, control.Engine.Columns);
 
             await Task.Delay(80);
@@ -187,7 +175,6 @@ public sealed class TermControlResizeTests
         finally
         {
             await control.CloseAsync();
-            window.Close();
         }
     }
 
@@ -195,13 +182,12 @@ public sealed class TermControlResizeTests
     public async Task CloseCancelsPendingResize()
     {
         var connection = new FakePtyConnection();
-        var (window, control) = CreateWindow(connection);
+        var control = CreateControl(connection);
         try
         {
-            window.Show();
+            ArrangeControl(control, 800, 600);
             await control.StartAsync(new ProfileSettings { Commandline = "cmd.exe" }, 62, 19);
-            window.Width += 240;
-            Dispatcher.UIThread.RunJobs();
+            ArrangeControl(control, 1040, 600);
             Assert.NotEqual(62, control.Engine.Columns);
 
             await control.CloseAsync();
@@ -213,7 +199,10 @@ public sealed class TermControlResizeTests
         }
         finally
         {
-            window.Close();
+            if (!connection.Disposed)
+            {
+                await control.CloseAsync();
+            }
         }
     }
 
@@ -226,10 +215,13 @@ public sealed class TermControlResizeTests
     private static int CellPixelHeight(TermControl control) =>
         checked((int)Math.Max(1, Math.Round(control.CellSize.Height)));
 
-    private static (Window Window, TermControl Control) CreateWindow(FakePtyConnection connection)
+    private static TermControl CreateControl(FakePtyConnection connection) =>
+        new() { ConnectionFactory = _ => connection };
+
+    private static void ArrangeControl(TermControl control, double width, double height)
     {
-        var control = new TermControl { ConnectionFactory = _ => connection };
-        return (new Window { Width = 800, Height = 600, Content = control }, control);
+        control.Measure(new Size(width, height));
+        control.Arrange(new Rect(0, 0, width, height));
     }
 
     private sealed class FakePtyConnection : IRestartableTerminalConnection
