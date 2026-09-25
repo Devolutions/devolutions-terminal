@@ -84,6 +84,8 @@ public sealed class TermControl : Avalonia.Controls.Control
     private int _pendingPtyRows;
     private int _pendingPtyPixelWidth;
     private int _pendingPtyPixelHeight;
+    private bool _hasPendingPtyResize;
+    private bool _connectionStarting;
 
     // Throughput-harness diagnostics (Devolutions.Terminal.Bench): posts requested by
     // the engine-invalidated handler vs UI drains actually executed.
@@ -275,6 +277,7 @@ public sealed class TermControl : Avalonia.Controls.Control
 
     public async Task StartAsync(ProfileSettings profile, int columns, int rows)
     {
+        ClearPendingPtyResize();
         Profile = profile;
         _padding = ParsePadding(profile.Padding);
         _shaderEffectsEnabled = true;
@@ -291,7 +294,22 @@ public sealed class TermControl : Avalonia.Controls.Control
             profile.AllowKittyKeyboardMode);
         ResizeEngine(columns, rows);
 
-        await StartConnectionAsync(profile, columns, rows).ConfigureAwait(true);
+        _connectionStarting = true;
+        try
+        {
+            await StartConnectionAsync(profile, columns, rows).ConfigureAwait(true);
+        }
+        catch
+        {
+            ClearPendingPtyResize();
+            throw;
+        }
+        finally
+        {
+            _connectionStarting = false;
+        }
+
+        FlushPtyResize();
         _blinkTimer.Start();
         InvalidateVisual();
     }
@@ -378,15 +396,40 @@ public sealed class TermControl : Avalonia.Controls.Control
     {
         var connection = _connection
             ?? throw new InvalidOperationException("The terminal connection has not been started.");
-        await connection.CloseAsync(cancellationToken).ConfigureAwait(true);
-        ResetTerminal();
-        await connection.RestartAsync(cancellationToken: cancellationToken).ConfigureAwait(true);
+        _connectionStarting = true;
+        try
+        {
+            await connection.CloseAsync(cancellationToken).ConfigureAwait(true);
+            ResetTerminal();
+            await connection.RestartAsync(cancellationToken: cancellationToken).ConfigureAwait(true);
+        }
+        catch
+        {
+            ClearPendingPtyResize();
+            throw;
+        }
+        finally
+        {
+            _connectionStarting = false;
+        }
+
+        if (!_hasPendingPtyResize)
+        {
+            SchedulePtyResize(
+                Engine.Columns,
+                Engine.Rows,
+                checked((int)Math.Max(1, Engine.Columns * _engineCellWidthPixels)),
+                checked((int)Math.Max(1, Engine.Rows * _engineCellHeightPixels)));
+        }
+
+        FlushPtyResize();
         _blinkTimer.Start();
     }
 
     public async Task CloseAsync()
     {
         _blinkTimer.Stop();
+        ClearPendingPtyResize();
         if (_connection is not null)
         {
             var connection = _connection;
@@ -1007,27 +1050,40 @@ public sealed class TermControl : Avalonia.Controls.Control
         _pendingPtyRows = rows;
         _pendingPtyPixelWidth = pixelWidth;
         _pendingPtyPixelHeight = pixelHeight;
+        _hasPendingPtyResize = true;
         _ptyResizeTimer.Stop();
         _ptyResizeTimer.Start();
+    }
+
+    private void ClearPendingPtyResize()
+    {
+        _ptyResizeTimer.Stop();
+        _hasPendingPtyResize = false;
     }
 
     private void FlushPtyResize()
     {
         _ptyResizeTimer.Stop();
+        if (!_hasPendingPtyResize || _connectionStarting || _connection?.IsRunning != true)
+        {
+            return;
+        }
+
         try
         {
-            if (_connection?.IsRunning == true)
-            {
-                _connection.Resize(
-                    _pendingPtyColumns,
-                    _pendingPtyRows,
-                    _pendingPtyPixelWidth,
-                    _pendingPtyPixelHeight);
-            }
+            _connection.Resize(
+                _pendingPtyColumns,
+                _pendingPtyRows,
+                _pendingPtyPixelWidth,
+                _pendingPtyPixelHeight);
         }
         catch (Exception ex) when (ex is IOException or InvalidOperationException or OverflowException)
         {
             ReportInteractionError("Terminal resize was not accepted; resize again after input drains", ex);
+        }
+        finally
+        {
+            _hasPendingPtyResize = false;
         }
     }
 
