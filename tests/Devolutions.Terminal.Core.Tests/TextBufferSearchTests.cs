@@ -54,6 +54,52 @@ public sealed class TextBufferSearchTests
     }
 
     [Fact]
+    public void FindsCanonicalEquivalentQueryAtOriginalCombiningCell()
+    {
+        var engine = new TerminalEngine(12, 2);
+        engine.Feed("A界e\u0301Z");
+
+        var match = Assert.Single(TextBufferSearch.FindAll(
+            engine.CreateSnapshot().Buffer,
+            "\u00E9"));
+
+        Assert.Equal(new BufferRange(
+            new BufferPosition(0, 3),
+            new BufferPosition(0, 4)), match);
+        Assert.Equal("e\u0301", engine.Buffer.GetCell(3, 0).Text);
+    }
+
+    [Fact]
+    public void MapsJoinedEmojiQueryToItsTwoCellGrapheme()
+    {
+        var engine = new TerminalEngine(12, 2);
+        engine.Feed("A👩‍💻Z");
+
+        var match = Assert.Single(TextBufferSearch.FindAll(
+            engine.CreateSnapshot().Buffer,
+            "👩‍💻"));
+
+        Assert.Equal(new BufferRange(
+            new BufferPosition(0, 1),
+            new BufferPosition(0, 3)), match);
+        Assert.True(engine.Buffer.GetCell(2, 0).IsWideContinuation);
+    }
+
+    [Fact]
+    public void DoesNotMatchPartOfJoinedEmojiGrapheme()
+    {
+        var engine = new TerminalEngine(12, 2);
+        engine.Feed("A👩‍💻Z");
+
+        var matches = TextBufferSearch.FindAll(
+            engine.CreateSnapshot().Buffer,
+            "👩");
+
+        Assert.Empty(matches);
+        Assert.Equal("👩‍💻", engine.Buffer.GetCell(1, 0).Text);
+    }
+
+    [Fact]
     public void SearchesHistorySnapshot()
     {
         var engine = new TerminalEngine(8, 2, historySize: 10);

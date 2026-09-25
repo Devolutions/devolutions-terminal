@@ -28,6 +28,7 @@ public static class TextBufferSearch
         }
 
         options ??= new TextSearchOptions();
+        query = query.Normalize(NormalizationForm.FormC);
 
         var matches = new List<BufferRange>();
         foreach (var searchable in SearchableLine.CreateLogicalLines(snapshot.Lines))
@@ -45,7 +46,9 @@ public static class TextBufferSearch
                 }
 
                 var endIndex = index + query.Length;
-                if (!options.WholeWord || IsWholeWord(searchable.Text, index, endIndex))
+                if (searchable.IsGraphemeBoundary(index) &&
+                    searchable.IsGraphemeBoundary(endIndex) &&
+                    (!options.WholeWord || IsWholeWord(searchable.Text, index, endIndex)))
                 {
                     matches.Add(new BufferRange(
                         searchable.PositionAt(index),
@@ -143,15 +146,18 @@ public static class TextBufferSearch
     {
         private readonly BufferPosition[] _positions;
         private readonly BufferPosition[] _positionsAfter;
+        private readonly bool[] _graphemeBoundaries;
 
         private SearchableLine(
             string text,
             BufferPosition[] positions,
-            BufferPosition[] positionsAfter)
+            BufferPosition[] positionsAfter,
+            bool[] graphemeBoundaries)
         {
             Text = text;
             _positions = positions;
             _positionsAfter = positionsAfter;
+            _graphemeBoundaries = graphemeBoundaries;
         }
 
         public string Text { get; }
@@ -159,6 +165,8 @@ public static class TextBufferSearch
         public BufferPosition PositionAt(int textIndex) => _positions[textIndex];
 
         public BufferPosition PositionAfter(int textIndex) => _positionsAfter[textIndex];
+
+        public bool IsGraphemeBoundary(int index) => _graphemeBoundaries[index];
 
         public static IReadOnlyList<SearchableLine> CreateLogicalLines(
             IReadOnlyList<TextBufferLineSnapshot> lines)
@@ -188,6 +196,7 @@ public static class TextBufferSearch
             private readonly StringBuilder _text = new();
             private readonly List<BufferPosition> _positions = [];
             private readonly List<BufferPosition> _positionsAfter = [];
+            private readonly List<bool> _graphemeBoundaries = [true];
 
             public int Length => _text.Length;
 
@@ -201,13 +210,18 @@ public static class TextBufferSearch
                         continue;
                     }
 
-                    var cellText = cell.Text;
+                    // Search compares canonical text so a terminal cell received as
+                    // `e` + U+0301 remains discoverable by an NFC query (and vice
+                    // versa).  Positions are still emitted for every UTF-16 unit
+                    // of the normalized cell text, preserving the cell geometry.
+                    var cellText = cell.Text.Normalize(NormalizationForm.FormC);
                     var width = column + 1 < cells.Count && cells[column + 1].IsWideContinuation ? 2 : 1;
                     _text.Append(cellText);
                     for (var index = 0; index < cellText.Length; index++)
                     {
                         _positions.Add(new BufferPosition(lineIndex, column));
                         _positionsAfter.Add(new BufferPosition(lineIndex, column + width));
+                        _graphemeBoundaries.Add(index == cellText.Length - 1);
                     }
                 }
             }
@@ -215,7 +229,8 @@ public static class TextBufferSearch
             public SearchableLine Build() => new(
                 _text.ToString(),
                 [.. _positions],
-                [.. _positionsAfter]);
+                [.. _positionsAfter],
+                [.. _graphemeBoundaries]);
         }
     }
 }

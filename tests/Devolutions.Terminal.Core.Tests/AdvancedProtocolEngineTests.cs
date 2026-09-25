@@ -27,6 +27,26 @@ public sealed class AdvancedProtocolEngineTests
     }
 
     [Fact]
+    public void SplitSixelTerminatorPublishesOnceAndRejectedSequenceLeavesPreviousOverlay()
+    {
+        var engine = new TerminalEngine(10, 3);
+        var added = new List<TerminalImageOverlay>();
+        engine.ImageAdded += (_, image) => added.Add(image);
+        engine.Feed("\u001bP7q#2;2;100;0;0~\u001b");
+        Assert.Empty(engine.Images);
+        engine.Feed("\\");
+        var first = Assert.Single(engine.Images);
+        Assert.Equal(0xFFFF0000u, first.Sixel!.Palette.Span[2]);
+
+        engine.Feed("\u001bP7q#2;2;0;100;0\"1;1;4097;1~\u001b\\");
+        Assert.Same(first, Assert.Single(engine.Images));
+        Assert.Single(added);
+        engine.Feed("\u001bP7q#2~\u001b\\");
+        Assert.Equal(2, added.Count);
+        Assert.Equal(0xFFFF0000u, engine.Images[^1].Sixel!.Palette.Span[2]);
+    }
+
+    [Fact]
     public void DecrqssReportsSgrAndMargins()
     {
         var engine = new TerminalEngine(80, 24);
@@ -109,6 +129,45 @@ public sealed class AdvancedProtocolEngineTests
     }
 
     [Fact]
+    public void SplitOsc1337StPublishesOnlyAfterTerminatorAndRecoversFromMalformedPayload()
+    {
+        var engine = new TerminalEngine();
+        var diagnostics = new List<TerminalEngineDiagnostic>();
+        var added = new List<TerminalImageOverlay>();
+        engine.Diagnostic += (_, value) => diagnostics.Add(value);
+        engine.ImageAdded += (_, value) => added.Add(value);
+        engine.Feed("\u001b]1337;File=inline=1;size=2:AQ");
+        engine.Feed("I=\u001b");
+        Assert.Empty(engine.Images);
+        engine.Feed("\\");
+        var first = Assert.Single(engine.Images);
+        Assert.Equal([1, 2], first.InlineImage!.Data.ToArray());
+        engine.Feed("\u001b]1337;File=inline=1:@@@\u0007");
+        Assert.Same(first, Assert.Single(engine.Images));
+        Assert.Single(added);
+        Assert.Equal("image.osc1337.rejected", Assert.Single(diagnostics).Code);
+    }
+
+    [Fact]
+    public void Osc1337DecodedByteLimitAcceptsExactLimitAndRejectsNextByte()
+    {
+        var engine = new TerminalEngine();
+        var diagnostics = new List<TerminalEngineDiagnostic>();
+        engine.Diagnostic += (_, value) => diagnostics.Add(value);
+        var exact = new byte[TerminalImageLimits.MaximumInlineImageBytes];
+        exact[0] = 42;
+        engine.Feed($"\u001b]1337;File=inline=1;size={exact.Length}:{Convert.ToBase64String(exact)}\u0007");
+        var first = Assert.Single(engine.Images);
+        Assert.Equal(exact.Length, first.InlineImage!.Data.Length);
+        Assert.Equal((byte)42, first.InlineImage.Data.Span[0]);
+
+        var over = new byte[exact.Length + 1];
+        engine.Feed($"\u001b]1337;File=inline=1;size={over.Length}:{Convert.ToBase64String(over)}\u0007");
+        Assert.Same(first, Assert.Single(engine.Images));
+        Assert.Contains(diagnostics, value => value.Code == "image.osc1337.rejected");
+    }
+
+    [Fact]
     public void Osc1337RequiresInlineAndRejectsOversizedDeclaration()
     {
         var engine = new TerminalEngine();
@@ -155,6 +214,43 @@ public sealed class AdvancedProtocolEngineTests
         Assert.Equal(TerminalImageProtocol.ConEmuInline, overlay.Protocol);
         Assert.Equal(4, overlay.InlineImage!.Metadata.DeclaredSize);
         Assert.Equal([1, 2, 3, 4], overlay.InlineImage.Data.ToArray());
+    }
+
+    [Fact]
+    public void SplitConEmuOscPublishesOnceAndMultipartCannotReplacePriorImage()
+    {
+        var engine = new TerminalEngine();
+        var added = new List<TerminalImageOverlay>();
+        var diagnostics = new List<TerminalEngineDiagnostic>();
+        engine.ImageAdded += (_, value) => added.Add(value);
+        engine.Diagnostic += (_, value) => diagnostics.Add(value);
+        engine.Feed("\u001b]9;4;st=0;sz=2;AQ");
+        engine.Feed("I=\u001b");
+        Assert.Empty(engine.Images);
+        engine.Feed("\\");
+        var first = Assert.Single(engine.Images);
+        Assert.Equal([1, 2], first.InlineImage!.Data.ToArray());
+        engine.Feed("\u001b]9;4;st=1;sz=1;Aw==\u0007");
+        Assert.Same(first, Assert.Single(engine.Images));
+        Assert.Single(added);
+        Assert.Equal("image.conemu.rejected", Assert.Single(diagnostics).Code);
+    }
+
+    [Fact]
+    public void ConEmuDecodedByteLimitAcceptsExactLimitAndRejectsNextByte()
+    {
+        var engine = new TerminalEngine();
+        var diagnostics = new List<TerminalEngineDiagnostic>();
+        engine.Diagnostic += (_, value) => diagnostics.Add(value);
+        var exact = new byte[TerminalImageLimits.MaximumInlineImageBytes];
+        exact[^1] = 73;
+        engine.Feed($"\u001b]9;4;st=0;sz={exact.Length};{Convert.ToBase64String(exact)}\u0007");
+        var first = Assert.Single(engine.Images);
+        Assert.Equal(exact.Length, first.InlineImage!.Data.Length);
+        Assert.Equal((byte)73, first.InlineImage.Data.Span[^1]);
+        engine.Feed($"\u001b]9;4;st=0;sz={exact.Length + 1};{Convert.ToBase64String(new byte[exact.Length + 1])}\u0007");
+        Assert.Same(first, Assert.Single(engine.Images));
+        Assert.Contains(diagnostics, value => value.Code == "image.conemu.rejected");
     }
 
     [Theory]
@@ -218,6 +314,31 @@ public sealed class AdvancedProtocolEngineTests
     }
 
     [Fact]
+    public void MixedProtocolCapacityEvictsOldestWithoutFreeingNewerPlacements()
+    {
+        var engine = new TerminalEngine();
+        engine.Feed("\u001bP7q~\u001b\\");
+        var oldest = Assert.Single(engine.Images).Id;
+        engine.Feed("\u001b]1337;File=inline=1;size=1:AQ==\u0007");
+        engine.Feed("\u001b]9;4;st=0;sz=1;Ag==\u0007");
+        engine.Feed("\u001b_Ga=T,f=32,s=1,v=1,i=7,C=1;AQIDBA==\u001b\\");
+        var survivors = engine.Images.Skip(1).ToArray();
+        for (var index = 0; index < TerminalImageLimits.MaximumRetainedImages - 3; index++)
+        {
+            engine.Feed("\u001bP7q~\u001b\\");
+        }
+
+        Assert.Equal(TerminalImageLimits.MaximumRetainedImages, engine.Images.Count);
+        Assert.DoesNotContain(engine.Images, image => image.Id == oldest);
+        Assert.Equal(
+            [TerminalImageProtocol.Iterm2Inline, TerminalImageProtocol.ConEmuInline, TerminalImageProtocol.KittyGraphics],
+            engine.Images.Take(3).Select(image => image.Protocol));
+        Assert.Equal(survivors.Select(image => image.Id), engine.Images.Take(3).Select(image => image.Id));
+        Assert.Equal((byte)2, engine.Images[1].InlineImage!.Data.Span[0]);
+        Assert.Equal(7u, engine.Images[2].Kitty!.ImageId);
+    }
+
+    [Fact]
     public void ImageIdsRemainMonotonicAcrossReset()
     {
         var engine = new TerminalEngine();
@@ -252,6 +373,26 @@ public sealed class AdvancedProtocolEngineTests
         engine.SetScrollOffset(engine.HistoryCount);
 
         Assert.Equal(0, Assert.Single(engine.CreateSnapshot().Images).AnchorRow);
+    }
+
+    [Theory]
+    [InlineData(TerminalImageProtocol.Sixel, "\u001bP7q~\u001b\\")]
+    [InlineData(TerminalImageProtocol.Iterm2Inline, "\u001b]1337;File=inline=1;size=1:AQ==\u0007")]
+    [InlineData(TerminalImageProtocol.ConEmuInline, "\u001b]9;4;st=0;sz=1;AQ==\u001b\\")]
+    [InlineData(TerminalImageProtocol.KittyGraphics, "\u001b_Ga=T,f=32,s=1,v=1,i=7,C=1;AQIDBA==\u001b\\")]
+    public void ScrollbackNavigationLocatesEachImageProtocolOnOriginalLine(
+        TerminalImageProtocol protocol, string sequence)
+    {
+        var engine = new TerminalEngine(10, 2, historySize: 10);
+        engine.Feed(sequence + "\r\none\r\ntwo");
+        var belowViewport = Assert.Single(engine.CreateSnapshot().Images);
+        Assert.Equal(protocol, belowViewport.Protocol);
+        Assert.Equal(-1, belowViewport.AnchorRow);
+        engine.SetScrollOffset(engine.HistoryCount);
+        var inHistory = Assert.Single(engine.CreateSnapshot().Images);
+        Assert.Equal(belowViewport.Id, inHistory.Id);
+        Assert.Equal(0, inHistory.AnchorRow);
+        Assert.Equal(0, inHistory.AnchorColumn);
     }
 
     [Fact]
@@ -303,6 +444,60 @@ public sealed class AdvancedProtocolEngineTests
 
         Assert.Empty(engine.Images);
         Assert.Empty(engine.CreateSnapshot(includeHistory: true).Images);
+    }
+
+    [Theory]
+    [InlineData(TerminalImageProtocol.Sixel, "\u001bP7q~\u001b\\")]
+    [InlineData(TerminalImageProtocol.Iterm2Inline, "\u001b]1337;File=inline=1;size=1:AQ==\u0007")]
+    [InlineData(TerminalImageProtocol.ConEmuInline, "\u001b]9;4;st=0;sz=1;AQ==\u001b\\")]
+    [InlineData(TerminalImageProtocol.KittyGraphics, "\u001b_Ga=T,f=32,s=1,v=1,i=7,C=1;AQIDBA==\u001b\\")]
+    public void EveryImageProtocolReflowsWithLogicalAnchorThenEvictsWithOwningLine(
+        TerminalImageProtocol protocol, string sequence)
+    {
+        var engine = new TerminalEngine(6, 2, historySize: 2);
+        var added = new List<TerminalImageOverlay>();
+        engine.ImageAdded += (_, image) => added.Add(image);
+        engine.Feed("abcd" + sequence + "efgh");
+        var firstId = Assert.Single(engine.Images).Id;
+        engine.Resize(3, 3);
+        var image = Assert.Single(engine.CreateSnapshot(includeHistory: true).Images);
+        Assert.Equal(protocol, image.Protocol);
+        Assert.Equal(firstId, image.Id);
+        Assert.Equal(1, image.AnchorRow);
+        Assert.Equal(1, image.AnchorColumn);
+        Assert.Single(added);
+
+        engine.Feed(string.Concat(Enumerable.Repeat("\r\nnext", 8)));
+        Assert.Empty(engine.Images);
+        Assert.Empty(engine.CreateSnapshot(includeHistory: true).Images);
+        Assert.Single(added); // eviction is not another publication
+    }
+
+    [Theory]
+    [InlineData(TerminalImageProtocol.Sixel, "\u001bP7q~\u001b\\")]
+    [InlineData(TerminalImageProtocol.Iterm2Inline, "\u001b]1337;File=inline=1;size=1:AQ==\u0007")]
+    [InlineData(TerminalImageProtocol.ConEmuInline, "\u001b]9;4;st=0;sz=1;AQ==\u001b\\")]
+    [InlineData(TerminalImageProtocol.KittyGraphics, "\u001b_Ga=T,f=32,s=1,v=1,i=7,C=1;AQIDBA==\u001b\\")]
+    public void ResetClearsImageDataAndPlacementsInBothBuffers(
+        TerminalImageProtocol protocol, string sequence)
+    {
+        var engine = new TerminalEngine(10, 3);
+        engine.Feed(sequence);
+        engine.Feed("\u001b[?1049h");
+        engine.Feed(sequence);
+        Assert.Equal(2, engine.Images.Count);
+        Assert.Equal(protocol, engine.Images[0].Protocol);
+        Assert.False(engine.Images[0].AlternateBuffer);
+        Assert.True(engine.Images[1].AlternateBuffer);
+
+        engine.Reset();
+        Assert.Empty(engine.Images);
+        Assert.Empty(engine.CreateSnapshot(includeHistory: true).Images);
+        engine.Feed(sequence);
+        var fresh = Assert.Single(engine.Images);
+        Assert.False(fresh.AlternateBuffer);
+        Assert.Equal(protocol, fresh.Protocol);
+        Assert.True(fresh.Id > 2);
     }
 
     [Fact]

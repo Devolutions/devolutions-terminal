@@ -8,6 +8,7 @@ public sealed class TerminalSearchSession : IDisposable
     private IReadOnlyList<BufferRange> _matches = [];
     private int _currentIndex = -1;
     private TextBufferSnapshot? _snapshot;
+    private bool _snapshotAlternateBuffer;
     private bool _stale;
 
     public TerminalSearchSession(ITerminalEngine engine)
@@ -114,6 +115,7 @@ public sealed class TerminalSearchSession : IDisposable
         _matches = [];
         _currentIndex = -1;
         _snapshot = null;
+        _snapshotAlternateBuffer = false;
         _stale = false;
         Changed?.Invoke(this, EventArgs.Empty);
     }
@@ -133,10 +135,11 @@ public sealed class TerminalSearchSession : IDisposable
             Query,
             new TextSearchOptions(CaseSensitive, WholeWord));
         _snapshot = snapshot;
+        _snapshotAlternateBuffer = _engine.AlternateBufferActive;
         _stale = false;
         _currentIndex = anchor is null
             ? (_matches.Count > 0 ? 0 : -1)
-            : FindAnchor(anchor, previousIndex);
+            : FindAnchor(anchor.Value, previousIndex);
     }
 
     private SearchAnchor? CaptureAnchor()
@@ -147,6 +150,9 @@ public sealed class TerminalSearchSession : IDisposable
         }
 
         return new SearchAnchor(
+            _snapshot.Lines[current.Start.Line].LogicalLineId,
+            _snapshot.Lines[current.Start.Line].LogicalOffset + current.Start.Column,
+            _snapshotAlternateBuffer,
             LineText(_snapshot, current.Start.Line),
             current.Start.Column,
             current.End.Column,
@@ -163,13 +169,50 @@ public sealed class TerminalSearchSession : IDisposable
             return -1;
         }
 
+        if (_engine.AlternateBufferActive != anchor.AlternateBuffer)
+        {
+            return 0;
+        }
+
+        // Ghostty rebuilds projected rows (and their IDs) for each snapshot.
+        if (_engine is not TerminalEngine || anchor.LogicalLineId == 0)
+        {
+            return FindTextAnchor(anchor, fallbackIndex);
+        }
+
+        var next = -1;
+        for (var index = 0; index < _matches.Count; index++)
+        {
+            var match = _matches[index];
+            var line = _snapshot.Lines[match.Start.Line];
+            if (line.LogicalLineId == anchor.LogicalLineId &&
+                line.LogicalOffset + match.Start.Column == anchor.LogicalOffset)
+            {
+                return index;
+            }
+
+            if (next < 0 &&
+                (line.LogicalLineId > anchor.LogicalLineId ||
+                 line.LogicalLineId == anchor.LogicalLineId &&
+                 line.LogicalOffset + match.Start.Column > anchor.LogicalOffset))
+            {
+                next = index;
+            }
+        }
+
+        return next >= 0 ? next : _matches.Count - 1;
+    }
+
+    private int FindTextAnchor(SearchAnchor anchor, int fallbackIndex)
+    {
+        var snapshot = _snapshot!;
         var bestIndex = -1;
         var bestScore = int.MinValue;
         for (var index = 0; index < _matches.Count; index++)
         {
             var match = _matches[index];
             var score = 0;
-            if (LineText(_snapshot, match.Start.Line) == anchor.LineText)
+            if (LineText(snapshot, match.Start.Line) == anchor.LineText)
             {
                 score += 8;
             }
@@ -181,14 +224,14 @@ public sealed class TerminalSearchSession : IDisposable
 
             if (anchor.PreviousLine is not null &&
                 match.Start.Line > 0 &&
-                LineText(_snapshot, match.Start.Line - 1) == anchor.PreviousLine)
+                LineText(snapshot, match.Start.Line - 1) == anchor.PreviousLine)
             {
                 score += 2;
             }
 
             if (anchor.NextLine is not null &&
-                match.Start.Line + 1 < _snapshot.Lines.Count &&
-                LineText(_snapshot, match.Start.Line + 1) == anchor.NextLine)
+                match.Start.Line + 1 < snapshot.Lines.Count &&
+                LineText(snapshot, match.Start.Line + 1) == anchor.NextLine)
             {
                 score += 2;
             }
@@ -234,7 +277,10 @@ public sealed class TerminalSearchSession : IDisposable
         _engine.SetScrollOffset(liveViewportStart - desiredTop);
     }
 
-    private sealed record SearchAnchor(
+    private readonly record struct SearchAnchor(
+        long LogicalLineId,
+        int LogicalOffset,
+        bool AlternateBuffer,
         string LineText,
         int StartColumn,
         int EndColumn,

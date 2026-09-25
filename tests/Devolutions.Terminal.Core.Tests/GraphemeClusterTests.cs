@@ -29,6 +29,36 @@ public sealed class GraphemeClusterTests
     }
 
     [Fact]
+    public void ChunkedUtf8FeedPreservesEmojiZwjGrapheme()
+    {
+        var engine = new TerminalEngine(10, 2);
+        var bytes = System.Text.Encoding.UTF8.GetBytes("👩‍💻");
+
+        foreach (var value in bytes)
+        {
+            engine.Feed([value]);
+        }
+
+        Assert.Equal(2, engine.CursorX);
+        Assert.Equal("👩‍💻", engine.Buffer.GetCell(0, 0).Text);
+        Assert.True(engine.Buffer.GetCell(1, 0).IsWideContinuation);
+    }
+
+    [Fact]
+    public void ChunkedFeedKeepsIndicConjunctInOneCell()
+    {
+        var engine = new TerminalEngine(10, 2);
+
+        engine.Feed("क");
+        engine.Feed("\u094D");
+        engine.Feed("ष");
+
+        Assert.Equal(1, engine.CursorX);
+        Assert.Equal("क्ष", engine.Buffer.GetCell(0, 0).Text);
+        Assert.False(engine.Buffer.GetCell(1, 0).IsWideContinuation);
+    }
+
+    [Fact]
     public void RegionalIndicatorPairOccupiesTwoCells()
     {
         var engine = new TerminalEngine(10, 2);

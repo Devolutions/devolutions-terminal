@@ -6,6 +6,9 @@ public sealed class VtParser
 {
     private const int MaxParameters = 32;
     private const int MaxStringBytes = 1024 * 1024;
+    // A 768-KiB inline image expands to exactly 1 MiB of base64; leave
+    // bounded room for the OSC command and its metadata as well.
+    private const int MaxOscStringBytes = MaxStringBytes + (16 * 1024);
     private const int MaxDcsPayloadBytes = TerminalImageLimits.MaximumDcsPayloadBytes;
     private const int MaxDcsIntermediates = 2;
     private const int MaxEscIntermediates = 3;
@@ -537,7 +540,7 @@ public sealed class VtParser
 
     private void AppendOsc(byte value)
     {
-        if (_osc.Count < MaxStringBytes)
+        if (_osc.Count < MaxOscStringBytes)
         {
             _osc.Add(value);
         }

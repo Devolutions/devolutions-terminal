@@ -6,3 +6,4 @@ linux/*.sh text eol=lf
 linux/*.env text eol=lf
 linux/*.desktop text eol=lf
 linux/*.xml text eol=lf
+tests/Devolutions.Terminal.Core.Tests/UnicodeData/16.0.0/*.txt text eol=lf

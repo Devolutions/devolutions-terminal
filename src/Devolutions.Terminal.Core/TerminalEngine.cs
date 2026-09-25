@@ -1612,8 +1612,11 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
     {
         if (!KittyGraphicsDecoder.TryParse(body, out var parsed, out var parseError) || parsed is null)
         {
+            var rejectedId = _kittyChunkControl?.ImageId ?? 0;
+            _kittyChunkControl = null;
+            _kittyChunkPayload.Clear();
             ReportDiagnostic("image.kitty.rejected", parseError ?? "The kitty graphics control data was malformed.");
-            RespondKitty(0, parseError ?? "EINVAL: malformed control data", quiet: 0, isError: true);
+            RespondKitty(rejectedId, parseError ?? "EINVAL: malformed control data", quiet: 0, isError: true);
             return;
         }
 
@@ -1635,6 +1638,18 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
                 _kittyChunkControl = command;
                 _kittyChunkPayload.Clear();
                 _kittyChunkPayload.AddRange(command.Payload);
+                return;
+            }
+
+            if (command.ImageId != 0 &&
+                _kittyChunkControl.ImageId != 0 &&
+                command.ImageId != _kittyChunkControl.ImageId)
+            {
+                var pendingId = _kittyChunkControl.ImageId;
+                _kittyChunkControl = null;
+                _kittyChunkPayload.Clear();
+                ReportDiagnostic("image.kitty.rejected", "The kitty continuation image id did not match the first chunk.");
+                RespondKitty(pendingId, "EINVAL: mismatched chunk image id", command.Quiet, isError: true);
                 return;
             }
 
@@ -1796,7 +1811,9 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
                 break;
         }
 
-        ReapKittyImageStore();
+        // Lowercase deletes remove placements, not transmitted image data.
+        // Explicit uppercase deletes free data; retained unplaced images remain
+        // subject to the independent kitty store byte budget.
     }
 
     private void CreateKittyPlacement(
