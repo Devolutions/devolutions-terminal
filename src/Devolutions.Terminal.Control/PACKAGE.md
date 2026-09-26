@@ -29,6 +29,13 @@ Content = terminal;
 await terminal.StartAsync(new ProfileSettings(), columns: 120, rows: 30);
 ```
 
+The `columns` and `rows` passed to `StartAsync` set both the engine and PTY
+initially, even if the control was arranged at a different size before startup.
+Subsequent layout passes resize both to fit the available space. You can use
+`TermControl.MeasureCell(profile, displayScale)` to calculate an initial grid
+for the profile and display; pending layout changes made while the connection
+starts are applied once it is ready.
+
 See the [`samples/Devolutions.Terminal.Control.Sample`](https://github.com/Devolutions/devolutions-terminal/tree/main/samples/Devolutions.Terminal.Control.Sample)
 project in the [Devolutions Terminal repository](https://github.com/Devolutions/devolutions-terminal)
 for a full working app, plus the full source and documentation.
