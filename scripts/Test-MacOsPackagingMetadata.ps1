@@ -25,6 +25,7 @@ $scripts = @(
     'Test-MacOsPackage.ps1',
     'Test-MacOsRuntime.ps1',
     'Test-MacOsCodeSigning.ps1',
+    'Test-MacOsLegalNotices.ps1',
     'Sign-MacOsPackage.ps1',
     'Build-MacOsDmg.ps1',
     'Notarize-MacOsPackage.ps1',

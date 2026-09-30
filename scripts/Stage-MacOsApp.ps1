@@ -143,16 +143,12 @@ finally {
 }
 
 Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE') -Destination (Join-Path $resources 'LICENSE') -Force
-Move-Item -LiteralPath (Join-Path $macosDir 'THIRD-PARTY-NOTICES-GHOSTTY.txt') `
-    -Destination (Join-Path $resources 'THIRD-PARTY-NOTICES-GHOSTTY.txt') -Force
-Move-Item -LiteralPath (Join-Path $macosDir 'THIRD-PARTY-NOTICES-NOTO-EMOJI.txt') `
-    -Destination (Join-Path $resources 'THIRD-PARTY-NOTICES-NOTO-EMOJI.txt') -Force
-Invoke-Native -FilePath chmod -ArgumentList @(
-    '0644',
-    (Join-Path $resources 'LICENSE'),
-    (Join-Path $resources 'THIRD-PARTY-NOTICES-GHOSTTY.txt'),
-    (Join-Path $resources 'THIRD-PARTY-NOTICES-NOTO-EMOJI.txt')
+Move-MacOsLegalNotices -MacOsDirectory $macosDir -ResourcesDirectory $resources
+$legalPaths = @((Join-Path $resources 'LICENSE')) + @(
+    Get-ChildItem -LiteralPath $resources -File -Filter 'THIRD-PARTY-NOTICES*.txt' |
+        ForEach-Object FullName
 )
+Invoke-Native -FilePath chmod -ArgumentList (@('0644') + $legalPaths)
 
 Invoke-Native -FilePath chmod -ArgumentList @(
     '0755',

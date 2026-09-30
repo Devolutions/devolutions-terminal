@@ -80,6 +80,25 @@ try {
     }
 
     Remove-Item -LiteralPath (Join-Path $macosDir 'HelperTool.runtimeconfig.json') -Force
+    $noticeName = 'THIRD-PARTY-NOTICES-CONPTY.txt'
+    $noticeText = 'ConPTY fixture license must survive bundle signing.'
+    Set-Content -LiteralPath (Join-Path $macosDir $noticeName) -Value $noticeText -NoNewline -Encoding utf8
+    $noticeRejected = $false
+    try {
+        & (Join-Path $scriptDir 'Sign-MacOsPackage.ps1') $appPath '-'
+    }
+    catch {
+        if ($_.Exception.Message -notmatch "Contents/MacOS may contain only Mach-O code.*$([regex]::Escape($noticeName))") {
+            throw
+        }
+        $noticeRejected = $true
+    }
+    if (-not $noticeRejected) {
+        throw 'Sign-MacOsPackage.ps1 accepted a third-party notice in Contents/MacOS.'
+    }
+    $resources = Join-Path $contents 'Resources'
+    New-Item -ItemType Directory -Path $resources | Out-Null
+    Move-MacOsLegalNotices -MacOsDirectory $macosDir -ResourcesDirectory $resources
     & (Join-Path $scriptDir 'Sign-MacOsPackage.ps1') $appPath '-'
     if ($LASTEXITCODE -ne 0) {
         throw "Sign-MacOsPackage.ps1 failed with exit code $LASTEXITCODE."
@@ -90,6 +109,9 @@ try {
     $isolatedHelper = Join-Path $work 'HelperTool'
     Invoke-Native -FilePath cp -ArgumentList (Join-Path $macosDir 'HelperTool'), $isolatedHelper
     Assert-MacOsCodeSignature -Path $isolatedHelper -RequireHardenedRuntime
+    if ((Get-Content -LiteralPath (Join-Path $resources $noticeName) -Raw) -cne $noticeText) {
+        throw 'Bundle signing did not preserve the relocated ConPTY legal notice.'
+    }
 
     Write-Host 'macOS standalone auxiliary-code signing regression test passed.'
 }

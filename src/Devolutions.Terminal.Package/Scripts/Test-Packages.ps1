@@ -11,6 +11,10 @@ param(
     # Useful right after binaries are signed but before the final MSI container is signed.
     [switch] $RequireBinarySignature,
 
+    [ValidateNotNullOrEmpty()]
+    [ValidateScript({ -not [string]::IsNullOrWhiteSpace($_) -and $_ -notmatch '[\r\n]' })]
+    [string] $ExpectedPublisher = "CN=Devolutions Inc.",
+
     [switch] $AllowUntrustedRoot
 )
 
@@ -88,7 +92,7 @@ begin {
         Assert-Condition ($null -ne $signature.SignerCertificate) "No signature was found on '$Path'."
         if ($RequirePublisherSubject) {
             Assert-Condition (
-                $signature.SignerCertificate.Subject -eq "CN=Devolutions Inc."
+                $signature.SignerCertificate.Subject -ceq $ExpectedPublisher
             ) "The signer for '$Path' does not match the package publisher."
         }
 
@@ -140,7 +144,7 @@ begin {
 
             $identity = $manifest.SelectSingleNode("/f:Package/f:Identity", $namespace)
             Assert-Condition ($identity.Name -eq "Devolutions.Terminal") "Unexpected package identity name."
-            Assert-Condition ($identity.Publisher -eq "CN=Devolutions Inc.") "Unexpected package publisher."
+            Assert-Condition ($identity.Publisher -ceq $ExpectedPublisher) "Unexpected package publisher '$($identity.Publisher)'; expected '$ExpectedPublisher'."
             Assert-Condition ($identity.ProcessorArchitecture -in @("x64", "arm64")) "Unexpected package architecture '$($identity.ProcessorArchitecture)'."
             $expectedMachine = if ($identity.ProcessorArchitecture -eq "arm64") { 0xAA64 } else { 0x8664 }
             $ghosttyMachine = Get-PeMachine $ghosttyPath

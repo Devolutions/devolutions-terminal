@@ -63,6 +63,9 @@ an additional SVG renderer. Xcode compiles that same master through
 remains the fallback on earlier releases. The script then ad-hoc signs the
 bundle and writes a zip plus SHA-256 manifest.
 
+Published `THIRD-PARTY-NOTICES*.txt` files (including transitive dependency notices) are preserved in `Contents/Resources` alongside `LICENSE`, not in the code-only `Contents/MacOS` directory.
+`Test-MacOsLegalNotices.ps1` checks this layout without requiring Apple signing credentials.
+
 ```bash
 open "artifacts/packages/Devolutions Terminal.app"
 ```
