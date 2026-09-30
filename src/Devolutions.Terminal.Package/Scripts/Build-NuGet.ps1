@@ -11,7 +11,11 @@ param(
 
     [string] $OutputDirectory,
 
-    [switch] $SkipPublish
+    [switch] $SkipPublish,
+
+    [switch] $RequireWindowsSignature,
+
+    [string] $ExpectedPublisher
 )
 
 Set-StrictMode -Version Latest
@@ -69,6 +73,14 @@ foreach ($runtimeIdentifier in $RuntimeIdentifiers) {
             throw "Published output for '$runtimeIdentifier' was not found at '$layout'."
         }
     }
+
+    if ($RequireWindowsSignature -and $runtimeIdentifier.StartsWith("win-", [StringComparison]::Ordinal)) {
+        $signatureArguments = @{ PayloadDirectory = $layout }
+        if (-not [string]::IsNullOrWhiteSpace($ExpectedPublisher)) {
+            $signatureArguments.ExpectedPublisher = $ExpectedPublisher
+        }
+        & (Join-Path $PSScriptRoot "Test-WindowsPayloadSignatures.ps1") @signatureArguments
+    }
 }
 
 Get-ChildItem -LiteralPath $packageOutput -File -Filter "Devolutions.Terminal.App*.nupkg" |
@@ -80,6 +92,7 @@ foreach ($runtimeIdentifier in $RuntimeIdentifiers) {
         "-c", $Configuration,
         "-p:PackageVersion=$Version",
         "-p:PackageOutputPath=$packageOutput\",
+        "-p:DevolutionsTerminalNugetLayoutRoot=$layoutRoot",
         "-p:DevolutionsTerminalPackageRuntimeIdentifier=$runtimeIdentifier"
     )
 }

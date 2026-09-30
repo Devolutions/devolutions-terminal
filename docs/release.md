@@ -303,6 +303,13 @@ that are not yet available. Splitting the NativeAOT payloads keeps each package
 below NuGet.org's 250 MB package-size limit while preserving the existing
 `PackageReference` and MSBuild import behavior.
 
+For signed releases and signed dry runs, the NuGet job waits for platform signing and consumes the verified Windows MSI native layouts and standalone Developer ID-signed macOS payloads.
+It never falls back to the original unsigned publish artifacts when signing fails or required credentials are missing.
+The actual packaged Windows payloads are checked after consumer restore/build; both macOS `.nupkg` payloads are extracted and signature-verified on a native macOS runner before publication.
+The flat macOS NuGet contract is preserved by re-signing copied native code outside the signed `.app`, with Hardened Runtime, the application entitlements, and secure timestamps.
+This does not transfer the app bundle's notarization ticket; ZIP and DMG remain the notarized app distributions.
+Runtime packages exclude native debug symbols, while ordinary CI and unsigned dry runs continue without protected signing credentials.
+
 Configure the `publish-test` and `publish-prod` environments as trusted
 publishers for the package IDs on NuGet.org, and bootstrap the RID and pointer
 packages before the first publication. Dry runs do not request a NuGet API key

@@ -68,6 +68,10 @@ Published `THIRD-PARTY-NOTICES*.txt` files (including transitive dependency noti
 Unix publishes exclude Windows-only ConPTY `OpenConsole.exe` hosts from the final publish list, including files supplied by RID-less project references.
 Package validation and signing check every file under `Contents/MacOS`, not just top-level files.
 Ordinary CI runs the release signing script with an ad-hoc identity on both actual NativeAOT app bundles, so nested-code failures are caught before a credentialed release.
+`Stage-MacOsNuGetPayload.ps1` creates the existing flat NuGet native layout from that app and signs the copied code as standalone executables/libraries.
+Signed releases use the same Developer ID identity, Hardened Runtime, application entitlements, and secure timestamps; unsigned CI uses an ad-hoc identity.
+Both actual macOS NuGet packages are extracted and checked by `Test-MacOsNuGetPayload.ps1` on macOS before release publication.
+The NuGet layout is not a notarized app bundle and does not inherit its stapled ticket.
 
 ```bash
 open "artifacts/packages/Devolutions Terminal.app"

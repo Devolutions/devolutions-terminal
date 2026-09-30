@@ -53,6 +53,7 @@ jobs:
       msix_version: ${{ steps.resolve.outputs.msix_version }}
       dry_run: ${{ steps.resolve.outputs.dry_run }}
       sign_dry_run: ${{ steps.resolve.outputs.sign_dry_run }}
+      sign_packages: ${{ steps.resolve.outputs.sign_packages }}
       publish_environment: ${{ steps.resolve.outputs.publish_environment }}
     steps:
       - name: Checkout
@@ -116,12 +117,15 @@ jobs:
           }
 
           $msixVersion = "$releaseVersion.0"
+          $signPackages = if (($env:GITHUB_EVENT_NAME -eq "workflow_dispatch" -or $env:GITHUB_REF_TYPE -eq "tag") -and
+              ($dryRun -eq "false" -or $signDryRun -eq "true")) { "true" } else { "false" }
           @(
             "release_tag=$tag"
             "release_version=$releaseVersion"
             "msix_version=$msixVersion"
             "dry_run=$dryRun"
             "sign_dry_run=$signDryRun"
+            "sign_packages=$signPackages"
             "publish_environment=$publishEnvironment"
           ) | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
@@ -164,6 +168,9 @@ jobs:
 
       - name: Test ConPTY publish layouts
         run: pwsh -NoLogo -NoProfile -File scripts/Test-ConPtyPublishLayout.ps1
+
+      - name: Test Windows NuGet signature guards
+        run: pwsh -NoLogo -NoProfile -File src/Devolutions.Terminal.Package/Scripts/Test-WindowsPayloadSignaturesRegression.ps1
 
   nuget-pack:
     name: Pack Devolutions.Terminal.Control NuGet package
@@ -322,6 +329,9 @@ jobs:
       - name: Test macOS legal notice layout
         run: pwsh -NoLogo -NoProfile -File scripts/Test-MacOsLegalNotices.ps1
 
+      - name: Test standalone macOS NuGet signing
+        run: pwsh -NoLogo -NoProfile -File scripts/Test-MacOsNuGetSigning.ps1
+
   macos-native-aot:
     name: macOS NativeAOT ${{ matrix.rid }}
     runs-on: macos-26
@@ -398,6 +408,22 @@ jobs:
           # Leave the uploaded app, zip, and their checksum manifest unchanged.
           & /bin/cp -a "artifacts/macos-packages/Devolutions Terminal.app" $testApp
           ./scripts/Sign-MacOsPackage.ps1 $testApp -
+
+      - name: Stage standalone macOS NuGet payload
+        shell: pwsh
+        run: >
+          ./scripts/Stage-MacOsNuGetPayload.ps1
+          -AppPath "artifacts/macos-signing-validation/${{ matrix.rid }}/Devolutions Terminal.app"
+          -OutputDirectory "artifacts/macos-nuget/${{ matrix.rid }}"
+          -Rid "${{ matrix.rid }}"
+          -Identity -
+
+      - name: Upload unsigned macOS NuGet payload
+        uses: actions/upload-artifact@v4
+        with:
+          name: DevolutionsTerminal-${{ matrix.rid }}-nuget-payload
+          path: artifacts/macos-nuget/${{ matrix.rid }}
+          if-no-files-found: error
 
       - name: Run native non-UI gates
         # NativeAOT osx-x64 binaries are cross-compiled on the arm64 runner and
@@ -534,6 +560,25 @@ jobs:
 
       - name: Validate final package
         run: pwsh -NoLogo -NoProfile -File scripts/Test-MacOsPackage.ps1 ${{ matrix.rid }} artifacts/macos-signed-packages/*.zip
+
+      - name: Stage release macOS NuGet payload
+        shell: pwsh
+        env:
+          SHOULD_SIGN: ${{ steps.signing-mode.outputs.should_sign }}
+          SIGNING_IDENTITY: ${{ steps.import_certificate.outputs.identity }}
+        run: |
+          $identity = if ($env:SHOULD_SIGN -eq 'true') { $env:SIGNING_IDENTITY } else { '-' }
+          ./scripts/Stage-MacOsNuGetPayload.ps1 `
+            -AppPath "artifacts/macos-signed-packages/Devolutions Terminal.app" `
+            -OutputDirectory "artifacts/macos-nuget/${{ matrix.rid }}" `
+            -Rid "${{ matrix.rid }}" -Identity $identity
+
+      - name: Upload release macOS NuGet payload
+        uses: actions/upload-artifact@v4
+        with:
+          name: DevolutionsTerminal-${{ matrix.rid }}-signed-nuget-payload
+          path: artifacts/macos-nuget/${{ matrix.rid }}
+          if-no-files-found: error
 
       - name: Upload final macOS package artifacts
         uses: actions/upload-artifact@v4
@@ -916,10 +961,24 @@ jobs:
 
   nuget:
     name: NuGet distribution package
+    # macos-sign is intentionally skipped outside releases; do not let that
+    # suppress ordinary NuGet CI, or let a failed signer fall back to raw code.
+    if: >-
+      ${{ always() && !cancelled() &&
+          needs.release-metadata.result == 'success' &&
+          needs.msi.result == 'success' &&
+          needs.linux-packages.result == 'success' &&
+          needs.macos-native-aot.result == 'success' &&
+          (needs.macos-sign.result == 'success' ||
+           (needs.macos-sign.result == 'skipped' &&
+            github.event_name != 'workflow_dispatch' &&
+            !startsWith(github.ref, 'refs/tags/'))) }}
     needs:
       - native-aot
+      - msi
       - linux-packages
       - macos-native-aot
+      - macos-sign
       - release-metadata
     runs-on: windows-latest
     steps:
@@ -931,16 +990,22 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Download Windows x64 publish
+      - name: Set up Windows signature verification
+        if: needs.release-metadata.outputs.sign_packages == 'true'
+        uses: microsoft/setup-WinAppCli@v0.1
+        with:
+          version: v0.6.1
+
+      - name: Download Windows x64 NuGet payload
         uses: actions/download-artifact@v4
         with:
-          name: DevolutionsTerminal-win-x64
+          name: DevolutionsTerminal-win-x64-nuget-payload
           path: artifacts/nuget/layout/win-x64
 
-      - name: Download Windows arm64 publish
+      - name: Download Windows arm64 NuGet payload
         uses: actions/download-artifact@v4
         with:
-          name: DevolutionsTerminal-win-arm64
+          name: DevolutionsTerminal-win-arm64-nuget-payload
           path: artifacts/nuget/layout/win-arm64
 
       - name: Download Linux x64 publish
@@ -955,31 +1020,53 @@ jobs:
           name: DevolutionsTerminal-linux-arm64
           path: artifacts/nuget/layout/linux-arm64
 
-      - name: Download macOS x64 publish
+      - name: Download macOS x64 NuGet payload
         uses: actions/download-artifact@v4
         with:
-          name: DevolutionsTerminal-osx-x64
+          name: DevolutionsTerminal-osx-x64-${{ needs.macos-sign.result == 'success' && 'signed-nuget-payload' || 'nuget-payload' }}
           path: artifacts/nuget/layout/osx-x64
 
-      - name: Download macOS arm64 publish
+      - name: Download macOS arm64 NuGet payload
         uses: actions/download-artifact@v4
         with:
-          name: DevolutionsTerminal-osx-arm64
+          name: DevolutionsTerminal-osx-arm64-${{ needs.macos-sign.result == 'success' && 'signed-nuget-payload' || 'nuget-payload' }}
           path: artifacts/nuget/layout/osx-arm64
 
       - name: Build NuGet distribution packages
         shell: pwsh
-        run: >
-          ./src/Devolutions.Terminal.Package/Scripts/Build-NuGet.ps1
-          -SkipPublish
-          -Version "${{ needs.release-metadata.outputs.release_version }}"
+        env:
+          REQUIRE_SIGNATURE: ${{ needs.release-metadata.outputs.sign_packages }}
+          WINDOWS_BINARIES_SIGNED: ${{ needs.msi.outputs.binaries_signed }}
+          EXPECTED_PUBLISHER: ${{ needs.msi.outputs.publisher }}
+        run: |
+          $arguments = @{
+            SkipPublish = $true
+            Version = '${{ needs.release-metadata.outputs.release_version }}'
+          }
+          if ($env:REQUIRE_SIGNATURE -eq 'true') {
+            if ($env:WINDOWS_BINARIES_SIGNED -ne 'true') {
+              throw 'Signed NuGet release requires signed Windows payloads.'
+            }
+            $arguments.RequireWindowsSignature = $true
+            $arguments.ExpectedPublisher = $env:EXPECTED_PUBLISHER
+          }
+          ./src/Devolutions.Terminal.Package/Scripts/Build-NuGet.ps1 @arguments
 
       - name: Smoke test NuGet package import
         shell: pwsh
-        run: >
-          ./src/Devolutions.Terminal.Package/Scripts/Test-NuGetDistribution.ps1
-          -PackageDirectory ./artifacts/nuget/packages
-          -Version "${{ needs.release-metadata.outputs.release_version }}"
+        env:
+          REQUIRE_SIGNATURE: ${{ needs.release-metadata.outputs.sign_packages }}
+          EXPECTED_PUBLISHER: ${{ needs.msi.outputs.publisher }}
+        run: |
+          $arguments = @{
+            PackageDirectory = './artifacts/nuget/packages'
+            Version = '${{ needs.release-metadata.outputs.release_version }}'
+          }
+          if ($env:REQUIRE_SIGNATURE -eq 'true') {
+            $arguments.RequireWindowsSignature = $true
+            $arguments.ExpectedPublisher = $env:EXPECTED_PUBLISHER
+          }
+          ./src/Devolutions.Terminal.Package/Scripts/Test-NuGetDistribution.ps1 @arguments
 
       - name: Upload NuGet distribution packages
         uses: actions/upload-artifact@v4
@@ -988,8 +1075,62 @@ jobs:
           path: artifacts/nuget/packages/*.nupkg
           if-no-files-found: error
 
+      - name: Upload macOS x64 NuGet package for native verification
+        uses: actions/upload-artifact@v4
+        with:
+          name: DevolutionsTerminal-osx-x64-nuget-package
+          path: artifacts/nuget/packages/Devolutions.Terminal.App.osx-x64.*.nupkg
+          if-no-files-found: error
+
+      - name: Upload macOS arm64 NuGet package for native verification
+        uses: actions/upload-artifact@v4
+        with:
+          name: DevolutionsTerminal-osx-arm64-nuget-package
+          path: artifacts/nuget/packages/Devolutions.Terminal.App.osx-arm64.*.nupkg
+          if-no-files-found: error
+
+  nuget-macos:
+    name: macOS NuGet signatures ${{ matrix.rid }}
+    if: ${{ !cancelled() && needs.nuget.result == 'success' && needs.release-metadata.result == 'success' }}
+    runs-on: macos-26
+    needs:
+      - nuget
+      - release-metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        rid: [osx-arm64, osx-x64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download packaged NuGet payload
+        uses: actions/download-artifact@v4
+        with:
+          name: DevolutionsTerminal-${{ matrix.rid }}-nuget-package
+          path: artifacts/nuget-validation
+
+      - name: Verify signatures in the actual NuGet package
+        shell: pwsh
+        env:
+          REQUIRE_SIGNATURE: ${{ needs.release-metadata.outputs.sign_packages }}
+        run: |
+          $package = Get-ChildItem artifacts/nuget-validation -Filter '*.nupkg' -File
+          if (@($package).Count -ne 1) { throw 'Expected exactly one macOS runtime package.' }
+          [IO.Compression.ZipFile]::ExtractToDirectory(
+            $package.FullName, [IO.Path]::GetFullPath('artifacts/nuget-validation/expanded'))
+          $arguments = @{
+            PayloadDirectory = 'artifacts/nuget-validation/expanded/runtimes/${{ matrix.rid }}/native/payload'
+            Rid = '${{ matrix.rid }}'
+          }
+          if ($env:REQUIRE_SIGNATURE -eq 'true') { $arguments.RequireDeveloperId = $true }
+          ./scripts/Test-MacOsNuGetPayload.ps1 @arguments
+
   msi:
     name: MSI packages
+    outputs:
+      binaries_signed: ${{ steps.signing-mode.outputs.should_sign }}
+      publisher: ${{ steps.signing-mode.outputs.publisher }}
     needs:
       - native-aot
       - release-metadata
@@ -1034,6 +1175,7 @@ jobs:
           TRUSTED_SIGNING_ENDPOINT: ${{ secrets.TRUSTED_SIGNING_ENDPOINT }}
           TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.TRUSTED_SIGNING_ACCOUNT_NAME }}
           TRUSTED_SIGNING_PROFILE_NAME: ${{ secrets.TRUSTED_SIGNING_PROFILE_NAME }}
+          REQUESTED_PUBLISHER: ${{ vars.TRUSTED_SIGNING_PUBLISHER }}
         run: |
           # Ordinary (non-release) CI runs never attempt binary signing: they are not gated on
           # signing secrets being configured, so they must not fail when those secrets are absent.
@@ -1062,15 +1204,15 @@ jobs:
           }
 
           if ($missing.Count -gt 0) {
-            if ($dryRun) {
-              "should_sign=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-              Write-Host "::notice::Skipping dry-run binary signing because these secrets are unavailable: $($missing -join ', ')"
-              exit 0
-            }
-
             throw "Missing Azure Artifact Signing secrets: $($missing -join ', ')"
           }
 
+          $publisher = $env:REQUESTED_PUBLISHER
+          if ([string]::IsNullOrWhiteSpace($publisher)) {
+            $publisher = "CN=Devolutions Inc, O=Devolutions Inc, L=Lavaltrie, S=Québec, C=CA"
+          }
+          if ($publisher -match '[\r\n]') { throw 'TRUSTED_SIGNING_PUBLISHER must be a single-line certificate subject.' }
+          "publisher=$publisher" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "should_sign=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Install Windows psign-tool
@@ -1140,6 +1282,29 @@ jobs:
             -ArtifactSigningAccessToken $accessToken `
             -TimestampServer $timestampServer
 
+      - name: Verify signed Windows NuGet payloads
+        if: steps.signing-mode.outputs.should_sign == 'true'
+        shell: pwsh
+        env:
+          EXPECTED_PUBLISHER: ${{ steps.signing-mode.outputs.publisher }}
+        run: |
+          ./src/Devolutions.Terminal.Package/Scripts/Test-WindowsPayloadSignatures.ps1 -PayloadDirectory artifacts/msi/layout/win-x64 -ExpectedPublisher $env:EXPECTED_PUBLISHER
+          ./src/Devolutions.Terminal.Package/Scripts/Test-WindowsPayloadSignatures.ps1 -PayloadDirectory artifacts/msi/layout/win-arm64 -ExpectedPublisher $env:EXPECTED_PUBLISHER
+
+      - name: Upload Windows x64 NuGet payload
+        uses: actions/upload-artifact@v4
+        with:
+          name: DevolutionsTerminal-win-x64-nuget-payload
+          path: artifacts/msi/layout/win-x64
+          if-no-files-found: error
+
+      - name: Upload Windows arm64 NuGet payload
+        uses: actions/upload-artifact@v4
+        with:
+          name: DevolutionsTerminal-win-arm64-nuget-payload
+          path: artifacts/msi/layout/win-arm64
+          if-no-files-found: error
+
       - name: Build MSI packages
         shell: pwsh
         run: >
@@ -1188,6 +1353,7 @@ jobs:
       - msix
       - msi
       - nuget
+      - nuget-macos
       - nuget-pack
       - release-metadata
     runs-on: ubuntu-latest
