@@ -34,7 +34,7 @@ foreach ($name in $binaries) {
     }
     Assert-MacOsCodeSignature -Path $path @requirements
     if ($name -in @($metadata.EXECUTABLE_NAME, $metadata.CLI_NAME)) {
-        $entitlementText = (& codesign --display --entitlements - $path 2>$null) -join "`n"
+        $entitlementText = (& codesign --display --entitlements - --xml $path 2>$null) -join "`n"
         if ($LASTEXITCODE -ne 0) { throw "Unable to inspect $name entitlements." }
         [xml]$entitlements = $entitlementText
         foreach ($key in @(
