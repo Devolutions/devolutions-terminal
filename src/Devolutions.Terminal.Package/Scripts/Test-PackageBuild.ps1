@@ -110,7 +110,9 @@ try {
         if ($case.Override) {
             $buildArguments.Publisher = $case.Publisher
         }
-        $packages = @(& (Join-Path $PSScriptRoot "Build-Packages.ps1") @buildArguments)
+        & (Join-Path $PSScriptRoot "Build-Packages.ps1") @buildArguments | Out-Host
+        # First-run WinApp setup can write status messages to the success stream.
+        $packages = @(Get-ChildItem -LiteralPath (Join-Path $output "packages") -File -Filter "*.msix")
         if ($packages.Count -ne 2) {
             throw "$($case.Name) build did not produce both architecture packages."
         }
@@ -165,7 +167,8 @@ try {
         }
         $buildArguments.CertificatePath = $certificatePath
         $buildArguments.CertificatePassword = $password
-        $signedPackages = @(& (Join-Path $PSScriptRoot "Build-Packages.ps1") @buildArguments)
+        & (Join-Path $PSScriptRoot "Build-Packages.ps1") @buildArguments | Out-Host
+        $signedPackages = @(Get-ChildItem -LiteralPath (Join-Path $output "packages") -File -Filter "*.msix")
         $testArguments.PackagePath = @($signedPackages.FullName)
         $testArguments.RequireSignature = $true
         $testArguments.AllowUntrustedRoot = $true
