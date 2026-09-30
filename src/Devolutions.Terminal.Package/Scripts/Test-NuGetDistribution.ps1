@@ -5,11 +5,27 @@ param(
     [string] $PackageDirectory,
 
     [ValidatePattern("^\d+\.\d+\.\d+$")]
-    [string] $Version = "2026.3.0"
+    [string] $Version = "2026.3.0",
+
+    # Validate the restored Windows native payloads in the actual consumer output.
+    [switch] $RequireWindowsSignature,
+
+    [ValidateNotNullOrEmpty()]
+    [ValidateScript({ -not [string]::IsNullOrWhiteSpace($_) -and $_ -notmatch '[\r\n]' })]
+    [string] $ExpectedPublisher
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+if ($RequireWindowsSignature -and -not $IsWindows) {
+    throw "-RequireWindowsSignature requires Windows."
+}
+
+$signatureArguments = @{}
+if ($PSBoundParameters.ContainsKey("ExpectedPublisher")) {
+    $signatureArguments.ExpectedPublisher = $ExpectedPublisher
+}
 
 $packageSource = [IO.Path]::GetFullPath($PackageDirectory)
 $expectedPackageNames = @(
@@ -82,6 +98,11 @@ try {
         if ($otherPayloads.Count -ne 0) {
             throw "Unexpected runtime payloads were copied for '$runtimeIdentifier': $($otherPayloads.Name -join ', ')."
         }
+
+        if ($RequireWindowsSignature -and $runtimeIdentifier.StartsWith("win-", [StringComparison]::Ordinal)) {
+            $payloadDirectory = Join-Path $outputDirectory "runtimes\$runtimeIdentifier\native\payload"
+            & "$PSScriptRoot\Test-WindowsPayloadSignatures.ps1" -PayloadDirectory $payloadDirectory @signatureArguments
+        }
     }
 
     @"
@@ -108,6 +129,11 @@ try {
     $defaultPayloadPath = Join-Path $testRoot "bin\Release\net10.0\runtimes\win-x64\native\payload\dt.exe"
     if (-not (Test-Path -LiteralPath $defaultPayloadPath -PathType Leaf)) {
         throw "Default win-x64 package payload '$defaultPayloadPath' was not copied to the consumer output."
+    }
+
+    if ($RequireWindowsSignature) {
+        $payloadDirectory = Join-Path $testRoot "bin\Release\net10.0\runtimes\win-x64\native\payload"
+        & "$PSScriptRoot\Test-WindowsPayloadSignatures.ps1" -PayloadDirectory $payloadDirectory @signatureArguments
     }
 }
 finally {

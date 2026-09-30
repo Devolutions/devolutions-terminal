@@ -24,6 +24,7 @@
 
   <ItemGroup Condition="'$(DevolutionsTerminalPackageRuntimeIdentifier)' != ''">
     <None Include="$(DevolutionsTerminalNugetLayoutRoot)\$(DevolutionsTerminalPackageRuntimeIdentifier)\**\*"
+          Exclude="$(DevolutionsTerminalNugetLayoutRoot)\$(DevolutionsTerminalPackageRuntimeIdentifier)\**\*.pdb;$(DevolutionsTerminalNugetLayoutRoot)\$(DevolutionsTerminalPackageRuntimeIdentifier)\**\*.dbg;$(DevolutionsTerminalNugetLayoutRoot)\$(DevolutionsTerminalPackageRuntimeIdentifier)\**\*.dSYM\**"
           Pack="true"
           PackagePath="runtimes\$(DevolutionsTerminalPackageRuntimeIdentifier)\native\payload"
           Visible="false" />

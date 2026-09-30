@@ -159,6 +159,16 @@ function Test-MacOsAppBundle {
     if ($dsyms) {
         throw "$label contains dSYM bundles."
     }
+    $invalidCodeFiles = @(
+        Get-ChildItem -LiteralPath $macosDir -Recurse -Force -File |
+            Where-Object { (& file -b $_.FullName) -notmatch 'Mach-O' }
+    )
+    if ($invalidCodeFiles.Count -gt 0) {
+        $invalidNames = ($invalidCodeFiles | ForEach-Object {
+            [IO.Path]::GetRelativePath($macosDir, $_.FullName)
+        } | Sort-Object) -join ', '
+        throw "$label Contents/MacOS contains non-Mach-O files: $invalidNames"
+    }
     $runtimeConfig = Get-ChildItem -LiteralPath $macosDir -File -Filter '*.runtimeconfig.json'
     if ($runtimeConfig) {
         throw "$label contains NativeAOT runtime configuration in Contents/MacOS."

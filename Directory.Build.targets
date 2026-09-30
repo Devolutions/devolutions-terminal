@@ -1,0 +1,12 @@
+<Project>
+  <!-- Referenced projects can be RID-less during a RID-specific publish, so
+       filter the final publish list rather than their build-time host items. -->
+  <Target Name="ExcludeWindowsConPtyHostsFromUnixPublish"
+          AfterTargets="ComputeFilesToPublish"
+          Condition="$([System.String]::Copy('$(RuntimeIdentifier)').StartsWith('osx-')) or $([System.String]::Copy('$(RuntimeIdentifier)').StartsWith('linux-'))">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)"
+                             Condition="'%(ResolvedFileToPublish.Filename)%(ResolvedFileToPublish.Extension)' == 'OpenConsole.exe'" />
+    </ItemGroup>
+  </Target>
+</Project>

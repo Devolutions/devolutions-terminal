@@ -741,6 +741,11 @@ public sealed class ConnectionContractTests
                 Assert.Equal(0, await exited.Task.WaitAsync(TimeSpan.FromSeconds(10)));
             }
 
+            // Collect managed wait/overlapped-I/O bookkeeping, while retaining
+            // every connection so leaked native session handles remain observable.
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
             var deadline = DateTime.UtcNow.AddSeconds(10);
             int handleCount;
             do
