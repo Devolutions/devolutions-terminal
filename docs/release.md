@@ -226,14 +226,13 @@ credentials are unavailable.
 
 ## GitHub Release automation
 
-The release workflow in `.github/workflows/build-terminal.yml` publishes signed
-Windows packages and the corresponding platform archives directly to GitHub
-Releases without staging them in OneDrive. It builds unsigned per-architecture
-MSIX and MSI packages for Windows x64 and ARM64, then signs them on the Linux
-release runner with Devolutions `psign-tool` and Azure Artifact Signing
-(Trusted Signing). The private key never lands on the runner. Signed Windows
-packages are uploaded alongside Linux and macOS archives. The workflow is
-intended for tag-based releases and for manual dispatch.
+The release workflow in `.github/workflows/build-terminal.yml` publishes signed Windows packages and the corresponding platform archives directly to GitHub Releases without staging them in OneDrive.
+It builds unsigned per-architecture MSIX and MSI packages for Windows x64 and ARM64.
+MSIX uses WinApp CLI's native `az-sign` command and Windows SDK verification on the Windows packaging runner.
+MSI containers and their application binaries use Devolutions `psign-tool` with Azure Artifact Signing (Trusted Signing).
+The production private key never lands on the runner.
+Signed Windows packages are uploaded alongside Linux and macOS archives.
+The workflow is intended for tag-based releases and for manual dispatch.
 
 Manual dispatch provides these inputs:
 
@@ -244,9 +243,8 @@ Manual dispatch provides these inputs:
 - `dry_run` — build, package, and validate artifacts without creating or
   updating a GitHub Release. The combined release assets are uploaded as a
   workflow artifact.
-- `sign_dry_run` — with `dry_run`, sign Windows packages using the selected
-  signing environment when all signing secrets are available. This validates
-  the real `psign-tool` and Azure Artifact Signing path without publishing.
+- `sign_dry_run` — with `dry_run`, sign Windows packages using the selected signing environment when all signing secrets are available.
+  This validates the real WinApp CLI, `psign-tool`, and Azure Artifact Signing paths without publishing.
   Without this option, dry-run assets remain unsigned.
 - `github-env` — selects the GitHub Environment containing signing credentials:
   `test`, `prod`, or `auto`. `auto` selects `publish-prod` for `master` and tag
@@ -279,13 +277,20 @@ Required environment secrets:
 - `APPLE_APP_DEV_ID_APP_CERTIFICATE_PASSWORD` — Developer ID certificate password
 - `APPLE_BOT_PASSWORD` — app-specific password for macOS notarization
 
-Optional environment or repository variable:
+Optional GitHub Environment or repository configuration variables:
 
 - `TRUSTED_SIGNING_TIMESTAMP_SERVER` (defaults to `http://timestamp.acs.microsoft.com/`)
+- `TRUSTED_SIGNING_PUBLISHER` — full certificate subject for the selected signing profile.
+  Defaults to `CN=Devolutions Inc, O=Devolutions Inc, L=Lavaltrie, S=Québec, C=CA`; override it if the profile has a different subject.
 
-`psign-tool` portable Artifact Signing signs the per-architecture `.msix` and
-`.msi` files. The MSIX `Publisher` identity in `Package.appxmanifest` must
-match the Artifact Signing certificate subject.
+The signed MSIX `Identity.Publisher` must exactly match the Artifact Signing certificate subject, including all DN fields, punctuation, and accents.
+The workflow resolves whether signing will occur before building the package and supplies this publisher to `Build-Packages.ps1`; unsigned CI/dry runs retain the checked-in development publisher.
+`Test-Packages.ps1` checks both the generated identity and the signer against the selected publisher.
+Development certificate generation still uses the unchanged source manifest.
+Changing publishers changes the package family, so a signed production package is not an in-place upgrade of a development package.
+
+If MSIX signing or validation fails after packaging, the workflow retains the pre-signing unsigned packages, generated manifest, and recent AppxPackaging events in `DevolutionsTerminal-MSIX-failure-diagnostics` for seven days.
+HRESULT `0x8007000B` alone is not diagnostic: AppxPackaging events distinguish publisher mismatch (150), hash mismatch (151), and block-map mismatch (152).
 
 The release job always publishes `Devolutions.Terminal.App` and
 `Devolutions.Terminal.Control` to NuGet.org through OIDC trusted publishing

@@ -163,6 +163,10 @@ function Test-MacOsAppBundle {
     if ($runtimeConfig) {
         throw "$label contains NativeAOT runtime configuration in Contents/MacOS."
     }
+    $misplacedNotices = Get-ChildItem -LiteralPath $macosDir -File -Filter 'THIRD-PARTY-NOTICES*.txt'
+    if ($misplacedNotices) {
+        throw "$label contains third-party legal notices in Contents/MacOS instead of Contents/Resources."
+    }
 }
 
 try {

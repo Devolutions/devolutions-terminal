@@ -31,15 +31,19 @@ registration.
 | Field | Value |
 | --- | --- |
 | NuGet distribution package | `Devolutions.Terminal.App` |
-| Publisher | `CN=Devolutions Inc.` |
+| Development publisher | `CN=Devolutions Inc.` |
 | Application ID | `Terminal` |
 | Execution aliases | `dt.exe`, `Devolutions.Terminal.exe` |
 | Protocol | `dterm:` |
 | Minimum Windows | Windows 10, version 2004 (`10.0.19041.0`) |
 
-The identity is stable across local and CI builds so package-scoped data can
-survive upgrades. Production/Store onboarding can replace the identity and
-publisher in a separate manifest without changing the unpackaged host.
+The checked-in identity is stable for development and unsigned CI builds.
+Signed releases override the generated manifest's publisher with the complete Artifact Signing certificate subject: `CN=Devolutions Inc, O=Devolutions Inc, L=Lavaltrie, S=Québec, C=CA`.
+The workflow's optional `TRUSTED_SIGNING_PUBLISHER` GitHub configuration variable supports profiles with a different subject.
+The source manifest and development certificate generation remain unchanged.
+
+A different publisher produces a different package family and is not an in-place upgrade of the development package; package-scoped data is separate.
+This distinction does not affect the unpackaged host or MSI.
 
 The package is a medium-integrity, full-trust desktop package. It declares only
 `runFullTrust`; it does not request broad file-system or network capabilities.
@@ -68,6 +72,10 @@ To package NativeAOT outputs produced elsewhere, place them in
 `-SkipPublish`. `Build-Packages.ps1` still cross-builds the x64/ARM64 shell
 helpers. `-SkipNativeBuild` is only valid when matching helper outputs already
 exist under `artifacts\msix\native-shell\<architecture>`.
+
+For an external signing profile, pass its exact certificate subject through `Build-Packages.ps1 -Publisher` before packaging, and use the same value with `Test-Packages.ps1 -ExpectedPublisher`.
+Do not modify a built MSIX manifest: that would invalidate its block map.
+Omitting these parameters retains the development identity and its validation.
 
 ## Development signing and installation
 

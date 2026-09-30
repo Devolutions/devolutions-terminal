@@ -159,6 +159,9 @@ jobs:
       - name: Test
         run: dotnet test Devolutions.Terminal.slnx -c Release --no-build -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
 
+      - name: Test macOS legal notice layout
+        run: pwsh -NoLogo -NoProfile -File scripts/Test-MacOsLegalNotices.ps1
+
   nuget-pack:
     name: Pack Devolutions.Terminal.Control NuGet package
     runs-on: windows-latest
@@ -312,6 +315,9 @@ jobs:
 
       - name: Test macOS code-signing topology
         run: pwsh -NoLogo -NoProfile -File scripts/Test-MacOsCodeSigning.ps1
+
+      - name: Test macOS legal notice layout
+        run: pwsh -NoLogo -NoProfile -File scripts/Test-MacOsLegalNotices.ps1
 
   macos-native-aot:
     name: macOS NativeAOT ${{ matrix.rid }}
@@ -706,6 +712,10 @@ jobs:
         with:
           version: v0.6.1
 
+      - name: Test MSIX publisher and development signing
+        shell: pwsh
+        run: ./src/Devolutions.Terminal.Package/Scripts/Test-PackageBuild.ps1
+
       - name: Download x64 publish
         uses: actions/download-artifact@v4
         with:
@@ -718,14 +728,6 @@ jobs:
           name: DevolutionsTerminal-win-arm64
           path: artifacts/msix/layout/win-arm64
 
-      - name: Build unsigned MSIX packages
-        shell: pwsh
-        run: >
-          ./src/Devolutions.Terminal.Package/Scripts/Build-Packages.ps1
-          -SkipPublish
-          -OutputDirectory ./artifacts/msix
-          -Version "${{ needs.release-metadata.outputs.msix_version }}"
-
       - name: Resolve signing mode
         id: signing-mode
         shell: pwsh
@@ -737,6 +739,7 @@ jobs:
           TRUSTED_SIGNING_ENDPOINT: ${{ secrets.TRUSTED_SIGNING_ENDPOINT }}
           TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.TRUSTED_SIGNING_ACCOUNT_NAME }}
           TRUSTED_SIGNING_PROFILE_NAME: ${{ secrets.TRUSTED_SIGNING_PROFILE_NAME }}
+          REQUESTED_PUBLISHER: ${{ vars.TRUSTED_SIGNING_PUBLISHER }}
         run: |
           # Ordinary (non-release) CI runs never attempt MSIX signing: they are not gated on
           # signing secrets being configured, so they must not fail when those secrets are absent.
@@ -774,7 +777,40 @@ jobs:
             throw "Missing Azure Artifact Signing secrets: $($missing -join ', ')"
           }
 
-          "should_sign=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          # Resolve after the selected GitHub Environment's variables are available.
+          $publisher = $env:REQUESTED_PUBLISHER
+          if ([string]::IsNullOrWhiteSpace($publisher)) {
+            $publisher = "CN=Devolutions Inc, O=Devolutions Inc, L=Lavaltrie, S=Québec, C=CA"
+          }
+          if ($publisher -match '[\r\n]') {
+            throw "TRUSTED_SIGNING_PUBLISHER must be a single-line certificate subject."
+          }
+          @(
+            "should_sign=true"
+            "publisher=$publisher"
+          ) | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Build unsigned MSIX packages
+        id: build-msix
+        shell: pwsh
+        env:
+          SHOULD_SIGN: ${{ steps.signing-mode.outputs.should_sign }}
+          MSIX_VERSION: ${{ needs.release-metadata.outputs.msix_version }}
+          MSIX_PUBLISHER: ${{ steps.signing-mode.outputs.publisher }}
+        run: |
+          $arguments = @{
+            SkipPublish = $true
+            OutputDirectory = "./artifacts/msix"
+            Version = $env:MSIX_VERSION
+          }
+          if ($env:SHOULD_SIGN -eq "true") {
+            $arguments["Publisher"] = $env:MSIX_PUBLISHER
+          }
+          ./src/Devolutions.Terminal.Package/Scripts/Build-Packages.ps1 @arguments
+
+          New-Item -ItemType Directory -Force -Path ./artifacts/msix/unsigned | Out-Null
+          Get-ChildItem ./artifacts/msix/packages -Filter "*.msix" -File |
+            Copy-Item -Destination ./artifacts/msix/unsigned
 
       - name: Azure login for Trusted Signing
         if: steps.signing-mode.outputs.should_sign == 'true'
@@ -792,15 +828,8 @@ jobs:
           TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.TRUSTED_SIGNING_ACCOUNT_NAME }}
           TRUSTED_SIGNING_PROFILE_NAME: ${{ secrets.TRUSTED_SIGNING_PROFILE_NAME }}
         run: |
-          # MSIX packages are signed here, on a real Windows runner, using WinApp CLI's
-          # native `az-sign` command (real Win32 SignerSignEx3 / AppxSip.dll) rather than
-          # psign-tool's cross-platform "--mode portable" MSIX signing path used for the
-          # .msi container and bundled binaries elsewhere in this workflow. Portable-mode
-          # MSIX signing has been found to corrupt the package's central directory relative
-          # to the AXCD digest embedded in its own AppxSignature.p7x, which Windows rejects
-          # at install time with HRESULT 0x80080205 ("The Appx package's block map is
-          # invalid") even though the package is otherwise well-formed. Native signing on
-          # Windows uses the real OS AppX signing component and does not have this bug.
+          # Keep MSIX signing and verification on Windows with the native AppX SIP.
+          # psign-tool signs only the MSI container and bundled binaries in other jobs.
           $metadata = [ordered]@{
             Endpoint = $env:TRUSTED_SIGNING_ENDPOINT
             CodeSigningAccountName = $env:TRUSTED_SIGNING_ACCOUNT_NAME
@@ -821,6 +850,7 @@ jobs:
         shell: pwsh
         env:
           SHOULD_SIGN: ${{ steps.signing-mode.outputs.should_sign }}
+          MSIX_PUBLISHER: ${{ steps.signing-mode.outputs.publisher }}
         run: |
           $packagePaths = Get-ChildItem ./artifacts/msix/packages -File |
             Where-Object Extension -eq ".msix" |
@@ -831,9 +861,34 @@ jobs:
           }
           if ($env:SHOULD_SIGN -eq "true") {
             $arguments["RequireSignature"] = $true
+            $arguments["ExpectedPublisher"] = $env:MSIX_PUBLISHER
           }
 
           ./src/Devolutions.Terminal.Package/Scripts/Test-Packages.ps1 @arguments
+
+      - name: Collect MSIX failure diagnostics
+        if: failure() && steps.build-msix.outcome == 'success'
+        shell: pwsh
+        run: |
+          $diagnostics = "./artifacts/msix/diagnostics"
+          New-Item -ItemType Directory -Force -Path $diagnostics | Out-Null
+          Copy-Item ./artifacts/msix/metadata/Package.appxmanifest -Destination $diagnostics
+          wevtutil qe Microsoft-Windows-AppxPackaging/Operational /rd:true /c:30 /f:xml |
+            Set-Content "$diagnostics/AppxPackaging-events.xml" -Encoding utf8
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::warning::AppxPackaging event collection failed with exit code $LASTEXITCODE."
+          }
+
+      - name: Upload failed MSIX inputs and diagnostics
+        if: failure() && steps.build-msix.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: DevolutionsTerminal-MSIX-failure-diagnostics
+          path: |
+            artifacts/msix/unsigned
+            artifacts/msix/diagnostics
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Upload MSIX artifacts
         uses: actions/upload-artifact@v4
@@ -1336,13 +1391,8 @@ jobs:
             throw "Failed to acquire an Azure Trusted Signing access token."
           }
 
-          # MSIX packages are already signed on windows-latest in the msix job (via
-          # WinApp CLI's native `az-sign`), not here. psign-tool's cross-platform
-          # "--mode portable" MSIX signing (which is what this ubuntu-latest job would
-          # otherwise use) has been found to corrupt the package's central directory
-          # relative to the AXCD digest embedded in its own AppxSignature.p7x, which
-          # Windows rejects at install time with HRESULT 0x80080205 ("The Appx
-          # package's block map is invalid"). Only the .msi container is signed here.
+          # MSIX packages are already signed and verified by the Windows msix job.
+          # Only the MSI container is signed in this Linux release job.
           ./src/Devolutions.Terminal.Package/Scripts/Sign-Packages.ps1 `
             -PackageDirectory ./artifacts/msi-packages `
             -Version $env:MSIX_VERSION `

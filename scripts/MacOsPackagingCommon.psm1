@@ -286,6 +286,20 @@ function Get-MacOsWritableDmgSizeMegabytes {
     return [Math]::Max([long]64, $sourceMegabytes + $extraMegabytes)
 }
 
+function Move-MacOsLegalNotices {
+    param(
+        [Parameter(Mandatory)]
+        [string]$MacOsDirectory,
+        [Parameter(Mandatory)]
+        [string]$ResourcesDirectory
+    )
+
+    # Publish output can acquire new notices from transitive dependencies.
+    # Keep them out of the bundle's code-only directory without dropping licenses.
+    Get-ChildItem -LiteralPath $MacOsDirectory -File -Filter 'THIRD-PARTY-NOTICES*.txt' |
+        Move-Item -Destination $ResourcesDirectory -Force
+}
+
 Export-ModuleMember -Function `
     Import-MacOsPackageEnv, `
     Get-MacOsSourceDateEpoch, `
@@ -298,4 +312,5 @@ Export-ModuleMember -Function `
     Get-Sha256Manifest, `
     Set-MacOsReproducibleTimestamps, `
     Get-MacOsTreeByteSize, `
-    Get-MacOsWritableDmgSizeMegabytes
+    Get-MacOsWritableDmgSizeMegabytes, `
+    Move-MacOsLegalNotices

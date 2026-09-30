@@ -15,6 +15,10 @@ param(
 
     [switch] $SkipNativeBuild,
 
+    [ValidateNotNullOrEmpty()]
+    [ValidateScript({ -not [string]::IsNullOrWhiteSpace($_) -and $_ -notmatch '[\r\n]' })]
+    [string] $Publisher,
+
     [string] $CertificatePath,
 
     [securestring] $CertificatePassword
@@ -89,6 +93,9 @@ function Write-VersionedManifest {
 
     [xml] $manifest = Get-Content -LiteralPath $sourceManifest
     $manifest.Package.Identity.Version = $Version
+    if (-not [string]::IsNullOrWhiteSpace($Publisher)) {
+        $manifest.Package.Identity.Publisher = $Publisher
+    }
 
     $settings = [Xml.XmlWriterSettings]::new()
     $settings.Encoding = [Text.UTF8Encoding]::new($false)
