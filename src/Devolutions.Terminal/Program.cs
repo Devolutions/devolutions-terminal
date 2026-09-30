@@ -67,9 +67,8 @@ internal static class Program
 
         var invocation = parsed.Invocation!;
         var deferredHandler = new DeferredBrokerHandler();
-        var isolatedMode = Devolutions.Terminal.Settings.SettingsService.IsIsolatedModeEnabled();
-        var broker = isolatedMode ? null : BrokerHost.TryCreate(deferredHandler);
-        if (broker is null && !isolatedMode)
+        var broker = invocation.Isolated ? null : BrokerHost.TryCreate(deferredHandler);
+        if (broker is null && !invocation.Isolated)
         {
             var response = ForwardToPrimaryAsync(invocation).AsTask().GetAwaiter().GetResult();
             if (!response.IsSuccess)

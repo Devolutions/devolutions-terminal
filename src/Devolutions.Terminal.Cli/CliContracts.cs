@@ -24,7 +24,8 @@ public sealed record CliInvocation(
     CliLaunchMode LaunchMode,
     int? SavedLayout,
     IReadOnlyList<ActionAndArgs> Actions,
-    CliSaveRequest? SaveRequest = null);
+    CliSaveRequest? SaveRequest = null,
+    bool Isolated = false);
 
 public sealed record CliParseResult(
     int ExitCode,

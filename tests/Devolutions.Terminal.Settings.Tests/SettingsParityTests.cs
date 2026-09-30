@@ -68,7 +68,6 @@ public sealed class SettingsParityTests
                 "windowingBehavior": "useAnyExisting",
                 "disabledProfileSources": ["A", "B"],
                 "compatibility.allowHeadless": true,
-                "compatibility.isolatedMode": true,
                 "experimental.enableColorSelection": true,
                 "initialRows": 42,
                 "initialCols": 132,
@@ -106,7 +105,6 @@ public sealed class SettingsParityTests
         Assert.Equal("useAnyExisting", settings.WindowingBehavior);
         Assert.Equal(["A", "B"], settings.DisabledProfileSources);
         Assert.True(settings.AllowHeadless);
-        Assert.True(settings.IsolatedMode);
         Assert.True(settings.EnableColorSelection);
         Assert.Equal(42, settings.InitialRows);
         Assert.Equal(132, settings.InitialCols);

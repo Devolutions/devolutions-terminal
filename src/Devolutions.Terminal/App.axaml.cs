@@ -30,7 +30,10 @@ public partial class TerminalApp : Application
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             _desktop = desktop;
-            _router = new TerminalWindowRouter(desktop, ConfigureWindow);
+            _router = new TerminalWindowRouter(
+                desktop,
+                ConfigureWindow,
+                isolated: InitialInvocation?.Isolated ?? false);
             BrokerHandler?.SetHandler(_router);
             if (OperatingSystem.IsMacOS())
             {

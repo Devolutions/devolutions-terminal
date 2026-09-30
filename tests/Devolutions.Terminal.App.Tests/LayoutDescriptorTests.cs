@@ -33,15 +33,9 @@ public sealed class LayoutDescriptorTests
     [InlineData("persistedWindowLayout", true, false)]
     [InlineData("defaultProfile", false, false)]
     [InlineData("defaultProfile", true, false)]
-    public void IsolatedModeNeverUsesPersistedLayouts(string preference, bool isolatedMode, bool expected)
+    public void IsolatedModeNeverUsesPersistedLayouts(string preference, bool isolated, bool expected)
     {
-        var settings = new AppSettings
-        {
-            FirstWindowPreference = preference,
-            IsolatedMode = isolatedMode,
-        };
-
-        Assert.Equal(expected, TerminalLayoutStateStore.ShouldUsePersistedLayout(settings));
+        Assert.Equal(expected, TerminalLayoutStateStore.ShouldUsePersistedLayout(preference, isolated));
     }
 
     [Fact]

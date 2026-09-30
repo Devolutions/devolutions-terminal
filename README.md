@@ -88,12 +88,13 @@ settings file. On Windows, `WT_PARENT_WINDOW_HANDLE` embeds the window as a
 child of that HWND. `alwaysShowTabs: false` hides the tab row when only one
 tab is open.
 
-`"compatibility.isolatedMode": true` (from Windows Terminal 1.22 and earlier)
-makes each launch its own process: it neither forwards to a running instance
-nor becomes the broker for later launches, so every window keeps its own
-environment, `WT_PARENT_WINDOW_HANDLE`, and settings directory. `-w` targeting
-of other windows is unavailable, and persisted layouts are neither restored
-nor saved.
+`dt --isolated` (or `Devolutions.Terminal.exe --isolated`) runs the launch in
+its own process: it neither forwards to a running instance nor becomes the
+broker for later launches, so every window keeps its own environment,
+`WT_PARENT_WINDOW_HANDLE`, and settings directory. `-w` targeting of other
+windows is unavailable, and persisted layouts are neither restored nor saved.
+It is the per-launch equivalent of Windows Terminal's
+`compatibility.isolatedMode` setting, which Windows Terminal 1.23 removed.
 
 Set `"experimental.terminalEngine": "ghostty"` to use the pinned
 `libghostty-vt` engine globally. A profile can override it with `"builtin"` or

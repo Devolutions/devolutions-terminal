@@ -77,6 +77,7 @@ public partial class MainWindow :
     private readonly Func<GlobalSummonArgs, ValueTask<WindowActionResult>>? _summonRequested;
     private readonly Action<AppSettings>? _settingsChanged;
     private readonly ISystemMenuService _systemMenuService;
+    private readonly bool _isolated;
     private readonly TaskCompletionSource<TerminalWindowActivationResult> _initialActivationCompletion =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly DispatcherTimer _notificationTimer;
@@ -102,10 +103,12 @@ public partial class MainWindow :
         Action<string>? workspaceRequested = null,
         Func<GlobalSummonArgs, ValueTask<WindowActionResult>>? summonRequested = null,
         Action<AppSettings>? settingsChanged = null,
-        ISystemMenuService? systemMenuService = null)
+        ISystemMenuService? systemMenuService = null,
+        bool isolated = false)
     {
         WindowId = windowId;
         WindowName = windowName;
+        _isolated = isolated;
         _initialActivation = initialActivation;
         _newWindowRequested = newWindowRequested;
         _tabTearOffRequested = tabTearOffRequested;
@@ -3647,7 +3650,7 @@ public partial class MainWindow :
     };
 
     private bool UsesPersistedLayout =>
-        TerminalLayoutStateStore.ShouldUsePersistedLayout(_settings);
+        TerminalLayoutStateStore.ShouldUsePersistedLayout(_settings.FirstWindowPreference, _isolated);
 
     private void TryPersistCurrentLayout(TerminalWindowLayoutDescriptor layout)
     {

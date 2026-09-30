@@ -118,6 +118,7 @@ public sealed class CliParser
         int? rows = null;
         int? savedLayout = null;
         var launchMode = CliLaunchMode.Default;
+        var isolated = false;
         CliSaveRequest? save = null;
 
         for (var segmentIndex = 0; segmentIndex < segments.Count; segmentIndex++)
@@ -135,7 +136,8 @@ public sealed class CliParser
                     ref columns,
                     ref rows,
                     ref savedLayout,
-                    ref launchMode);
+                    ref launchMode,
+                    ref isolated);
             }
 
             var command = index < segment.Count && Commands.Contains(segment[index])
@@ -215,7 +217,8 @@ public sealed class CliParser
             launchMode,
             savedLayout,
             actions,
-            save);
+            save,
+            isolated);
         return new(0, string.Empty, false, invocation);
     }
 
@@ -228,7 +231,8 @@ public sealed class CliParser
         ref int? columns,
         ref int? rows,
         ref int? savedLayout,
-        ref CliLaunchMode launchMode)
+        ref CliLaunchMode launchMode,
+        ref bool isolated)
     {
         while (index < args.Count)
         {
@@ -267,6 +271,10 @@ public sealed class CliParser
                 case "-f":
                 case "--focus":
                     launchMode |= CliLaunchMode.Focus;
+                    index++;
+                    break;
+                case "--isolated":
+                    isolated = true;
                     index++;
                     break;
                 default:
@@ -696,6 +704,7 @@ internal static class CommandLineSchema
           -M, --maximized        Launch maximized
           -F, --fullscreen       Launch fullscreen
           -f, --focus            Hide the title bar
+          --isolated             Own process: never join or serve other launches
 
         Commands:
           new-tab, nt   split-pane, sp   focus-tab, ft   move-focus, mf
@@ -708,6 +717,7 @@ internal static class CommandLineSchema
         root.Options.Add(new Option<string>("--window") { Description = "Target window." });
         root.Options.Add(new Option<string>("--pos") { Description = "Window position." });
         root.Options.Add(new Option<string>("--size") { Description = "Terminal size." });
+        root.Options.Add(new Option<bool>("--isolated") { Description = "Run in its own process." });
         foreach (var (name, alias) in new[]
                  {
                      ("new-tab", "nt"),

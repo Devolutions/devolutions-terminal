@@ -149,22 +149,6 @@ public static class SettingsService
     public static AppSettings CreateDefault() =>
         SettingsLoader.Load(SettingsLoader.ReadEmbeddedDefaults());
 
-    public static bool IsIsolatedModeEnabled() => IsIsolatedModeEnabled(SettingsPath);
-
-    public static bool IsIsolatedModeEnabled(string settingsPath)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(settingsPath);
-        try
-        {
-            return File.Exists(settingsPath) &&
-                SettingsLoader.ReadIsolatedMode(File.ReadAllText(settingsPath, Encoding.UTF8));
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return false;
-        }
-    }
-
     public static ApplicationStateStore LoadApplicationState() =>
         new(Path.GetDirectoryName(Path.GetFullPath(StatePath))!);
 

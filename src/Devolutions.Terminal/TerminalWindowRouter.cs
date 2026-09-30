@@ -17,16 +17,19 @@ internal sealed class TerminalWindowRouter : IBrokerRequestHandler, IDisposable
     private readonly ApplicationStateStore _stateStore;
     private readonly GlobalWindowActionRouter _windowActions;
     private readonly GlobalHotkeyManager _globalHotkeys;
+    private readonly bool _isolated;
     private int _nextWindowId = 1;
 
     public TerminalWindowRouter(
         IClassicDesktopStyleApplicationLifetime desktop,
         Action<MainWindow>? windowCreated = null,
         ApplicationStateStore? stateStore = null,
-        IGlobalHotkeyBackend? globalHotkeyBackend = null)
+        IGlobalHotkeyBackend? globalHotkeyBackend = null,
+        bool isolated = false)
     {
         _desktop = desktop;
         _windowCreated = windowCreated;
+        _isolated = isolated;
         _stateStore = stateStore ?? SettingsService.LoadApplicationState();
         _windowActions = new GlobalWindowActionRouter(CreateSummonWindow);
         _globalHotkeys = new GlobalHotkeyManager(
@@ -146,7 +149,8 @@ internal sealed class TerminalWindowRouter : IBrokerRequestHandler, IDisposable
                         : $"{window.WindowName} ({window.WindowId})")
                 .ToArray(),
             summonRequested: args => _windowActions.SummonAsync(window, args),
-            settingsChanged: settings => TraceHotkeyResults(_globalHotkeys.Apply(settings.ActionMap)));
+            settingsChanged: settings => TraceHotkeyResults(_globalHotkeys.Apply(settings.ActionMap)),
+            isolated: _isolated);
         _windows.Add(window);
         _windowActions.Add(window);
         _windowCreated?.Invoke(window);
