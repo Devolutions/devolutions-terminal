@@ -229,11 +229,12 @@ internal sealed class TerminalWindowRouter : IBrokerRequestHandler, IDisposable
             parsed.Invocation.PositionY is not null ||
             parsed.Invocation.Columns is not null ||
             parsed.Invocation.Rows is not null ||
-            parsed.Invocation.LaunchMode != CliLaunchMode.Default)
+            parsed.Invocation.LaunchMode != CliLaunchMode.Default ||
+            parsed.Invocation.Isolated)
         {
             return new(
                 false,
-                "Window routing, position, size, and launch-mode options are not valid inside the current window's command palette.",
+                "Window routing, position, size, launch-mode, and isolation options are not valid inside the current window's command palette.",
                 []);
         }
 
