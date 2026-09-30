@@ -7,7 +7,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'MacOsPackagingCommon.psm1') -Force
 Assert-Darwin
-Assert-Command -Name 'codesign', 'cp'
+Assert-Command -Name 'codesign', 'cp', 'clang'
 $metadata = Import-MacOsPackageEnv -Path (Join-Path (Split-Path -Parent $PSScriptRoot) 'macos/package.env')
 $rid = if ((& uname -m) -eq 'arm64') { 'osx-arm64' } else { 'osx-x64' }
 $work = Join-Path ([IO.Path]::GetTempPath()) "macos-nuget-signing-$([guid]::NewGuid().ToString('N'))"
@@ -16,11 +16,15 @@ $code = Join-Path $app 'Contents/MacOS'
 $resources = Join-Path $app 'Contents/Resources'
 try {
     New-Item -ItemType Directory -Path $code, $resources -Force | Out-Null
+    $fixtureSource = Join-Path $work 'fixture.c'
+    $fixtureBinary = Join-Path $work 'fixture'
+    Set-Content $fixtureSource 'int main(void) { return 0; }' -NoNewline
+    Invoke-Native -FilePath clang -ArgumentList '-arch', (Get-MacOsExpectedArch -Rid $rid), $fixtureSource, '-o', $fixtureBinary
     foreach ($name in @(
         $metadata.EXECUTABLE_NAME, $metadata.CLI_NAME, $metadata.PTY_HOST_NAME,
         $metadata.GHOSTTY_LIBRARY, 'libAvaloniaNative.dylib', 'libSkiaSharp.dylib', 'libHarfBuzzSharp.dylib'
     )) {
-        Invoke-Native -FilePath cp -ArgumentList '/usr/bin/true', (Join-Path $code $name)
+        Invoke-Native -FilePath cp -ArgumentList $fixtureBinary, (Join-Path $code $name)
     }
     @"
 <?xml version="1.0" encoding="UTF-8"?>
