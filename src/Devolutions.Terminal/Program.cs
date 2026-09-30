@@ -67,30 +67,34 @@ internal static class Program
 
         var invocation = parsed.Invocation!;
         var deferredHandler = new DeferredBrokerHandler();
-        var broker = invocation.Isolated ? null : BrokerHost.TryCreate(deferredHandler);
-        if (broker is null && !invocation.Isolated)
+        BrokerHost? broker = null;
+        if (!invocation.Isolated)
         {
-            var response = ForwardToPrimaryAsync(invocation).AsTask().GetAwaiter().GetResult();
-            if (!response.IsSuccess)
+            broker = BrokerHost.TryCreate(deferredHandler);
+            if (broker is null)
             {
-                Console.Error.WriteLine($"dt: {response.Message}");
-                return response.Status == BrokerStatus.WindowNotFound ? 3 : 1;
-            }
+                var response = ForwardToPrimaryAsync(invocation).AsTask().GetAwaiter().GetResult();
+                if (!response.IsSuccess)
+                {
+                    Console.Error.WriteLine($"dt: {response.Message}");
+                    return response.Status == BrokerStatus.WindowNotFound ? 3 : 1;
+                }
 
-            return 0;
+                return 0;
+            }
         }
 
         if (invocation.TargetWindow.Equals("use-existing", StringComparison.OrdinalIgnoreCase) ||
             (int.TryParse(invocation.TargetWindow, out var requestedWindowId) && requestedWindowId > 0))
         {
-            DisposeBroker(broker);
+            broker?.DisposeAsync().AsTask().GetAwaiter().GetResult();
             Console.Error.WriteLine($"dt: terminal window '{invocation.TargetWindow}' was not found.");
             return 3;
         }
 
         if (invocation.SaveRequest is { Commandline.Length: > 0 } saveRequest)
         {
-            DisposeBroker(broker);
+            broker?.DisposeAsync().AsTask().GetAwaiter().GetResult();
             try
             {
                 var settings = Devolutions.Terminal.Settings.SettingsService.Load();
@@ -135,12 +139,9 @@ internal static class Program
         }
         finally
         {
-            DisposeBroker(broker);
+            broker?.DisposeAsync().AsTask().GetAwaiter().GetResult();
         }
     }
-
-    private static void DisposeBroker(BrokerHost? broker) =>
-        broker?.DisposeAsync().AsTask().GetAwaiter().GetResult();
 
     public static AppBuilder BuildAvaloniaApp()
     {
