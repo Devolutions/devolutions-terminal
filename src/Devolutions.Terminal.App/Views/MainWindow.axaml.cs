@@ -3647,8 +3647,7 @@ public partial class MainWindow :
     };
 
     private bool UsesPersistedLayout =>
-        TerminalLayoutStateStore.IsPersistedLayoutPreference(
-            _settings.FirstWindowPreference);
+        TerminalLayoutStateStore.ShouldUsePersistedLayout(_settings);
 
     private void TryPersistCurrentLayout(TerminalWindowLayoutDescriptor layout)
     {

@@ -131,6 +131,7 @@ public sealed class AppSettings
     public bool AlwaysShowNotificationIcon { get; set; }
     public List<string> DisabledProfileSources { get; set; } = [];
     public bool AllowHeadless { get; set; }
+    public bool IsolatedMode { get; set; }
     public bool EnableColorSelection { get; set; }
 
     // Per-window settings.

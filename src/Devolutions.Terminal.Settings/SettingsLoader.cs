@@ -19,6 +19,7 @@ public static class SettingsLoader
 {
     private const string OriginKey = "$terminalOrigin";
     private const string SourceKey = "$terminalSource";
+    private const string IsolatedModeKey = "compatibility.isolatedMode";
 
     private static readonly JsonDocumentOptions DocumentOptions = new()
     {
@@ -32,6 +33,27 @@ public static class SettingsLoader
 
     public static string ReadEmbeddedUserDefaults()
         => ReadEmbeddedResource("Devolutions.Terminal.Settings.userDefaults.json");
+
+    /// <summary>
+    /// Reads only <c>compatibility.isolatedMode</c> from a user settings document, so startup can
+    /// decide whether to use the broker before loading the full settings.
+    /// </summary>
+    public static bool ReadIsolatedMode(string? userJson)
+    {
+        if (string.IsNullOrWhiteSpace(userJson))
+        {
+            return false;
+        }
+
+        try
+        {
+            return Bool(JsonNode.Parse(userJson, documentOptions: DocumentOptions) as JsonObject, IsolatedModeKey);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
 
     private static string ReadEmbeddedResource(string name)
     {
@@ -320,6 +342,7 @@ public static class SettingsLoader
             AlwaysShowNotificationIcon = Bool(root, "alwaysShowNotificationIcon"),
             DisabledProfileSources = StringList(root["disabledProfileSources"]),
             AllowHeadless = Bool(root, "compatibility.allowHeadless"),
+            IsolatedMode = Bool(root, IsolatedModeKey),
             EnableColorSelection = Bool(root, "experimental.enableColorSelection"),
             DefaultProfile = String(root, "defaultProfile"),
             InitialCols = Int(root, "initialCols", 80, minimum: 1),
@@ -1135,6 +1158,7 @@ public static class SettingsLoader
         ["alwaysShowNotificationIcon"] = settings.AlwaysShowNotificationIcon,
         ["disabledProfileSources"] = StringArray(settings.DisabledProfileSources),
         ["compatibility.allowHeadless"] = settings.AllowHeadless,
+        [IsolatedModeKey] = settings.IsolatedMode,
         ["experimental.enableColorSelection"] = settings.EnableColorSelection,
         ["defaultProfile"] = settings.DefaultProfile,
         ["initialCols"] = settings.InitialCols,

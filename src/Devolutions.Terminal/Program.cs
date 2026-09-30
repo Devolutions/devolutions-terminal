@@ -67,8 +67,9 @@ internal static class Program
 
         var invocation = parsed.Invocation!;
         var deferredHandler = new DeferredBrokerHandler();
-        var broker = BrokerHost.TryCreate(deferredHandler);
-        if (broker is null)
+        var isolatedMode = Devolutions.Terminal.Settings.SettingsService.IsIsolatedModeEnabled();
+        var broker = isolatedMode ? null : BrokerHost.TryCreate(deferredHandler);
+        if (broker is null && !isolatedMode)
         {
             var response = ForwardToPrimaryAsync(invocation).AsTask().GetAwaiter().GetResult();
             if (!response.IsSuccess)
@@ -83,14 +84,14 @@ internal static class Program
         if (invocation.TargetWindow.Equals("use-existing", StringComparison.OrdinalIgnoreCase) ||
             (int.TryParse(invocation.TargetWindow, out var requestedWindowId) && requestedWindowId > 0))
         {
-            broker.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            DisposeBroker(broker);
             Console.Error.WriteLine($"dt: terminal window '{invocation.TargetWindow}' was not found.");
             return 3;
         }
 
         if (invocation.SaveRequest is { Commandline.Length: > 0 } saveRequest)
         {
-            broker.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            DisposeBroker(broker);
             try
             {
                 var settings = Devolutions.Terminal.Settings.SettingsService.Load();
@@ -135,9 +136,12 @@ internal static class Program
         }
         finally
         {
-            broker.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            DisposeBroker(broker);
         }
     }
+
+    private static void DisposeBroker(BrokerHost? broker) =>
+        broker?.DisposeAsync().AsTask().GetAwaiter().GetResult();
 
     public static AppBuilder BuildAvaloniaApp()
     {

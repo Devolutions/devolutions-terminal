@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Devolutions.Terminal.Broker;
+using Devolutions.Terminal.Settings;
 
 namespace Devolutions.Terminal.Cli;
 
@@ -17,9 +18,11 @@ public static class Program
         }
 
         var invocation = parsed.Invocation!;
-        var response = await new BrokerClient().SendAsync(
-            invocation.TargetWindow,
-            CliInvocationSerializer.Serialize(invocation)).ConfigureAwait(false);
+        var response = SettingsService.IsIsolatedModeEnabled()
+            ? BrokerResponse.Unavailable("Isolated mode does not use the broker.")
+            : await new BrokerClient().SendAsync(
+                invocation.TargetWindow,
+                CliInvocationSerializer.Serialize(invocation)).ConfigureAwait(false);
         if (response.Status == BrokerStatus.Unavailable)
         {
             if (RequiresExistingWindow(invocation.TargetWindow))

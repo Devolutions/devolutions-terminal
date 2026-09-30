@@ -10,6 +10,13 @@ public static class TerminalLayoutStateStore
          preference.Equals("persistedWindowLayout", StringComparison.OrdinalIgnoreCase) ||
          preference.Equals("persistedLayoutAndContent", StringComparison.OrdinalIgnoreCase));
 
+    // Matches Windows Terminal: an isolated process never restores or saves the shared window layouts.
+    public static bool ShouldUsePersistedLayout(AppSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        return !settings.IsolatedMode && IsPersistedLayoutPreference(settings.FirstWindowPreference);
+    }
+
     public static WindowLayoutState? ReadWindowState(ApplicationStateStore store, int windowId)
     {
         ArgumentNullException.ThrowIfNull(store);
