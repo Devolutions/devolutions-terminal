@@ -8,7 +8,7 @@ namespace Devolutions.Terminal.Connection.Native;
 internal static partial class ConPty
 {
     [LibraryImport("conpty.dll", EntryPoint = "ConptyCreatePseudoConsole")]
-    internal static partial int CreatePseudoConsole(Kernel32.Coord size, SafeFileHandle hInput, SafeFileHandle hOutput, uint dwFlags, out nint phPC);
+    internal static partial int CreatePseudoConsole(Kernel32.Coord size, SafePipeHandle hInput, SafePipeHandle hOutput, uint dwFlags, out nint phPC);
 
     [LibraryImport("conpty.dll", EntryPoint = "ConptyResizePseudoConsole")]
     internal static partial int ResizePseudoConsole(SafePseudoConsoleHandle hPC, Kernel32.Coord size);

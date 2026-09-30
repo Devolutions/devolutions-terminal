@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text;
@@ -199,14 +200,12 @@ public sealed class ConPtyConnection : IRestartableTerminalConnection
 
     private void StartCore(TerminalLaunchOptions options, CancellationToken cancellationToken)
     {
-        SafeFileHandle? inputRead = null;
-        SafeFileHandle? inputWrite = null;
-        SafeFileHandle? outputRead = null;
-        SafeFileHandle? outputWrite = null;
+        NamedPipeClientStream? inputRead = null;
+        NamedPipeClientStream? outputWrite = null;
         SafePseudoConsoleHandle? pseudoConsole = null;
         SafeKernelObjectHandle? process = null;
-        FileStream? inputStream = null;
-        FileStream? outputStream = null;
+        NamedPipeServerStream? inputStream = null;
+        NamedPipeServerStream? outputStream = null;
         CancellationTokenSource? lifetime = null;
 
         lock (_stateLock)
@@ -217,15 +216,16 @@ public sealed class ConPtyConnection : IRestartableTerminalConnection
 
         try
         {
-            CreatePipe(out inputRead, out inputWrite);
-            CreatePipe(out outputRead, out outputWrite);
+            CreatePipe(PipeDirection.Out, out inputStream, out inputRead);
+            CreatePipe(PipeDirection.In, out outputStream, out outputWrite);
 
             var size = new Kernel32.Coord
             {
                 X = (short)options.Columns,
                 Y = (short)options.Rows,
             };
-            var hr = ConPty.CreatePseudoConsole(size, inputRead, outputWrite, 0, out var pseudoConsoleValue);
+            var hr = ConPty.CreatePseudoConsole(
+                size, inputRead.SafePipeHandle, outputWrite.SafePipeHandle, 0, out var pseudoConsoleValue);
             if (hr != 0)
             {
                 Marshal.ThrowExceptionForHR(hr);
@@ -235,10 +235,6 @@ public sealed class ConPtyConnection : IRestartableTerminalConnection
             var processResult = StartProcess(options, pseudoConsole);
             process = processResult.Handle;
 
-            inputStream = new FileStream(inputWrite, FileAccess.Write, 4096, isAsync: false);
-            inputWrite = null;
-            outputStream = new FileStream(outputRead, FileAccess.Read, 4096, isAsync: false);
-            outputRead = null;
             lifetime = new CancellationTokenSource();
 
             var generation = ++_generation;
@@ -296,8 +292,8 @@ public sealed class ConPtyConnection : IRestartableTerminalConnection
             outputStream = null;
             lifetime = null;
 
-            session.ReadTask = Task.Run(() => ReadLoop(session));
-            session.WaitTask = Task.Run(() => WaitLoop(session));
+            session.ReadTask = ReadLoopAsync(session);
+            session.WaitTask = WaitLoopAsync(session);
             session.CancellationRegistration = cancellationToken.Register(
                 static state =>
                 {
@@ -329,8 +325,6 @@ public sealed class ConPtyConnection : IRestartableTerminalConnection
             inputStream?.Dispose();
             outputStream?.Dispose();
             inputRead?.Dispose();
-            inputWrite?.Dispose();
-            outputRead?.Dispose();
             outputWrite?.Dispose();
             process?.Dispose();
             pseudoConsole?.Dispose();
@@ -455,14 +449,15 @@ public sealed class ConPtyConnection : IRestartableTerminalConnection
         }
     }
 
-    private void ReadLoop(SessionResources session)
+    private async Task ReadLoopAsync(SessionResources session)
     {
         var buffer = new byte[16 * 1024];
         try
         {
             while (!session.Lifetime.IsCancellationRequested)
             {
-                var read = session.Output.Read(buffer);
+                var read = await session.Output.ReadAsync(
+                    buffer, session.Lifetime.Token).ConfigureAwait(false);
                 if (read == 0)
                 {
                     break;
@@ -486,13 +481,26 @@ public sealed class ConPtyConnection : IRestartableTerminalConnection
         }
     }
 
-    private void WaitLoop(SessionResources session)
+    private async Task WaitLoopAsync(SessionResources session)
     {
-        var waitResult = Kernel32.WaitForSingleObject(session.Process, Kernel32.Infinite);
-        if (waitResult == Kernel32.WaitFailed)
+        // A registered wait observes process exit without holding a pool worker
+        // (or retaining a dedicated thread's handles) for the session lifetime.
+        using (var processExited = new EventWaitHandle(false, EventResetMode.AutoReset))
         {
-            PublishFault(session, new Win32Exception(Marshal.GetLastPInvokeError()));
-            return;
+            processExited.SafeWaitHandle = new SafeWaitHandle(
+                session.Process.DangerousGetHandle(), ownsHandle: false);
+            var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var registration = ThreadPool.RegisterWaitForSingleObject(
+                processExited, static (state, _) => ((TaskCompletionSource)state!).TrySetResult(),
+                completion, Timeout.Infinite, executeOnlyOnce: true);
+            try
+            {
+                await completion.Task.ConfigureAwait(false);
+            }
+            finally
+            {
+                registration.Unregister(null);
+            }
         }
 
         if (!Kernel32.GetExitCodeProcess(session.Process, out var code))
@@ -777,11 +785,30 @@ public sealed class ConPtyConnection : IRestartableTerminalConnection
         return Marshal.StringToHGlobalUni(builder.ToString());
     }
 
-    private static void CreatePipe(out SafeFileHandle read, out SafeFileHandle write)
+    private static void CreatePipe(
+        PipeDirection direction,
+        out NamedPipeServerStream server,
+        out NamedPipeClientStream client)
     {
-        if (!Kernel32.CreatePipe(out read, out write, 0, 0))
+        var name = $"devolutions-terminal-{Guid.NewGuid():N}";
+        // ConPTY uses synchronous handles, but our ends must support overlapped
+        // I/O so idle reads and blocked writes remain cancellable without workers.
+        server = new NamedPipeServerStream(
+            name, direction, 1, PipeTransmissionMode.Byte,
+            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+        client = new NamedPipeClientStream(
+            ".", name, direction == PipeDirection.Out ? PipeDirection.In : PipeDirection.Out,
+            PipeOptions.None);
+        try
         {
-            throw new Win32Exception(Marshal.GetLastPInvokeError());
+            client.Connect();
+            server.WaitForConnection();
+        }
+        catch
+        {
+            client.Dispose();
+            server.Dispose();
+            throw;
         }
     }
 
@@ -848,8 +875,8 @@ public sealed class ConPtyConnection : IRestartableTerminalConnection
         TerminalProcessMetadata metadata,
         SafePseudoConsoleHandle pseudoConsole,
         SafeKernelObjectHandle process,
-        FileStream input,
-        FileStream output,
+        NamedPipeServerStream input,
+        NamedPipeServerStream output,
         CancellationTokenSource lifetime)
     {
         public long Generation { get; } = generation;
@@ -857,8 +884,8 @@ public sealed class ConPtyConnection : IRestartableTerminalConnection
         public TerminalProcessMetadata Metadata { get; } = metadata;
         public SafePseudoConsoleHandle PseudoConsole { get; } = pseudoConsole;
         public SafeKernelObjectHandle Process { get; } = process;
-        public FileStream Input { get; } = input;
-        public FileStream Output { get; } = output;
+        public NamedPipeServerStream Input { get; } = input;
+        public NamedPipeServerStream Output { get; } = output;
         public CancellationTokenSource Lifetime { get; } = lifetime;
         public CancellationTokenRegistration CancellationRegistration { get; set; }
         public Task? ReadTask { get; set; }

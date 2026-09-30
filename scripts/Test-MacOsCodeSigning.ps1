@@ -99,6 +99,29 @@ try {
     $resources = Join-Path $contents 'Resources'
     New-Item -ItemType Directory -Path $resources | Out-Null
     Move-MacOsLegalNotices -MacOsDirectory $macosDir -ResourcesDirectory $resources
+    foreach ($relativePath in @(
+        'x64/OpenConsole.exe',
+        'runtimes/win-arm64/native/arm64/OpenConsole.exe'
+    )) {
+        $nestedCode = Join-Path $macosDir $relativePath
+        New-Item -ItemType Directory -Path (Split-Path -Parent $nestedCode) -Force | Out-Null
+        [IO.File]::WriteAllBytes($nestedCode, [byte[]](0x4D, 0x5A, 0, 0))
+        $nestedCodeRejected = $false
+        try {
+            & (Join-Path $scriptDir 'Sign-MacOsPackage.ps1') $appPath '-'
+        }
+        catch {
+            if ($_.Exception.Message -notmatch 'Contents/MacOS may contain only Mach-O code.*OpenConsole\.exe') {
+                throw
+            }
+            $nestedCodeRejected = $true
+        }
+        if (-not $nestedCodeRejected) {
+            throw "Sign-MacOsPackage.ps1 accepted nested Windows code: $relativePath."
+        }
+        Remove-Item -LiteralPath $nestedCode -Force
+    }
+    Remove-Item -LiteralPath (Join-Path $macosDir 'x64'), (Join-Path $macosDir 'runtimes') -Recurse -Force
     & (Join-Path $scriptDir 'Sign-MacOsPackage.ps1') $appPath '-'
     if ($LASTEXITCODE -ne 0) {
         throw "Sign-MacOsPackage.ps1 failed with exit code $LASTEXITCODE."

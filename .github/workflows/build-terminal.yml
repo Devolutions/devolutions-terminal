@@ -162,6 +162,9 @@ jobs:
       - name: Test macOS legal notice layout
         run: pwsh -NoLogo -NoProfile -File scripts/Test-MacOsLegalNotices.ps1
 
+      - name: Test ConPTY publish layouts
+        run: pwsh -NoLogo -NoProfile -File scripts/Test-ConPtyPublishLayout.ps1
+
   nuget-pack:
     name: Pack Devolutions.Terminal.Control NuGet package
     runs-on: windows-latest
@@ -381,6 +384,20 @@ jobs:
 
       - name: Validate package without launching UI
         run: pwsh -NoLogo -NoProfile -File scripts/Test-MacOsPackage.ps1 ${{ matrix.rid }} artifacts/macos-packages/*.zip
+
+      - name: Test release signing on the actual app bundle
+        # Exercise the release signer on both architectures in ordinary CI,
+        # without Developer ID credentials or notarization.
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $testDirectory = "artifacts/macos-signing-validation/${{ matrix.rid }}"
+          New-Item -ItemType Directory -Force -Path $testDirectory | Out-Null
+          $testApp = Join-Path $testDirectory 'Devolutions Terminal.app'
+          # Leave the uploaded app, zip, and their checksum manifest unchanged.
+          & /bin/cp -a "artifacts/macos-packages/Devolutions Terminal.app" $testApp
+          ./scripts/Sign-MacOsPackage.ps1 $testApp -
 
       - name: Run native non-UI gates
         # NativeAOT osx-x64 binaries are cross-compiled on the arm64 runner and

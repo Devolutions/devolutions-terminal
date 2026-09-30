@@ -70,11 +70,13 @@ $mainExecutable = Join-Path $contents 'MacOS' $mainExecutableName
 
 $macosDirectory = Join-Path $contents 'MacOS'
 $invalidMacOsFiles = @(
-    Get-ChildItem -LiteralPath $macosDirectory -File |
+    Get-ChildItem -LiteralPath $macosDirectory -Recurse -Force -File |
         Where-Object { -not (Test-MachO -Path $_.FullName) }
 )
 if ($invalidMacOsFiles.Count -gt 0) {
-    $invalidNames = ($invalidMacOsFiles.Name | Sort-Object) -join ', '
+    $invalidNames = ($invalidMacOsFiles | ForEach-Object {
+        [IO.Path]::GetRelativePath($macosDirectory, $_.FullName)
+    } | Sort-Object) -join ', '
     throw "Contents/MacOS may contain only Mach-O code; move or remove these data files before signing: $invalidNames"
 }
 

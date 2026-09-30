@@ -65,6 +65,9 @@ bundle and writes a zip plus SHA-256 manifest.
 
 Published `THIRD-PARTY-NOTICES*.txt` files (including transitive dependency notices) are preserved in `Contents/Resources` alongside `LICENSE`, not in the code-only `Contents/MacOS` directory.
 `Test-MacOsLegalNotices.ps1` checks this layout without requiring Apple signing credentials.
+Unix publishes exclude Windows-only ConPTY `OpenConsole.exe` hosts from the final publish list, including files supplied by RID-less project references.
+Package validation and signing check every file under `Contents/MacOS`, not just top-level files.
+Ordinary CI runs the release signing script with an ad-hoc identity on both actual NativeAOT app bundles, so nested-code failures are caught before a credentialed release.
 
 ```bash
 open "artifacts/packages/Devolutions Terminal.app"

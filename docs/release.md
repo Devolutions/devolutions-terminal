@@ -22,6 +22,8 @@ the ARM64 host required by x64 processes running under emulation. Because
 output root once a RID is applied, the hosts are emitted in both layouts; a RID
 does not reliably flow to referenced projects, so the placement cannot depend on
 it.
+Unix RID-specific publishes remove the Windows-only `OpenConsole.exe` hosts from the final publish list; RID-less builds and Windows publishes retain both host layouts.
+ConPTY uses asynchronous host-side pipes and registered process-exit waits, with synchronous pipe endpoints for the console host, so idle sessions and blocked input do not exhaust the worker pool.
 Linux and macOS local sessions use the
 bundled `forkpty` relay. The Avalonia shell, settings, renderer, and terminal
 engines are shared.
