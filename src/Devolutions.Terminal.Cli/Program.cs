@@ -17,9 +17,11 @@ public static class Program
         }
 
         var invocation = parsed.Invocation!;
-        var response = await new BrokerClient().SendAsync(
-            invocation.TargetWindow,
-            CliInvocationSerializer.Serialize(invocation)).ConfigureAwait(false);
+        var response = invocation.Isolated
+            ? BrokerResponse.Unavailable("Isolated launches do not use the broker.")
+            : await new BrokerClient().SendAsync(
+                invocation.TargetWindow,
+                CliInvocationSerializer.Serialize(invocation)).ConfigureAwait(false);
         if (response.Status == BrokerStatus.Unavailable)
         {
             if (RequiresExistingWindow(invocation.TargetWindow))

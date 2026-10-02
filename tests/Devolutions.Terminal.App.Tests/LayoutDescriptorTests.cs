@@ -28,6 +28,16 @@ public sealed class LayoutDescriptorTests
         Assert.False(TerminalLayoutStateStore.IsPersistedLayoutPreference(preference));
     }
 
+    [Theory]
+    [InlineData("persistedWindowLayout", false, true)]
+    [InlineData("persistedWindowLayout", true, false)]
+    [InlineData("defaultProfile", false, false)]
+    [InlineData("defaultProfile", true, false)]
+    public void IsolatedModeNeverUsesPersistedLayouts(string preference, bool isolated, bool expected)
+    {
+        Assert.Equal(expected, TerminalLayoutStateStore.ShouldUsePersistedLayout(preference, isolated));
+    }
+
     [Fact]
     public void WindowTabPaneLayoutRoundTripsThroughApplicationState()
     {

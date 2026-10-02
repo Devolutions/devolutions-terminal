@@ -122,6 +122,29 @@ public sealed class CliParserTests
         Assert.Equal(40, result.Rows);
         Assert.True(result.LaunchMode.HasFlag(CliLaunchMode.Maximized));
         Assert.True(result.LaunchMode.HasFlag(CliLaunchMode.Focus));
+        Assert.False(result.Isolated);
+    }
+
+    [Fact]
+    public void IsolatedIsARootOptionThatKeepsTheCommandLine()
+    {
+        var result = Parse("--isolated", "-w", "new", "new-tab", "-p", "cmd", "cmd.exe", "/k", "--isolated");
+
+        Assert.True(result.Isolated);
+        Assert.Equal("new", result.TargetWindow);
+        var terminal = Assert.IsType<NewTerminalArgs>(
+            Assert.IsType<NewTabArgs>(Assert.Single(result.Actions).Args).ContentArgs);
+        Assert.Equal("cmd", terminal.Profile);
+        Assert.Equal("cmd.exe /k --isolated", terminal.Commandline);
+    }
+
+    [Fact]
+    public void IsolatedAfterACommandIsRejected()
+    {
+        var result = new CliParser().Parse(["new-tab", "--isolated"]);
+
+        Assert.Equal(2, result.ExitCode);
+        Assert.Equal("dt: Unknown command '--isolated'.", result.Message);
     }
 
     [Fact]
