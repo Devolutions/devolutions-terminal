@@ -23,6 +23,8 @@ public sealed class ActionMapTests
         "disableReadOnlyMode", "findMatch", "newWindow", "identifyWindow", "identifyWindows",
         "renameWindow", "openWindowRenamer", "debugTerminalCwd", "searchWeb", "globalSummon",
         "quakeMode", "focusPane", "openSystemMenu", "exportBuffer", "clearBuffer",
+        "startRecording", "stopRecording", "startStreaming", "stopStreaming",
+        "saveRecording", "replayRecording", "openRecording",
         "multipleActions", "quit", "adjustOpacity", "restoreLastClosed", "selectAll",
         "selectCommand", "selectOutput", "markMode", "toggleBlockSelection",
         "switchSelectionEndpoint", "showSuggestions", "experimental.colorSelection",
@@ -32,12 +34,12 @@ public sealed class ActionMapTests
     ];
 
     [Fact]
-    public void PublicActionInventoryExactlyMatchesNativeList()
+    public void PublicActionInventoryExactlyMatchesSupportedList()
     {
-        Assert.Equal(92, ActionCatalog.All.Count);
+        Assert.Equal(99, ActionCatalog.All.Count);
         Assert.Equal(ExpectedActionNames, ActionCatalog.All.Select(action => action.JsonName));
-        Assert.Equal(92, ActionCatalog.All.Select(action => action.Action).Distinct().Count());
-        Assert.Equal(93, Enum.GetValues<ShortcutAction>().Length); // Invalid + 92 public actions.
+        Assert.Equal(99, ActionCatalog.All.Select(action => action.Action).Distinct().Count());
+        Assert.Equal(100, Enum.GetValues<ShortcutAction>().Length); // Invalid + 99 public actions.
     }
 
     [Fact]
@@ -96,6 +98,10 @@ public sealed class ActionMapTests
             [ShortcutAction.FocusPane] = typeof(FocusPaneArgs),
             [ShortcutAction.ExportBuffer] = typeof(ExportBufferArgs),
             [ShortcutAction.ClearBuffer] = typeof(ClearBufferArgs),
+            [ShortcutAction.StartRecording] = typeof(StartRecordingArgs),
+            [ShortcutAction.SaveRecording] = typeof(SaveRecordingArgs),
+            [ShortcutAction.ReplayRecording] = typeof(ReplayRecordingArgs),
+            [ShortcutAction.OpenRecording] = typeof(OpenRecordingArgs),
             [ShortcutAction.MultipleActions] = typeof(MultipleActionsArgs),
             [ShortcutAction.AdjustOpacity] = typeof(AdjustOpacityArgs),
             [ShortcutAction.Suggestions] = typeof(SuggestionsArgs),
@@ -105,7 +111,7 @@ public sealed class ActionMapTests
             [ShortcutAction.OpenWorkspace] = typeof(OpenWorkspaceArgs),
         };
 
-        Assert.Equal(44, expected.Count);
+        Assert.Equal(48, expected.Count);
         foreach (var definition in ActionCatalog.All.Where(action => action.HasArguments))
         {
             var parsed = ActionJson.Parse(JsonValue.Create(definition.JsonName));
@@ -178,6 +184,29 @@ public sealed class ActionMapTests
         Assert.All(
             settings.ActionMap.BindingIds.Where(static binding => binding.Value.Length > 0),
             binding => Assert.NotNull(settings.ActionMap.GetActionByID(binding.Value)));
+    }
+
+    [Fact]
+    public void EmbeddedRecordingCommandsExposeDistinctWorkflows()
+    {
+        var settings = SettingsService.CreateDefault();
+        (string Id, string Name, ShortcutAction Action)[] commands =
+        [
+            ("Terminal.StartRecording", "Start terminal recording", ShortcutAction.StartRecording),
+            ("Terminal.StopRecording", "Stop terminal recording", ShortcutAction.StopRecording),
+            ("Terminal.StartStreaming", "Start streaming...", ShortcutAction.StartStreaming),
+            ("Terminal.StopStreaming", "Stop streaming", ShortcutAction.StopStreaming),
+            ("Terminal.SaveRecording", "Save terminal recording as...", ShortcutAction.SaveRecording),
+            ("Terminal.ReplayRecording", "Replay current terminal recording", ShortcutAction.ReplayRecording),
+            ("Terminal.OpenRecording", "Open terminal recording...", ShortcutAction.OpenRecording),
+        ];
+
+        foreach (var expected in commands)
+        {
+            var command = Assert.IsType<Command>(settings.ActionMap.GetActionByID(expected.Id));
+            Assert.Equal(expected.Name, command.Name);
+            Assert.Equal(expected.Action, command.ActionAndArgs?.Action);
+        }
     }
 
     [Fact]

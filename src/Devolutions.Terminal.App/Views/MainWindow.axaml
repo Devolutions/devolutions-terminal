@@ -99,6 +99,64 @@
     </Border>
     <Grid>
       <Panel x:Name="TerminalHost" Background="#0C0C0C" />
+      <Border x:Name="RecordingStateBar"
+              IsVisible="False"
+              HorizontalAlignment="Center"
+              VerticalAlignment="Bottom"
+              Margin="12"
+              Padding="10,6"
+              CornerRadius="6"
+              Background="#F02B2B2B">
+        <StackPanel Orientation="Horizontal"
+                    Spacing="8"
+                    VerticalAlignment="Center">
+          <TextBlock x:Name="RecordingStatusText"
+                     VerticalAlignment="Center"
+                     FontWeight="SemiBold" />
+          <TextBlock x:Name="RecordingElapsedText"
+                     VerticalAlignment="Center" />
+          <ProgressBar x:Name="ReplayProgress"
+                       IsVisible="False"
+                       Width="120"
+                       Height="4"
+                       Minimum="0"
+                       VerticalAlignment="Center" />
+          <TextBlock x:Name="RecordingDestinationText"
+                     MaxWidth="260"
+                     TextTrimming="CharacterEllipsis"
+                     VerticalAlignment="Center"
+                     Foreground="#B8B8B8" />
+          <Button x:Name="RecordingStopButton"
+                  IsVisible="False"
+                  Content="Stop"
+                  Click="RecordingStop_OnClick" />
+          <Button x:Name="RecordingSaveButton"
+                  IsVisible="False"
+                  Content="Save as..."
+                  Click="RecordingSave_OnClick" />
+          <Button x:Name="RecordingReplayButton"
+                  IsVisible="False"
+                  Content="Replay"
+                  Click="RecordingReplay_OnClick" />
+          <Button x:Name="ReplayPauseButton"
+                  IsVisible="False"
+                  Content="Pause"
+                  Click="ReplayPause_OnClick" />
+          <Button x:Name="ReplayRestartButton"
+                  IsVisible="False"
+                  Content="Restart"
+                  Click="ReplayRestart_OnClick" />
+          <ComboBox x:Name="ReplaySpeedComboBox"
+                    IsVisible="False"
+                    Width="72"
+                    SelectionChanged="ReplaySpeed_OnSelectionChanged">
+            <ComboBoxItem Content="0.5x" Tag="0.5" />
+            <ComboBoxItem Content="1x" Tag="1" />
+            <ComboBoxItem Content="1.5x" Tag="1.5" />
+            <ComboBoxItem Content="2x" Tag="2" />
+          </ComboBox>
+        </StackPanel>
+      </Border>
       <Border x:Name="FindBar"
               IsVisible="False"
               HorizontalAlignment="Right"

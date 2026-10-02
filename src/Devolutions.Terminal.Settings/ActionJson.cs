@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using Devolutions.Terminal.Core;
 
 namespace Devolutions.Terminal.Settings;
 
@@ -254,6 +255,17 @@ public static class ActionJson
         ShortcutAction.ClearBuffer => new ClearBufferArgs(
             Enum(json, "clear", ClearBufferType.All,
                 ("screen", ClearBufferType.Screen), ("scrollback", ClearBufferType.Scrollback), ("all", ClearBufferType.All))),
+        ShortcutAction.StartRecording => new StartRecordingArgs(
+            String(json, "path") ?? "",
+            Enum(json, "format", AsciicastFormat.V2,
+                ("v2", AsciicastFormat.V2), ("v3", AsciicastFormat.V3))),
+        ShortcutAction.StopRecording => new StopRecordingArgs(),
+        ShortcutAction.SaveRecording => new SaveRecordingArgs(
+            String(json, "path") ?? "",
+            Enum(json, "format", AsciicastFormat.V2,
+                ("v2", AsciicastFormat.V2), ("v3", AsciicastFormat.V3))),
+        ShortcutAction.ReplayRecording => new ReplayRecordingArgs(String(json, "path") ?? ""),
+        ShortcutAction.OpenRecording => new OpenRecordingArgs(String(json, "path") ?? ""),
         ShortcutAction.MultipleActions => new MultipleActionsArgs(Actions(json)),
         ShortcutAction.AdjustOpacity => new AdjustOpacityArgs(Int(json, "opacity"), Bool(json, "relative", true)),
         ShortcutAction.Suggestions => new SuggestionsArgs(Suggestions(json, "source"), Bool(json, "useCommandline")),
@@ -324,6 +336,17 @@ public static class ActionJson
             case FocusPaneArgs value: writer.WriteNumber("id", value.Id); break;
             case ExportBufferArgs value: writer.WriteString("path", value.Path); break;
             case ClearBufferArgs value: writer.WriteString("clear", Lower(value.Clear)); break;
+            case StartRecordingArgs value:
+                writer.WriteString("path", value.Path);
+                if (value.Format != AsciicastFormat.V2) writer.WriteString("format", Lower(value.Format));
+                break;
+            case StopRecordingArgs: break;
+            case SaveRecordingArgs value:
+                writer.WriteString("path", value.Path);
+                if (value.Format != AsciicastFormat.V2) writer.WriteString("format", Lower(value.Format));
+                break;
+            case ReplayRecordingArgs value: writer.WriteString("path", value.Path); break;
+            case OpenRecordingArgs value: writer.WriteString("path", value.Path); break;
             case MultipleActionsArgs value:
                 writer.WritePropertyName("actions");
                 writer.WriteStartArray();
@@ -666,6 +689,12 @@ public sealed class ActionAndArgsJsonConverter : JsonConverter<ActionAndArgs>
 [JsonSerializable(typeof(FocusPaneArgs))]
 [JsonSerializable(typeof(ExportBufferArgs))]
 [JsonSerializable(typeof(ClearBufferArgs))]
+[JsonSerializable(typeof(AsciicastFormat))]
+[JsonSerializable(typeof(StartRecordingArgs))]
+[JsonSerializable(typeof(StopRecordingArgs))]
+[JsonSerializable(typeof(SaveRecordingArgs))]
+[JsonSerializable(typeof(ReplayRecordingArgs))]
+[JsonSerializable(typeof(OpenRecordingArgs))]
 [JsonSerializable(typeof(MultipleActionsArgs))]
 [JsonSerializable(typeof(AdjustOpacityArgs))]
 [JsonSerializable(typeof(SuggestionsArgs))]
