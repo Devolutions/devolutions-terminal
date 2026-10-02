@@ -543,6 +543,13 @@
         { "command": { "action": "showSuggestions", "source": "all"}, "id": "Terminal.Suggestions" },
         { "command": "openCWD", "id": "Terminal.OpenCWD" },
         { "command": "workspaces", "id": "Terminal.Workspaces" },
+        { "command": { "action": "startRecording" }, "id": "Terminal.StartRecording", "name": "Start terminal recording" },
+        { "command": "stopRecording", "id": "Terminal.StopRecording", "name": "Stop terminal recording" },
+        { "command": "startStreaming", "id": "Terminal.StartStreaming", "name": "Start streaming..." },
+        { "command": "stopStreaming", "id": "Terminal.StopStreaming", "name": "Stop streaming" },
+        { "command": { "action": "saveRecording" }, "id": "Terminal.SaveRecording", "name": "Save terminal recording as..." },
+        { "command": { "action": "replayRecording" }, "id": "Terminal.ReplayRecording", "name": "Replay current terminal recording" },
+        { "command": { "action": "openRecording" }, "id": "Terminal.OpenRecording", "name": "Open terminal recording..." },
 
         // Tab Management
         // "command": "closeTab" is unbound by default.

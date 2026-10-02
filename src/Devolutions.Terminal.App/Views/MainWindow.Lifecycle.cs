@@ -34,13 +34,27 @@ public partial class MainWindow
         var snapshot = panes.ToArray();
         var sessions = snapshot.Select(pane => pane.Control.ProcessMetadata).ToArray();
         var running = snapshot.Count(pane => pane.Control.IsRunning);
-        if (!CloseConfirmationPolicy.RequiresConfirmation(_settings.ConfirmOnClose, running, automaticExit))
+        var unsavedRecordings = snapshot.Count(pane => pane.Control.HasUnsavedRecording);
+        if (!CloseConfirmationPolicy.RequiresConfirmation(
+                _settings.ConfirmOnClose,
+                running,
+                unsavedRecordings,
+                automaticExit))
         {
             return true;
         }
 
+        var message = (running, unsavedRecordings) switch
+        {
+            (> 0, > 0) =>
+                $"Close {running} running terminal session(s)? " +
+                $"{unsavedRecordings} unsaved recording(s) will be discarded.",
+            (_, > 0) =>
+                $"Close terminal sessions? {unsavedRecordings} unsaved recording(s) will be discarded.",
+            _ => $"Close {running} running terminal session(s)? Unsaved work may be lost.",
+        };
         return await _confirmationDialog.ShowAsync(this, "Close terminal sessions",
-                   $"Close {running} running terminal session(s)? Unsaved work may be lost.", "Close sessions").ConfigureAwait(true) &&
+                   message, "Close sessions").ConfigureAwait(true) &&
                panes.SequenceEqual(snapshot) &&
                snapshot.Select(pane => pane.Control.ProcessMetadata).SequenceEqual(sessions);
     }
@@ -74,9 +88,11 @@ public partial class MainWindow
         }
 
         base.OnClosing(e);
+        var panes = _tabs.SelectMany(tab => tab.Panes.Leaves()).ToArray();
         if (!e.Cancel && !_closeApproved &&
             CloseConfirmationPolicy.RequiresConfirmation(_settings.ConfirmOnClose,
-                _tabs.SelectMany(tab => tab.Panes.Leaves()).Count(pane => pane.Control.IsRunning)))
+                panes.Count(pane => pane.Control.IsRunning),
+                panes.Count(pane => pane.Control.HasUnsavedRecording)))
         {
             e.Cancel = true;
             if (!_closeConfirmationPending)
@@ -89,6 +105,7 @@ public partial class MainWindow
     protected override async void OnClosed(EventArgs e)
     {
         _isClosed = true;
+        _recordingUiTimer.Stop();
         if (!_layoutPersisted && _tabs.Count > 0)
         {
             TryPersistCurrentLayout(CaptureLayout());

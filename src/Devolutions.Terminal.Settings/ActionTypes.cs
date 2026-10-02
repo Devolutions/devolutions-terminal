@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Text.Json.Serialization;
+using Devolutions.Terminal.Core;
 
 namespace Devolutions.Terminal.Settings;
 
@@ -75,6 +76,13 @@ public enum ShortcutAction
     OpenSystemMenu,
     ExportBuffer,
     ClearBuffer,
+    StartRecording,
+    StopRecording,
+    StartStreaming,
+    StopStreaming,
+    SaveRecording,
+    ReplayRecording,
+    OpenRecording,
     MultipleActions,
     Quit,
     AdjustOpacity,
@@ -175,6 +183,13 @@ public static class ActionCatalog
         new(ShortcutAction.OpenSystemMenu, "openSystemMenu", false),
         new(ShortcutAction.ExportBuffer, "exportBuffer", true),
         new(ShortcutAction.ClearBuffer, "clearBuffer", true),
+        new(ShortcutAction.StartRecording, "startRecording", true),
+        new(ShortcutAction.StopRecording, "stopRecording", false),
+        new(ShortcutAction.StartStreaming, "startStreaming", false),
+        new(ShortcutAction.StopStreaming, "stopStreaming", false),
+        new(ShortcutAction.SaveRecording, "saveRecording", true),
+        new(ShortcutAction.ReplayRecording, "replayRecording", true),
+        new(ShortcutAction.OpenRecording, "openRecording", true),
         new(ShortcutAction.MultipleActions, "multipleActions", true),
         new(ShortcutAction.Quit, "quit", false),
         new(ShortcutAction.AdjustOpacity, "adjustOpacity", true),
@@ -332,6 +347,15 @@ public sealed record ToggleCommandPaletteArgs(CommandPaletteLaunchMode LaunchMod
 public sealed record FocusPaneArgs(uint Id = 0) : IActionArgs;
 public sealed record ExportBufferArgs(string Path = "") : IActionArgs;
 public sealed record ClearBufferArgs(ClearBufferType Clear = ClearBufferType.All) : IActionArgs;
+public sealed record StartRecordingArgs(
+    string Path = "",
+    AsciicastFormat Format = AsciicastFormat.V2) : IActionArgs;
+public sealed record StopRecordingArgs : IActionArgs;
+public sealed record SaveRecordingArgs(
+    string Path = "",
+    AsciicastFormat Format = AsciicastFormat.V2) : IActionArgs;
+public sealed record ReplayRecordingArgs(string Path = "") : IActionArgs;
+public sealed record OpenRecordingArgs(string Path = "") : IActionArgs;
 public sealed record MultipleActionsArgs(IReadOnlyList<ActionAndArgs> Actions) : IActionArgs
 {
     public MultipleActionsArgs() : this([]) { }

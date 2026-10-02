@@ -129,6 +129,11 @@ public sealed class ActionDispatcherTests
     [InlineData(ShortcutAction.TogglePaneReadOnly, ActionScope.Pane)]
     [InlineData(ShortcutAction.ToggleBroadcastInput, ActionScope.Pane)]
     [InlineData(ShortcutAction.TabSearch, ActionScope.Window)]
+    [InlineData(ShortcutAction.OpenRecording, ActionScope.Window)]
+    [InlineData(ShortcutAction.StartStreaming, ActionScope.Control)]
+    [InlineData(ShortcutAction.StopStreaming, ActionScope.Control)]
+    [InlineData(ShortcutAction.SaveRecording, ActionScope.Control)]
+    [InlineData(ShortcutAction.ReplayRecording, ActionScope.Control)]
     public void PracticalActionsHaveExpectedScope(ShortcutAction action, ActionScope expected) =>
         Assert.Equal(expected, ActionScopeCatalog.GetScope(ActionCatalog.GetJsonName(action)));
 }

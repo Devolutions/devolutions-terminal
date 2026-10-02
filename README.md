@@ -129,6 +129,84 @@ reusable, self-contained Avalonia terminal control package (it bundles
 Avalonia applications. See the "NuGet package" section of
 [docs/release.md](docs/release.md) for packaging and consumption details.
 
+## Per-tab asciicast recording
+
+Recording actions operate on the active terminal pane. `startRecording` captures
+future PTY output, `stopRecording` retains the completed recording,
+`saveRecording` opens a native Save As dialog and exports an asciicast `.cast`
+file, and `replayRecording` replays the active pane's latest capture in a
+separate read-only tab with its original timing. The recorder writes v2 by
+default and the core API can also export v3 with
+`recording.ToJson(AsciicastFormat.V3)`. `openRecording` detects and replays both
+v2 and v3 files, even when the current pane has no recording. Pickers start in
+the `recordings` directory beside `settings.json`.
+
+All path-taking actions also accept an explicit `path` for keybindings,
+command-line activation, and automation. A path on `startRecording` enables an
+auto-save workflow: stopping the recording writes directly to that path.
+Exported v2 files are compatible with v2 players such as `asciinema play`;
+imported v3 files retain their relative event timing during replay.
+
+To stream the active tab, open the command palette and choose **Start
+streaming...**, paste the producer `ws://` or `wss://` URL, and choose
+**Asciinema v3** (recommended), **Asciinema v2**, or **DVLS v2**. The recording
+bar changes to **Live** while connected. Choose **Stop streaming** from the
+palette (or use the bar's **Stop** button) to flush and close the stream. DT
+remembers the URL only for the current process because producer URLs may
+contain access tokens.
+
+NuGet consumers can also stream an active recording to an asciicast-compatible
+WebSocket push endpoint:
+
+```csharp
+await terminal.StartRecordingAsync(
+    new Uri("wss://gateway.example/jet/jrec/push/session?token=signed-token"));
+// Use the terminal normally.
+await terminal.StopRecordingAsync();
+```
+
+The control preserves authentication query parameters, adds
+`fileType=asciicast`, and sends the visible starting screen plus subsequent
+output as asciicast v2 JSONL text messages. Endpoint discovery and token
+acquisition stay in the embedding application.
+
+Official asciinema servers are also supported. Create a live stream through the
+server API, then pass its `ws_producer_url` and select v2 or v3:
+
+```csharp
+await terminal.StartRecordingAsync(
+    new Uri(streamResponse.WsProducerUrl),
+    AsciicastFormat.V3);
+```
+
+This negotiates the matching `v2.asciicast` or `v3.asciicast` WebSocket
+subprotocol. V3 output uses relative event deltas; the legacy URI-only overload
+remains compatible with DVLS push URLs and server-side first-message detection.
+
+While a recording is active, its tab shows a red recording indicator and the
+active pane displays elapsed time, format, destination, and Stop/Save controls.
+Stopped captures remain available from the same bar for saving or replay. A
+yellow tab indicator marks an unsaved capture, and closing its pane, tab, or
+window asks for confirmation even when normal close confirmations are disabled.
+
+Replay tabs include pause/resume, restart, progress, and 0.5x-2x playback speed
+controls. Replay remains read-only and can be closed without affecting the
+original terminal session or recording.
+
+The actions can be invoked from the command palette or assigned in
+`settings.json`; for example:
+
+```json
+{
+  "command": {
+    "action": "startRecording",
+    "path": "%USERPROFILE%\\Desktop\\demo.cast",
+    "format": "v3"
+  },
+  "keys": "ctrl+shift+r"
+}
+```
+
 ## Compatibility inventory
 
 ### Safety and compatibility settings

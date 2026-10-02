@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.Versioning;
@@ -80,12 +81,31 @@ public sealed class TermControl : Avalonia.Controls.Control
     private TerminalInteractionOptions _interactionOptions = new();
     private Thickness _padding = new(8);
     private readonly DispatcherTimer _ptyResizeTimer;
+    private readonly Stopwatch _recordingStopwatch = new();
     private int _pendingPtyColumns;
     private int _pendingPtyRows;
     private int _pendingPtyPixelWidth;
     private int _pendingPtyPixelHeight;
     private bool _hasPendingPtyResize;
     private bool _connectionStarting;
+    private AsciicastRecording? _activeRecording;
+    private AsciicastRecording? _lastRecording;
+    private string? _recordingPath;
+    private long _recordingVersion;
+    private long _savedRecordingVersion;
+    private Decoder _recordingDecoder = Encoding.UTF8.GetDecoder();
+    private AsciicastWebSocketStreamer? _recordingStreamer;
+    private Task? _recordingStreamCompletion;
+    private Exception? _recordingStreamError;
+    private bool _recordingStartPending;
+    private readonly object _replayLock = new();
+    private CancellationTokenSource? _replayCancellationTokenSource;
+    private AsciicastRecording? _replayRecording;
+    private TaskCompletionSource<bool>? _replayResumeSource;
+    private bool _isReplayPaused;
+    private double _replaySpeed = 1d;
+    private double _replayPositionSeconds;
+    private double _replayDurationSeconds;
 
     // Throughput-harness diagnostics (Devolutions.Terminal.Bench): posts requested by
     // the engine-invalidated handler vs UI drains actually executed.
@@ -428,8 +448,27 @@ public sealed class TermControl : Avalonia.Controls.Control
 
     public async Task CloseAsync()
     {
+        _replayCancellationTokenSource?.Cancel();
         _blinkTimer.Stop();
         ClearPendingPtyResize();
+        if (IsRecording)
+        {
+            StopRecording();
+        }
+
+        var recordingStreamCompletion = RecordingStreamCompletion;
+        if (recordingStreamCompletion is not null)
+        {
+            try
+            {
+                await recordingStreamCompletion.ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                ReportInteractionError("Asciicast WebSocket streaming", exception);
+            }
+        }
+
         if (_connection is not null)
         {
             var connection = _connection;
@@ -1000,6 +1039,735 @@ public sealed class TermControl : Avalonia.Controls.Control
         _composition = null;
         _cursorOn = true;
         InvalidateVisual();
+    }
+
+    public bool IsRecording
+    {
+        get
+        {
+            lock (_outputLock)
+            {
+                return _activeRecording is not null;
+            }
+        }
+    }
+
+    public bool HasRecording
+    {
+        get
+        {
+            lock (_outputLock)
+            {
+                return _activeRecording is not null || _lastRecording is not null;
+            }
+        }
+    }
+
+    public bool HasUnsavedRecording
+    {
+        get
+        {
+            lock (_outputLock)
+            {
+                return (_activeRecording is not null || _lastRecording is not null) &&
+                       _recordingVersion != _savedRecordingVersion;
+            }
+        }
+    }
+
+    public TimeSpan RecordingElapsed
+    {
+        get
+        {
+            lock (_outputLock)
+            {
+                var seconds = _activeRecording is not null
+                    ? _recordingStopwatch.Elapsed.TotalSeconds
+                    : _lastRecording?.Frames.LastOrDefault()?.Timestamp ?? 0d;
+                return TimeSpan.FromSeconds(seconds);
+            }
+        }
+    }
+
+    public AsciicastFormat? RecordingFormat
+    {
+        get
+        {
+            lock (_outputLock)
+            {
+                return (_activeRecording ?? _lastRecording)?.Format;
+            }
+        }
+    }
+
+    public string? RecordingPath
+    {
+        get
+        {
+            lock (_outputLock)
+            {
+                return _recordingPath;
+            }
+        }
+    }
+
+    public bool IsStreamingRecording
+    {
+        get
+        {
+            lock (_outputLock)
+            {
+                return _recordingStartPending || _recordingStreamer is not null;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Gets the active or most recently completed WebSocket streaming operation.
+    /// Await this task to observe transport errors and confirm all frames were flushed.
+    /// </summary>
+    public Task? RecordingStreamCompletion
+    {
+        get
+        {
+            lock (_outputLock)
+            {
+                return _recordingStreamCompletion;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Gets the last WebSocket recording transport error.
+    /// </summary>
+    public Exception? RecordingStreamError
+    {
+        get
+        {
+            lock (_outputLock)
+            {
+                return _recordingStreamError;
+            }
+        }
+    }
+
+    public bool HasReplay
+    {
+        get
+        {
+            lock (_replayLock)
+            {
+                return _replayRecording is not null;
+            }
+        }
+    }
+
+    public bool IsReplaying
+    {
+        get
+        {
+            lock (_replayLock)
+            {
+                return _replayCancellationTokenSource is not null;
+            }
+        }
+    }
+
+    public bool IsReplayPaused
+    {
+        get
+        {
+            lock (_replayLock)
+            {
+                return _isReplayPaused;
+            }
+        }
+    }
+
+    public double ReplaySpeed
+    {
+        get
+        {
+            lock (_replayLock)
+            {
+                return _replaySpeed;
+            }
+        }
+    }
+
+    public TimeSpan ReplayPosition
+    {
+        get
+        {
+            lock (_replayLock)
+            {
+                return TimeSpan.FromSeconds(_replayPositionSeconds);
+            }
+        }
+    }
+
+    public TimeSpan ReplayDuration
+    {
+        get
+        {
+            lock (_replayLock)
+            {
+                return TimeSpan.FromSeconds(_replayDurationSeconds);
+            }
+        }
+    }
+
+    public event EventHandler? RecordingStateChanged;
+    public event EventHandler? ReplayStateChanged;
+
+    public void StartRecording(
+        string? path = null,
+        AsciicastFormat format = AsciicastFormat.V2)
+    {
+        lock (_outputLock)
+        {
+            if (_activeRecording is not null || _recordingStartPending)
+            {
+                throw new InvalidOperationException("This terminal is already being recorded.");
+            }
+
+            BeginRecording(path, format, streamer: null);
+        }
+
+        RecordingStateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// Starts recording and streams asciicast v2 JSONL to a caller-supplied
+    /// WebSocket push URI. The URI may already contain authentication query
+    /// parameters; <c>fileType=asciicast</c> is added automatically.
+    /// </summary>
+    public async Task StartRecordingAsync(
+        Uri streamingUri,
+        string? path = null,
+        CancellationToken cancellationToken = default)
+    {
+        await StartRecordingAsyncCore(
+            streamingUri,
+            AsciicastFormat.V2,
+            useAsciinemaSubProtocol: false,
+            path,
+            cancellationToken).ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// Starts recording and streams asciicast v2 or v3 JSONL to an official
+    /// asciinema server producer URI using the matching WebSocket subprotocol.
+    /// </summary>
+    public async Task StartRecordingAsync(
+        Uri streamingUri,
+        AsciicastFormat format,
+        string? path = null,
+        CancellationToken cancellationToken = default)
+    {
+        await StartRecordingAsyncCore(
+            streamingUri,
+            format,
+            useAsciinemaSubProtocol: true,
+            path,
+            cancellationToken).ConfigureAwait(true);
+    }
+
+    private async Task StartRecordingAsyncCore(
+        Uri streamingUri,
+        AsciicastFormat format,
+        bool useAsciinemaSubProtocol,
+        string? path,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(streamingUri);
+        AsciicastRecording header;
+        lock (_outputLock)
+        {
+            if (_activeRecording is not null || _recordingStartPending)
+            {
+                throw new InvalidOperationException("This terminal is already being recorded.");
+            }
+
+            _recordingStartPending = true;
+            _recordingStreamCompletion = null;
+            _recordingStreamError = null;
+            header = new AsciicastRecording(
+                Engine.Columns,
+                Engine.Rows,
+                Engine.Title,
+                format)
+            {
+                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            };
+        }
+
+        AsciicastWebSocketStreamer? streamer = null;
+        try
+        {
+            streamer = useAsciinemaSubProtocol
+                ? AsciicastWebSocketStreamer.CreateForAsciinema(streamingUri, format)
+                : new AsciicastWebSocketStreamer(streamingUri);
+            await streamer.StartAsync(header, cancellationToken).ConfigureAwait(true);
+            lock (_outputLock)
+            {
+                BeginRecording(path, format, streamer, header.Timestamp);
+                _recordingStreamCompletion = streamer.Completion;
+                _recordingStartPending = false;
+            }
+        }
+        catch
+        {
+            lock (_outputLock)
+            {
+                _recordingStartPending = false;
+            }
+
+            if (streamer is not null)
+            {
+                await streamer.DisposeAsync().ConfigureAwait(false);
+            }
+
+            throw;
+        }
+
+        RecordingStateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    public string? StopRecording()
+    {
+        AsciicastRecording recording;
+        string? destinationPath;
+        AsciicastWebSocketStreamer? streamer;
+        lock (_outputLock)
+        {
+            if (_activeRecording is null)
+            {
+                return null;
+            }
+
+            FlushRecordingDecoder(_activeRecording);
+            _recordingStopwatch.Stop();
+            recording = _activeRecording.Copy();
+            _lastRecording = recording;
+            _activeRecording = null;
+            destinationPath = _recordingPath;
+            streamer = _recordingStreamer;
+            _recordingStreamer = null;
+            if (streamer is not null)
+            {
+                _recordingStreamCompletion = CompleteRecordingStreamAsync(streamer);
+            }
+        }
+
+        if (destinationPath is not null)
+        {
+            WriteRecording(recording, destinationPath);
+            lock (_outputLock)
+            {
+                _savedRecordingVersion = _recordingVersion;
+            }
+        }
+
+        RecordingStateChanged?.Invoke(this, EventArgs.Empty);
+        return destinationPath;
+    }
+
+    /// <summary>
+    /// Stops recording, saves any configured file destination, and waits until
+    /// the WebSocket stream has flushed and closed.
+    /// </summary>
+    public async Task<string?> StopRecordingAsync(CancellationToken cancellationToken = default)
+    {
+        var path = StopRecording();
+        var completion = RecordingStreamCompletion;
+        if (completion is not null)
+        {
+            await completion.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        return path;
+    }
+
+    public string SaveRecording(string? path = null, AsciicastFormat? format = null)
+    {
+        AsciicastRecording recording;
+        string resolvedPath;
+        long recordingVersion;
+        lock (_outputLock)
+        {
+            var sourceRecording = _activeRecording ?? _lastRecording;
+            recording = sourceRecording?.Copy(format)
+                ?? throw new InvalidOperationException("This terminal does not have a recording to save.");
+            resolvedPath = ResolveRecordingPath(path ?? _recordingPath, createDefault: true)!;
+            _recordingPath = resolvedPath;
+            recordingVersion = _recordingVersion;
+        }
+
+        WriteRecording(recording, resolvedPath);
+        lock (_outputLock)
+        {
+            _savedRecordingVersion = Math.Max(_savedRecordingVersion, recordingVersion);
+        }
+
+        RecordingStateChanged?.Invoke(this, EventArgs.Empty);
+        return resolvedPath;
+    }
+
+    public AsciicastRecording GetRecording(string? path = null)
+    {
+        if (!string.IsNullOrWhiteSpace(path))
+        {
+            var resolvedPath = ResolveRecordingPath(path, createDefault: false)!;
+            return AsciicastRecording.FromJson(File.ReadAllText(resolvedPath));
+        }
+
+        lock (_outputLock)
+        {
+            return (_activeRecording ?? _lastRecording)?.Copy()
+                ?? throw new InvalidOperationException("This terminal does not have a recording to replay.");
+        }
+    }
+
+    public async Task ReplayRecordingAsync(
+        AsciicastRecording recording,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(recording);
+
+        CancellationTokenSource? previousReplay;
+        var replayCancellationTokenSource =
+            CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        lock (_replayLock)
+        {
+            previousReplay = _replayCancellationTokenSource;
+            _replayCancellationTokenSource = replayCancellationTokenSource;
+            _replayRecording = recording.Copy();
+            _replayResumeSource?.TrySetResult(true);
+            _replayResumeSource = null;
+            _isReplayPaused = false;
+            _replayPositionSeconds = 0d;
+            _replayDurationSeconds = recording.Frames.LastOrDefault()?.Timestamp ?? 0d;
+        }
+
+        previousReplay?.Cancel();
+        ReplayStateChanged?.Invoke(this, EventArgs.Empty);
+        var replayToken = replayCancellationTokenSource.Token;
+        var completed = false;
+
+        try
+        {
+            Engine.Resize(recording.Width, recording.Height);
+            ResetTerminal();
+            var previousTimestamp = 0d;
+            foreach (var frame in recording.Frames)
+            {
+                var delay = Math.Max(0d, frame.Timestamp - previousTimestamp);
+                await DelayReplayAsync(delay, replayCancellationTokenSource).ConfigureAwait(true);
+
+                replayToken.ThrowIfCancellationRequested();
+                Engine.Feed(frame.Data);
+                previousTimestamp = frame.Timestamp;
+                lock (_replayLock)
+                {
+                    if (ReferenceEquals(_replayCancellationTokenSource, replayCancellationTokenSource))
+                    {
+                        _replayPositionSeconds = frame.Timestamp;
+                    }
+                }
+
+                ReplayStateChanged?.Invoke(this, EventArgs.Empty);
+            }
+
+            InvalidateVisual();
+            completed = true;
+        }
+        finally
+        {
+            lock (_replayLock)
+            {
+                if (ReferenceEquals(_replayCancellationTokenSource, replayCancellationTokenSource))
+                {
+                    _replayCancellationTokenSource = null;
+                    _replayResumeSource?.TrySetResult(true);
+                    _replayResumeSource = null;
+                    _isReplayPaused = false;
+                    if (completed)
+                    {
+                        _replayPositionSeconds = _replayDurationSeconds;
+                    }
+                }
+            }
+
+            replayCancellationTokenSource.Dispose();
+            ReplayStateChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    public void PauseReplay()
+    {
+        lock (_replayLock)
+        {
+            if (_replayCancellationTokenSource is null || _isReplayPaused)
+            {
+                return;
+            }
+
+            _isReplayPaused = true;
+            _replayResumeSource = new TaskCompletionSource<bool>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+
+        ReplayStateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    public void ResumeReplay()
+    {
+        TaskCompletionSource<bool>? resumeSource;
+        lock (_replayLock)
+        {
+            if (!_isReplayPaused)
+            {
+                return;
+            }
+
+            _isReplayPaused = false;
+            resumeSource = _replayResumeSource;
+            _replayResumeSource = null;
+        }
+
+        resumeSource?.TrySetResult(true);
+        ReplayStateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    public void SetReplaySpeed(double speed)
+    {
+        if (!double.IsFinite(speed) || speed is < 0.25 or > 4)
+        {
+            throw new ArgumentOutOfRangeException(nameof(speed), speed, "Replay speed must be between 0.25x and 4x.");
+        }
+
+        lock (_replayLock)
+        {
+            _replaySpeed = speed;
+        }
+
+        ReplayStateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    public Task RestartReplayAsync(CancellationToken cancellationToken = default)
+    {
+        AsciicastRecording recording;
+        lock (_replayLock)
+        {
+            recording = _replayRecording?.Copy()
+                ?? throw new InvalidOperationException("This terminal does not have a recording to replay.");
+        }
+
+        return ReplayRecordingAsync(recording, cancellationToken);
+    }
+
+    private async Task DelayReplayAsync(
+        double sourceSeconds,
+        CancellationTokenSource replayCancellationTokenSource)
+    {
+        var remaining = sourceSeconds;
+        var replayToken = replayCancellationTokenSource.Token;
+        while (remaining > 0)
+        {
+            Task? resumeTask = null;
+            double speed;
+            lock (_replayLock)
+            {
+                if (!ReferenceEquals(_replayCancellationTokenSource, replayCancellationTokenSource))
+                {
+                    replayToken.ThrowIfCancellationRequested();
+                }
+
+                if (_isReplayPaused)
+                {
+                    resumeTask = _replayResumeSource?.Task;
+                }
+
+                speed = _replaySpeed;
+            }
+
+            if (resumeTask is not null)
+            {
+                await resumeTask.WaitAsync(replayToken).ConfigureAwait(true);
+                continue;
+            }
+
+            var sourceSlice = Math.Min(remaining, speed * 0.05);
+            await Task.Delay(TimeSpan.FromSeconds(sourceSlice / speed), replayToken).ConfigureAwait(true);
+            remaining -= sourceSlice;
+            lock (_replayLock)
+            {
+                if (ReferenceEquals(_replayCancellationTokenSource, replayCancellationTokenSource))
+                {
+                    _replayPositionSeconds = Math.Min(
+                        _replayDurationSeconds,
+                        _replayPositionSeconds + sourceSlice);
+                }
+            }
+
+            ReplayStateChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private void AppendRecordingOutput(ReadOnlySpan<byte> data)
+    {
+        if (_activeRecording is null || data.IsEmpty)
+        {
+            return;
+        }
+
+        var rented = ArrayPool<char>.Shared.Rent(Encoding.UTF8.GetMaxCharCount(data.Length));
+        try
+        {
+            _recordingDecoder.Convert(
+                data,
+                rented,
+                flush: false,
+                out _,
+                out var charsUsed,
+                out _);
+            if (charsUsed > 0)
+            {
+                _activeRecording.AppendFrame(
+                    _recordingStopwatch.Elapsed.TotalSeconds,
+                    new string(rented, 0, charsUsed));
+                WriteRecordingStreamFrame(_activeRecording.Frames[^1]);
+                _recordingVersion++;
+            }
+        }
+        finally
+        {
+            ArrayPool<char>.Shared.Return(rented);
+        }
+    }
+
+    private void FlushRecordingDecoder(AsciicastRecording recording)
+    {
+        Span<char> remaining = stackalloc char[2];
+        _recordingDecoder.Convert(
+            [],
+            remaining,
+            flush: true,
+            out _,
+            out var charsUsed,
+            out _);
+        if (charsUsed > 0)
+        {
+            recording.AppendFrame(
+                _recordingStopwatch.Elapsed.TotalSeconds,
+                new string(remaining[..charsUsed]));
+            WriteRecordingStreamFrame(recording.Frames[^1]);
+            _recordingVersion++;
+        }
+    }
+
+    private void BeginRecording(
+        string? path,
+        AsciicastFormat format,
+        AsciicastWebSocketStreamer? streamer,
+        long? timestamp = null)
+    {
+        _recordingPath = ResolveRecordingPath(path, createDefault: false);
+        _activeRecording = new AsciicastRecording(Engine.Columns, Engine.Rows, Engine.Title, format)
+        {
+            Timestamp = timestamp ?? DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+        };
+        _recordingStreamer = streamer;
+        _recordingStreamCompletion = streamer?.Completion;
+        _recordingStreamError = null;
+        _recordingDecoder = Encoding.UTF8.GetDecoder();
+        _recordingStopwatch.Restart();
+        var initialSnapshot = TerminalBufferExport.ToPlainText(
+            Engine.CreateSnapshot().Buffer,
+            trimTrailingWhitespace: true);
+        if (!string.IsNullOrWhiteSpace(initialSnapshot))
+        {
+            _activeRecording.AppendFrame(0d, initialSnapshot);
+            WriteRecordingStreamFrame(_activeRecording.Frames[^1]);
+        }
+
+        _recordingVersion++;
+    }
+
+    private void WriteRecordingStreamFrame(AsciicastFrame frame)
+    {
+        if (_recordingStreamer is null)
+        {
+            return;
+        }
+
+        try
+        {
+            _recordingStreamer.Write(frame);
+        }
+        catch (Exception exception)
+        {
+            _recordingStreamError = exception;
+            _recordingStreamCompletion = Task.FromException(exception);
+            _recordingStreamer = null;
+            Dispatcher.UIThread.Post(
+                () => ReportInteractionError("Asciicast WebSocket streaming", exception));
+        }
+    }
+
+    private async Task CompleteRecordingStreamAsync(AsciicastWebSocketStreamer streamer)
+    {
+        try
+        {
+            await streamer.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            lock (_outputLock)
+            {
+                _recordingStreamError = exception;
+            }
+
+            Dispatcher.UIThread.Post(
+                () => ReportInteractionError("Asciicast WebSocket streaming", exception));
+            throw;
+        }
+        finally
+        {
+            Dispatcher.UIThread.Post(
+                () => RecordingStateChanged?.Invoke(this, EventArgs.Empty));
+        }
+    }
+
+    private static void WriteRecording(AsciicastRecording recording, string path)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        File.WriteAllText(path, recording.ToJson(), new UTF8Encoding(false));
+    }
+
+    private static string? ResolveRecordingPath(string? path, bool createDefault)
+    {
+        var requested = string.IsNullOrWhiteSpace(path)
+            ? null
+            : Environment.ExpandEnvironmentVariables(path);
+
+        if (!string.IsNullOrWhiteSpace(requested))
+        {
+            return requested;
+        }
+
+        if (!createDefault)
+        {
+            return null;
+        }
+
+        var directory = Path.Combine(
+            Path.GetDirectoryName(Path.GetFullPath(SettingsService.SettingsPath))!,
+            "recordings");
+        return Path.Combine(
+            directory,
+            $"terminal-recording-{DateTime.Now:yyyyMMdd-HHmmss-fff}.cast");
     }
 
     public void ShowHide(bool show)
@@ -1586,6 +2354,7 @@ public sealed class TermControl : Avalonia.Controls.Control
                 // Feed on the PTY thread so cursor-position reports (CSI 6n) go
                 // back to zsh before PROMPT_SP prints a spurious '%'.
                 Engine.Feed(data.Span);
+                AppendRecordingOutput(data.Span);
             }
             catch (Exception exception)
             {

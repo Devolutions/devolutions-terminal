@@ -1,3 +1,5 @@
+using System.Text;
+using System.Net.WebSockets;
 using Avalonia;
 using Avalonia.Automation;
 using Avalonia.Automation.Peers;
@@ -11,6 +13,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
+using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Devolutions.Terminal.Connection;
 using Devolutions.Terminal;
@@ -80,9 +83,12 @@ public partial class MainWindow :
     private readonly TaskCompletionSource<TerminalWindowActivationResult> _initialActivationCompletion =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly DispatcherTimer _notificationTimer;
+    private readonly DispatcherTimer _recordingUiTimer;
     private PixelPoint? _normalPosition;
     private WindowSizeState _normalSize = new();
     private KeyModifiers _newTabButtonModifiers;
+    private string _lastStreamingUri = string.Empty;
+    private int _lastStreamingMode;
 
     public MainWindow() : this(0, string.Empty, null)
     {
@@ -131,6 +137,10 @@ public partial class MainWindow :
             _notificationTimer.Stop();
             NotificationToast.IsVisible = false;
         };
+        _recordingUiTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+        _recordingUiTimer.Tick += (_, _) => UpdateRecordingStateBar();
+        ReplaySpeedComboBox.SelectedIndex = 1;
+        _recordingUiTimer.Start();
         _connectionFactory = new TerminalConnectionFactory(
             new AzureCloudShellAuthenticationCallbacks
             {
@@ -185,12 +195,12 @@ public partial class MainWindow :
             NativeMenu.SetMenu(
                 this,
                 MacOsNativeMenu.CreateWindowMenu(action =>
-                    _actionDispatcher.DispatchAsync(new ActionAndArgs(action))));
+                    DispatchActionAsync(new ActionAndArgs(action))));
         }
     }
 
     public void DispatchMenuAction(ShortcutAction action) =>
-        _ = _actionDispatcher.DispatchAsync(new ActionAndArgs(action));
+        _ = DispatchActionAsync(new ActionAndArgs(action));
 
     private MainWindow(ProfileSettings initialProfile) : this()
     {
@@ -636,6 +646,323 @@ public partial class MainWindow :
         }
     }
 
+    private async Task CreateReplayTabAsync(AsciicastRecording recording)
+    {
+        var title = string.IsNullOrWhiteSpace(recording.Title)
+            ? "Asciicast replay"
+            : $"{recording.Title} (replay)";
+        var profile = new ProfileSettings
+        {
+            Name = title,
+            TabTitle = title,
+            SuppressApplicationTitle = true,
+        };
+        var pane = CreatePane(
+            profile,
+            presentation: new PanePresentationState
+            {
+                Title = title,
+                IsReadOnly = true,
+            });
+        var tab = new TerminalTab(pane);
+        _tabCollection.Add(tab);
+        ActivateTab(tab);
+        RebuildTabs();
+
+        try
+        {
+            await pane.Control.ReplayRecordingAsync(recording).ConfigureAwait(true);
+            ShowNotification(new TerminalNotification(
+                "Recording replay complete",
+                title));
+        }
+        catch (OperationCanceledException)
+        {
+            // Closing the replay tab cancels its playback.
+        }
+    }
+
+    private void OnRecordingStateChanged(object? sender, EventArgs e)
+    {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(() => OnRecordingStateChanged(sender, e));
+            return;
+        }
+
+        RebuildTabs();
+        UpdateRecordingStateBar();
+    }
+
+    private void OnReplayStateChanged(object? sender, EventArgs e)
+    {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(UpdateRecordingStateBar);
+            return;
+        }
+
+        UpdateRecordingStateBar();
+    }
+
+    private void UpdateRecordingStateBar()
+    {
+        var control = ActiveControl;
+        if (control is null || (!control.HasRecording && !control.HasReplay))
+        {
+            RecordingStateBar.IsVisible = false;
+            return;
+        }
+
+        RecordingStateBar.IsVisible = true;
+        var replay = control.HasReplay;
+        RecordingStopButton.IsVisible = !replay && control.IsRecording;
+        RecordingSaveButton.IsVisible = !replay && control.HasRecording;
+        RecordingReplayButton.IsVisible = !replay && control.HasRecording && !control.IsRecording;
+        ReplayPauseButton.IsVisible = replay;
+        ReplayRestartButton.IsVisible = replay;
+        ReplaySpeedComboBox.IsVisible = replay;
+        ReplayProgress.IsVisible = replay;
+
+        if (replay)
+        {
+            RecordingStatusText.Foreground = Brushes.White;
+            RecordingStatusText.Text = control.IsReplayPaused
+                ? "Replay paused"
+                : control.IsReplaying
+                    ? "Replaying"
+                    : "Replay complete";
+            RecordingElapsedText.Text =
+                $"{FormatMediaTime(control.ReplayPosition)} / {FormatMediaTime(control.ReplayDuration)}";
+            RecordingDestinationText.Text = string.Empty;
+            ToolTip.SetTip(RecordingDestinationText, null);
+            ReplayPauseButton.Content = control.IsReplayPaused ? "Resume" : "Pause";
+            ReplayPauseButton.IsEnabled = control.IsReplaying;
+            ReplayRestartButton.IsEnabled = control.HasReplay;
+            ReplayProgress.Maximum = Math.Max(1d, control.ReplayDuration.TotalSeconds);
+            ReplayProgress.Value = Math.Min(
+                ReplayProgress.Maximum,
+                control.ReplayPosition.TotalSeconds);
+            var speedIndex = control.ReplaySpeed switch
+            {
+                <= 0.5 => 0,
+                <= 1 => 1,
+                <= 1.5 => 2,
+                _ => 3,
+            };
+            if (ReplaySpeedComboBox.SelectedIndex != speedIndex)
+            {
+                ReplaySpeedComboBox.SelectedIndex = speedIndex;
+            }
+
+            return;
+        }
+
+        var format = control.RecordingFormat?.ToString().ToLowerInvariant() ?? "v2";
+        var streaming = control.IsStreamingRecording;
+        RecordingStatusText.Text = control.IsRecording
+            ? streaming
+                ? $"● Live {format}"
+                : $"● Recording {format}"
+            : control.HasUnsavedRecording
+                ? $"Recording ready ({format})"
+                : $"Recording saved ({format})";
+        RecordingStatusText.Foreground = control.IsRecording
+            ? new SolidColorBrush(Color.Parse("#FF7B7F"))
+            : Brushes.White;
+        RecordingElapsedText.Text = FormatMediaTime(control.RecordingElapsed);
+        var recordingPath = control.RecordingPath;
+        RecordingDestinationText.Text = streaming
+            ? recordingPath is null ? "Streaming live • not saved" : $"Streaming live • {Path.GetFileName(recordingPath)}"
+            : recordingPath is null
+            ? control.HasUnsavedRecording ? "Not saved" : string.Empty
+            : control.IsRecording
+                ? $"Auto-save: {Path.GetFileName(recordingPath)}"
+                : Path.GetFileName(recordingPath);
+        ToolTip.SetTip(RecordingDestinationText, recordingPath);
+    }
+
+    private static string FormatMediaTime(TimeSpan value) =>
+        value.TotalHours >= 1
+            ? value.ToString(@"h\:mm\:ss", CultureInfo.InvariantCulture)
+            : value.ToString(@"mm\:ss", CultureInfo.InvariantCulture);
+
+    private async void RecordingStop_OnClick(object? sender, RoutedEventArgs e)
+    {
+        var control = ActiveControl;
+        if (control is null)
+        {
+            return;
+        }
+
+        var streaming = control.IsStreamingRecording;
+        try
+        {
+            var savedPath = await control.StopRecordingAsync().ConfigureAwait(true);
+            ShowNotification(new TerminalNotification(
+                streaming ? "Live stream stopped" : "Recording stopped",
+                savedPath is null ? "Use Save as... to export the recording." : $"Saved to {savedPath}"));
+        }
+        catch (Exception ex) when (ex is WebSocketException or IOException or OperationCanceledException)
+        {
+            ShowNotification(new TerminalNotification("Unable to stop live stream cleanly", ex.Message));
+        }
+        finally
+        {
+            UpdateRecordingStateBar();
+        }
+    }
+
+    private async Task StartStreamingAsync(TermControl control)
+    {
+        var request = await PromptForStreamingTargetAsync().ConfigureAwait(true);
+        if (request is null)
+        {
+            return;
+        }
+
+        _lastStreamingUri = request.Uri.AbsoluteUri;
+        _lastStreamingMode = request.Mode;
+        try
+        {
+            if (request.Mode == 2)
+            {
+                await control.StartRecordingAsync(request.Uri).ConfigureAwait(true);
+            }
+            else
+            {
+                var format = request.Mode == 1 ? AsciicastFormat.V2 : AsciicastFormat.V3;
+                await control.StartRecordingAsync(request.Uri, format).ConfigureAwait(true);
+            }
+
+            ShowNotification(new TerminalNotification(
+                "Live stream started",
+                request.Mode == 2
+                    ? "Streaming the active terminal using DVLS asciicast v2."
+                    : $"Streaming the active terminal using asciicast {(request.Mode == 1 ? "v2" : "v3")}."));
+        }
+        catch (Exception ex) when (
+            ex is ArgumentException or
+                InvalidOperationException or
+                WebSocketException or
+                HttpRequestException or
+                OperationCanceledException)
+        {
+            ShowNotification(new TerminalNotification("Unable to start live stream", ex.Message));
+        }
+        finally
+        {
+            UpdateRecordingStateBar();
+        }
+    }
+
+    private async Task StopStreamingAsync(TermControl control)
+    {
+        try
+        {
+            var savedPath = await control.StopRecordingAsync().ConfigureAwait(true);
+            ShowNotification(new TerminalNotification(
+                "Live stream stopped",
+                savedPath is null ? "Use Save as... to export the recording." : $"Saved to {savedPath}"));
+        }
+        catch (Exception ex) when (ex is WebSocketException or IOException or OperationCanceledException)
+        {
+            ShowNotification(new TerminalNotification("Unable to stop live stream cleanly", ex.Message));
+        }
+        finally
+        {
+            UpdateRecordingStateBar();
+        }
+    }
+
+    private async void RecordingSave_OnClick(object? sender, RoutedEventArgs e)
+    {
+        var control = ActiveControl;
+        if (control is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var destination = await SaveRecordingAsync(
+                control,
+                requestedPath: null,
+                control.RecordingFormat ?? AsciicastFormat.V2).ConfigureAwait(true);
+            if (destination is not null)
+            {
+                ShowNotification(new TerminalNotification("Recording saved", destination));
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            ShowNotification(new TerminalNotification("Recording save failed", ex.Message));
+        }
+    }
+
+    private async void RecordingReplay_OnClick(object? sender, RoutedEventArgs e)
+    {
+        var control = ActiveControl;
+        if (control is null)
+        {
+            return;
+        }
+
+        await CreateReplayTabAsync(control.GetRecording()).ConfigureAwait(true);
+    }
+
+    private void ReplayPause_OnClick(object? sender, RoutedEventArgs e)
+    {
+        var control = ActiveControl;
+        if (control is null)
+        {
+            return;
+        }
+
+        if (control.IsReplayPaused)
+        {
+            control.ResumeReplay();
+        }
+        else
+        {
+            control.PauseReplay();
+        }
+    }
+
+    private async void ReplayRestart_OnClick(object? sender, RoutedEventArgs e)
+    {
+        var control = ActiveControl;
+        if (control is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await control.RestartReplayAsync().ConfigureAwait(true);
+            ShowNotification(new TerminalNotification(
+                "Recording replay complete",
+                _activeTab?.Title ?? "Asciicast replay"));
+        }
+        catch (OperationCanceledException)
+        {
+            // Another restart or closing the replay tab cancels this run.
+        }
+    }
+
+    private void ReplaySpeed_OnSelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (ActiveControl is not { HasReplay: true } control ||
+            ReplaySpeedComboBox.SelectedItem is not ComboBoxItem { Tag: string speedText } ||
+            !double.TryParse(speedText, NumberStyles.Float, CultureInfo.InvariantCulture, out var speed) ||
+            Math.Abs(control.ReplaySpeed - speed) < 0.001)
+        {
+            return;
+        }
+
+        control.SetReplaySpeed(speed);
+    }
+
     private TerminalPane CreatePane(
         ProfileSettings profile,
         TerminalSessionDescriptor? session = null,
@@ -660,6 +987,8 @@ public partial class MainWindow :
             profile,
             control,
             presentation);
+        control.RecordingStateChanged += OnRecordingStateChanged;
+        control.ReplayStateChanged += OnReplayStateChanged;
         pane.Presentation.IsAdministrator = OperatingSystem.IsWindows() && profile.Elevate;
         control.TitleChanged += (_, title) =>
         {
@@ -832,11 +1161,13 @@ public partial class MainWindow :
         RebuildTerminalHost();
         if (tab.IsSettingsTab)
         {
+            UpdateRecordingStateBar();
             tab.CustomContent?.Focus();
             return;
         }
 
         tab.Panes.ActiveContent?.Control.Focus();
+        UpdateRecordingStateBar();
     }
 
     private void ActivatePane(TerminalTab tab, TerminalPane pane)
@@ -849,6 +1180,7 @@ public partial class MainWindow :
         SynchronizeTitle(tab);
         RebuildTerminalHost();
         pane.Control.Focus();
+        UpdateRecordingStateBar();
     }
 
     private async Task ClosePaneAsync(TerminalTab tab, TerminalPane pane, bool automaticExit = false)
@@ -1118,6 +1450,27 @@ public partial class MainWindow :
             content.Children.Add(title);
 
             var status = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+            var recordingControl = tab.Panes.Leaves()
+                .Select(static pane => pane.Control)
+                .FirstOrDefault(static control => control.IsRecording || control.HasUnsavedRecording);
+            if (recordingControl is not null)
+            {
+                var recordingIndicator = new TextBlock
+                {
+                    Text = "●",
+                    Foreground = recordingControl.IsRecording
+                        ? new SolidColorBrush(Color.Parse("#FF5A5F"))
+                        : new SolidColorBrush(Color.Parse("#F4C95D")),
+                    VerticalAlignment = VerticalAlignment.Center,
+                };
+                var indicatorText = recordingControl.IsRecording
+                    ? $"Recording {recordingControl.RecordingFormat?.ToString().ToLowerInvariant()}"
+                    : "Unsaved recording";
+                AutomationProperties.SetName(recordingIndicator, indicatorText);
+                ToolTip.SetTip(recordingIndicator, indicatorText);
+                status.Children.Add(recordingIndicator);
+            }
+
             if (compact)
             {
                 if (presentation.ProgressState != TerminalProgressState.None)
@@ -1914,6 +2267,85 @@ public partial class MainWindow :
             ShowNotification(new TerminalNotification("Buffer exported", path));
             return Task.CompletedTask;
         });
+        Register(
+            ShortcutAction.StartRecording,
+            ActionScope.Control,
+            _ => ActiveControl is { IsRecording: false, IsStreamingRecording: false },
+            action =>
+            {
+                var args = action.Args as StartRecordingArgs;
+                ActiveControl!.StartRecording(args?.Path, args?.Format ?? AsciicastFormat.V2);
+                ShowNotification(new TerminalNotification(
+                    "Recording started",
+                    "Output from the active terminal is now being recorded."));
+                return Task.CompletedTask;
+            });
+        Register(
+            ShortcutAction.StopRecording,
+            ActionScope.Control,
+            _ => ActiveControl is { IsRecording: true, IsStreamingRecording: false },
+            _ =>
+        {
+            var savedPath = ActiveControl!.StopRecording();
+            ShowNotification(new TerminalNotification(
+                "Recording stopped",
+                savedPath is null
+                    ? "The recording is ready to save or replay. Choose a .cast destination when you're ready."
+                    : $"Saved to {savedPath}. The recording is still available for replay."));
+            return Task.CompletedTask;
+        });
+        Register(
+            ShortcutAction.StartStreaming,
+            ActionScope.Control,
+            _ => ActiveControl is
+            {
+                IsRecording: false,
+                IsStreamingRecording: false,
+                HasReplay: false,
+            },
+            _ => StartStreamingAsync(ActiveControl!));
+        Register(
+            ShortcutAction.StopStreaming,
+            ActionScope.Control,
+            _ => ActiveControl?.IsStreamingRecording == true,
+            _ => StopStreamingAsync(ActiveControl!));
+        Register(ShortcutAction.SaveRecording, ActionScope.Control, _ => ActiveControl?.HasRecording == true, async action =>
+        {
+            var control = ActiveControl!;
+            var args = action.Args as SaveRecordingArgs;
+            var savedDestination = await SaveRecordingAsync(
+                control,
+                args?.Path,
+                args?.Format ?? AsciicastFormat.V2).ConfigureAwait(true);
+            if (savedDestination is null)
+            {
+                return;
+            }
+
+            ShowNotification(new TerminalNotification("Recording saved", savedDestination));
+        });
+        Register(ShortcutAction.ReplayRecording, ActionScope.Control, action =>
+            ActiveControl?.HasRecording == true ||
+            !string.IsNullOrWhiteSpace((action.Args as ReplayRecordingArgs)?.Path), async action =>
+        {
+            var control = ActiveControl!;
+            var requestedPath = (action.Args as ReplayRecordingArgs)?.Path;
+            var recording = string.IsNullOrWhiteSpace(requestedPath)
+                ? control.GetRecording()
+                : LoadRecording(requestedPath);
+            await CreateReplayTabAsync(recording).ConfigureAwait(true);
+        });
+        Register(ShortcutAction.OpenRecording, ActionScope.Window, _ => true, async action =>
+        {
+            var requestedPath = (action.Args as OpenRecordingArgs)?.Path;
+            var recording = await OpenRecordingAsync(requestedPath).ConfigureAwait(true);
+            if (recording is null)
+            {
+                return;
+            }
+
+            await CreateReplayTabAsync(recording).ConfigureAwait(true);
+        });
         Register(ShortcutAction.SelectCommand, ActionScope.Control, _ => ActiveControl is not null, action =>
         {
             ActiveControl!.SelectCommand(
@@ -2400,6 +2832,16 @@ public partial class MainWindow :
     private async Task<ActionDispatchResult> DispatchActionAsync(ActionAndArgs action)
     {
         _lastDispatchResult = await _actionDispatcher.DispatchAsync(action).ConfigureAwait(true);
+        if (_lastDispatchResult.Status is ActionDispatchStatus.Failed or
+            ActionDispatchStatus.Disabled)
+        {
+            ShowNotification(new TerminalNotification(
+                _lastDispatchResult.Status == ActionDispatchStatus.Failed
+                    ? "Action failed"
+                    : "Action unavailable",
+                _lastDispatchResult.Message ?? action.ActionName));
+        }
+
         return _lastDispatchResult;
     }
 
@@ -2840,6 +3282,15 @@ public partial class MainWindow :
         string prompt,
         string initialValue)
     {
+        return await PromptForTextAsync(title, prompt, initialValue, saveButtonText: "Save").ConfigureAwait(true);
+    }
+
+    private async Task<string?> PromptForTextAsync(
+        string title,
+        string prompt,
+        string initialValue,
+        string saveButtonText)
+    {
         var textBox = new TextBox
         {
             Text = initialValue,
@@ -2847,7 +3298,7 @@ public partial class MainWindow :
         };
         var accept = new Button
         {
-            Content = "Save",
+            Content = saveButtonText,
             IsDefault = true,
             MinWidth = 80,
         };
@@ -2890,6 +3341,267 @@ public partial class MainWindow :
             textBox.SelectAll();
         };
         return await dialog.ShowDialog<string?>(this).ConfigureAwait(true);
+    }
+
+    private async Task<StreamingRecordingRequest?> PromptForStreamingTargetAsync()
+    {
+        var urlBox = new TextBox
+        {
+            Text = _lastStreamingUri,
+            MinWidth = 460,
+            PlaceholderText = "wss://server.example/ws/S/producer-token",
+        };
+        var modeBox = new ComboBox
+        {
+            MinWidth = 220,
+            ItemsSource = new[]
+            {
+                "Asciinema v3 (recommended)",
+                "Asciinema v2",
+                "DVLS v2",
+            },
+            SelectedIndex = _lastStreamingMode,
+        };
+        var validation = new TextBlock
+        {
+            Foreground = new SolidColorBrush(Color.Parse("#FF9B9B")),
+            TextWrapping = TextWrapping.Wrap,
+        };
+        var accept = new Button
+        {
+            Content = "Start streaming",
+            IsDefault = true,
+            IsEnabled = false,
+            MinWidth = 110,
+        };
+        var cancel = new Button
+        {
+            Content = "Cancel",
+            IsCancel = true,
+            MinWidth = 80,
+        };
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Spacing = 8,
+            Children = { cancel, accept },
+        };
+        var dialog = new Window
+        {
+            Title = "Stream live",
+            CanResize = false,
+            SizeToContent = SizeToContent.WidthAndHeight,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Content = new StackPanel
+            {
+                Margin = new Thickness(20),
+                Spacing = 10,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = "Paste the producer WebSocket URL supplied by your asciinema server or DVLS.",
+                        TextWrapping = TextWrapping.Wrap,
+                        MaxWidth = 520,
+                    },
+                    new TextBlock { Text = "Producer URL", FontWeight = FontWeight.SemiBold },
+                    urlBox,
+                    new TextBlock { Text = "Protocol", FontWeight = FontWeight.SemiBold },
+                    modeBox,
+                    validation,
+                    new TextBlock
+                    {
+                        Text = "The URL is remembered only until this DT process exits because it may contain an access token.",
+                        Foreground = new SolidColorBrush(Color.Parse("#B8B8B8")),
+                        FontSize = 12,
+                        TextWrapping = TextWrapping.Wrap,
+                        MaxWidth = 520,
+                    },
+                    buttons,
+                },
+            },
+        };
+
+        Uri? parsedUri = null;
+        void Validate()
+        {
+            var text = urlBox.Text?.Trim();
+            var valid = Uri.TryCreate(text, UriKind.Absolute, out parsedUri) &&
+                        parsedUri.Scheme is "ws" or "wss";
+            accept.IsEnabled = valid;
+            validation.Text = valid || string.IsNullOrWhiteSpace(text)
+                ? string.Empty
+                : "Enter an absolute ws:// or wss:// producer URL.";
+        }
+
+        urlBox.TextChanged += (_, _) => Validate();
+        accept.Click += (_, _) =>
+        {
+            Validate();
+            if (parsedUri is not null)
+            {
+                dialog.Close(new StreamingRecordingRequest(parsedUri, modeBox.SelectedIndex));
+            }
+        };
+        cancel.Click += (_, _) => dialog.Close(null);
+        dialog.Opened += (_, _) =>
+        {
+            Validate();
+            urlBox.Focus();
+            urlBox.SelectAll();
+        };
+        return await dialog.ShowDialog<StreamingRecordingRequest?>(this).ConfigureAwait(true);
+    }
+
+    private sealed record StreamingRecordingRequest(Uri Uri, int Mode);
+
+    private async Task<string?> SaveRecordingAsync(
+        TermControl control,
+        string? requestedPath,
+        AsciicastFormat format)
+    {
+        if (!string.IsNullOrWhiteSpace(requestedPath))
+        {
+            return control.SaveRecording(requestedPath, format);
+        }
+
+        var defaultRecordingPath = GetDefaultRecordingPath();
+        var storage = this.StorageProvider;
+        if (storage is not null && storage.CanSave)
+        {
+            var startLocation = await storage.TryGetFolderFromPathAsync(
+                new Uri(GetRecordingFolderPath())).ConfigureAwait(true);
+            var suggestedFile = await storage.SaveFilePickerAsync(new FilePickerSaveOptions
+            {
+                Title = "Save terminal recording",
+                SuggestedFileName = Path.GetFileName(defaultRecordingPath),
+                SuggestedStartLocation = startLocation,
+                DefaultExtension = "cast",
+                FileTypeChoices =
+                [
+                    new FilePickerFileType("Asciicast recording")
+                    {
+                        Patterns = ["*.cast"],
+                    },
+                ],
+            }).ConfigureAwait(true);
+
+            if (suggestedFile is null)
+            {
+                return null;
+            }
+
+            var localPath = suggestedFile.TryGetLocalPath();
+            if (!string.IsNullOrWhiteSpace(localPath))
+            {
+                return control.SaveRecording(localPath, format);
+            }
+
+            var recording = control.GetRecording();
+            var bytes = Encoding.UTF8.GetBytes(recording.ToJson(format));
+            await using var stream = await suggestedFile.OpenWriteAsync().ConfigureAwait(true);
+            if (stream.CanSeek)
+            {
+                stream.SetLength(0);
+            }
+
+            await stream.WriteAsync(bytes).ConfigureAwait(true);
+            await stream.FlushAsync().ConfigureAwait(true);
+            return suggestedFile.Name;
+        }
+
+        var path = await PromptForTextAsync(
+            "Save recording",
+            "Path for the .cast file",
+            defaultRecordingPath,
+            saveButtonText: "Save").ConfigureAwait(true);
+        return string.IsNullOrWhiteSpace(path) ? null : control.SaveRecording(path, format);
+    }
+
+    private async Task<AsciicastRecording?> OpenRecordingAsync(string? requestedPath)
+    {
+        if (!string.IsNullOrWhiteSpace(requestedPath))
+        {
+            return LoadRecording(requestedPath);
+        }
+
+        var storage = this.StorageProvider;
+        if (storage is not null && storage.CanOpen)
+        {
+            var startLocation = await storage.TryGetFolderFromPathAsync(
+                new Uri(GetRecordingFolderPath())).ConfigureAwait(true);
+            var files = await storage.OpenFilePickerAsync(new FilePickerOpenOptions
+            {
+                Title = "Open terminal recording",
+                AllowMultiple = false,
+                SuggestedStartLocation = startLocation,
+                FileTypeFilter =
+                [
+                    new FilePickerFileType("Asciicast recordings")
+                    {
+                        Patterns = ["*.cast"],
+                    },
+                    FilePickerFileTypes.All,
+                ],
+            }).ConfigureAwait(true);
+
+            if (files is { Count: > 0 })
+            {
+                var selectedFile = files[0];
+                var localPath = selectedFile.TryGetLocalPath();
+                if (!string.IsNullOrWhiteSpace(localPath))
+                {
+                    return LoadRecording(localPath);
+                }
+
+                await using var stream = await selectedFile.OpenReadAsync().ConfigureAwait(true);
+                using var reader = new StreamReader(stream, Encoding.UTF8);
+                return AsciicastRecording.FromJson(
+                    await reader.ReadToEndAsync().ConfigureAwait(true));
+            }
+
+            return null;
+        }
+
+        var defaultRecordingPath = GetDefaultRecordingPath();
+        var path = await PromptForTextAsync(
+            "Open recording",
+            "Path to the .cast file",
+            defaultRecordingPath,
+            saveButtonText: "Open").ConfigureAwait(true);
+        return string.IsNullOrWhiteSpace(path) ? null : LoadRecording(path);
+    }
+
+    private static AsciicastRecording LoadRecording(string path)
+    {
+        var expanded = Environment.ExpandEnvironmentVariables(path);
+        if (!File.Exists(expanded))
+        {
+            throw new FileNotFoundException("The recording file does not exist.", expanded);
+        }
+
+        return AsciicastRecording.FromJson(File.ReadAllText(expanded));
+    }
+
+    private static string GetRecordingFolderPath()
+    {
+        var directory = Path.Combine(
+            Path.GetDirectoryName(Path.GetFullPath(SettingsService.SettingsPath))!,
+            "recordings");
+        Directory.CreateDirectory(directory);
+        return directory;
+    }
+
+    private string GetDefaultRecordingPath()
+    {
+        var directory = Path.Combine(
+            Path.GetDirectoryName(Path.GetFullPath(SettingsService.SettingsPath))!,
+            "recordings");
+        Directory.CreateDirectory(directory);
+        return Path.Combine(
+            directory,
+            $"terminal-recording-{DateTime.Now:yyyyMMdd-HHmmss-fff}.cast");
     }
 
     private bool CanPaste() =>

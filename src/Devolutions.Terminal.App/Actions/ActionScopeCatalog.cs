@@ -17,6 +17,7 @@ public static class ActionScopeCatalog
         "identifyWindow" or
         "newWindow" or
         "openAbout" or
+        "openRecording" or
         "openNewTabDropdown" or
         "openSettings" or
         "openSystemMenu" or
