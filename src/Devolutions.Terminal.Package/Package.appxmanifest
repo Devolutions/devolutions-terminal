@@ -45,7 +45,7 @@
       uap10:TrustLevel="mediumIL">
       <uap:VisualElements
         DisplayName="Devolutions Terminal"
-        Description="NativeAOT Avalonia terminal emulator."
+        Description="Avalonia terminal emulator with an embedded Iseberg PowerShell workbench."
         BackgroundColor="transparent"
         Square150x150Logo="Assets\Square150x150Logo.png"
         Square44x44Logo="Assets\Square44x44Logo.png">

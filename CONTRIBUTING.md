@@ -22,13 +22,18 @@ as a tab on `/pty/{id}` (`ws` on this HTTP host, `wss` when the page is HTTPS).
 The browser never supplies a command line, and the host does not send one back.
 Elevated profiles are listed and refused.
 
-Warnings are errors. Prefer small, reviewable changes that keep NativeAOT publish green.
+Warnings are errors. Keep the default managed desktop and terminal-only NativeAOT
+publishes green. See [Iseberg](docs/iseberg.md) for the installed-engine boundary.
 
-## NativeAOT
+## Desktop publish
 
 ```powershell
 dotnet publish src/Devolutions.Terminal -c Release -r win-x64 --self-contained
 ```
+
+The default Iseberg-enabled desktop is managed and untrimmed. Add
+`-p:EnablePowerShellIse=false` for a terminal-only NativeAOT desktop.
+The CLI remains NativeAOT in both distributions.
 
 Linux packages:
 

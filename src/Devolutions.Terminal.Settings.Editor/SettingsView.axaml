@@ -315,15 +315,63 @@
           </controls:SettingsRow.Value>
         </controls:SettingsRow>
         <controls:SettingsRow Header="Name"
+                              IsVisible="{Binding SelectedProfile.IsNamedProfile}"
                               Description="The name of the profile that appears in the dropdown.">
           <controls:SettingsRow.Value>
             <TextBox Classes="field" Text="{Binding SelectedProfile.Name}" />
           </controls:SettingsRow.Value>
         </controls:SettingsRow>
         <controls:SettingsRow Header="Command line"
+                              IsVisible="{Binding SelectedProfile.IsTerminalProfile}"
                               Description="Executable used when this profile starts.">
           <controls:SettingsRow.Value>
             <TextBox Classes="field" Text="{Binding SelectedProfile.Commandline}" />
+          </controls:SettingsRow.Value>
+        </controls:SettingsRow>
+        <controls:SettingsRow Header="Profile type"
+                              IsVisible="{Binding SelectedProfile.IsNamedProfile}"
+                              Description="Terminal starts a shell executable. PowerShell ISE opens a script editor and console sharing one PowerShell 7 session.">
+          <controls:SettingsRow.Value>
+            <StackPanel>
+              <ComboBox AutomationProperties.Name="Profile type"
+                        IsVisible="{Binding SelectedProfile.CanChangeProfileType}"
+                        ItemsSource="{Binding SelectedProfile.ProfileTypeChoices}"
+                        SelectedItem="{Binding SelectedProfile.ProfileType}" />
+              <TextBlock IsVisible="{Binding !SelectedProfile.CanChangeProfileType}"
+                         Text="{Binding SelectedProfile.ProfileType}" TextWrapping="Wrap" />
+            </StackPanel>
+          </controls:SettingsRow.Value>
+        </controls:SettingsRow>
+        <TextBlock Classes="pageDescription" IsVisible="{Binding SelectedProfile.IsPowerShellIse}"
+                   Text="Runs inside DT with DT's permissions. Terminal command, elevation, connection and environment settings are retained for switching back, but do not apply to ISE. Apply changes and reopen the ISE tab to use them." />
+        <controls:SettingsRow Header="Show line numbers" IsVisible="{Binding SelectedProfile.IsPowerShellIse}">
+          <controls:SettingsRow.Value>
+            <controls:SettingsToggle AutomationProperties.Name="Show line numbers" IsChecked="{Binding SelectedProfile.IseShowLineNumbers}" />
+          </controls:SettingsRow.Value>
+        </controls:SettingsRow>
+        <controls:SettingsRow Header="Word wrap" IsVisible="{Binding SelectedProfile.IsPowerShellIse}">
+          <controls:SettingsRow.Value>
+            <controls:SettingsToggle AutomationProperties.Name="Word wrap" IsChecked="{Binding SelectedProfile.IseWordWrap}" />
+          </controls:SettingsRow.Value>
+        </controls:SettingsRow>
+        <controls:SettingsRow Header="Save before running" IsVisible="{Binding SelectedProfile.IsPowerShellIse}"
+                              Description="Ask to save changed scripts before execution.">
+          <controls:SettingsRow.Value>
+            <controls:SettingsToggle AutomationProperties.Name="Save before running" IsChecked="{Binding SelectedProfile.IsePromptToSaveBeforeRun}" />
+          </controls:SettingsRow.Value>
+        </controls:SettingsRow>
+        <controls:SettingsRow Header="Recovery interval (minutes)" IsVisible="{Binding SelectedProfile.IsPowerShellIse}"
+                              Description="Save recoverable drafts every 0-120 minutes. Zero disables automatic recovery snapshots.">
+          <controls:SettingsRow.Value>
+            <NumericUpDown Minimum="0" Maximum="120" AutomationProperties.Name="Recovery interval" Value="{Binding SelectedProfile.IseAutoSaveMinutes}" />
+          </controls:SettingsRow.Value>
+        </controls:SettingsRow>
+        <controls:SettingsRow Header="Load PowerShell profiles"
+                              IsVisible="{Binding SelectedProfile.IsPowerShellIse}"
+                              Description="Opt in to profile scripts, including Devolutions.Terminal.Iseberg_profile.ps1. Scripts run with DT's permissions and Windows execution policy.">
+          <controls:SettingsRow.Value>
+            <controls:SettingsToggle AutomationProperties.Name="Load PowerShell profiles"
+                                     IsChecked="{Binding SelectedProfile.IseLoadProfiles}" />
           </controls:SettingsRow.Value>
         </controls:SettingsRow>
         <controls:SettingsRow Header="Starting directory"
@@ -355,6 +403,7 @@
           </controls:SettingsRow.Value>
         </controls:SettingsRow>
         <controls:SettingsRow Header="Run this profile as Administrator"
+                              IsVisible="{Binding SelectedProfile.IsTerminal}"
                               Description="On Windows, launch this profile through gsudo in an elevated tab. Requires gsudo.exe on PATH.">
           <controls:SettingsRow.Value>
             <controls:SettingsToggle IsEnabled="{Binding SelectedProfile.CanElevate}" AutomationProperties.Name="Run this profile as Administrator" IsChecked="{Binding SelectedProfile.Elevate}" />
@@ -366,20 +415,23 @@
             <controls:SettingsToggle IsChecked="{Binding SelectedProfile.Hidden}" />
           </controls:SettingsRow.Value>
         </controls:SettingsRow>
-        <TextBlock Classes="sectionTitle" Text="Profile details" />
+        <TextBlock Classes="sectionTitle" Text="Profile details" IsVisible="{Binding SelectedProfile.IsNamedProfile}" />
         <controls:SettingsRow Header="GUID"
+                              IsVisible="{Binding SelectedProfile.IsNamedProfile}"
                               Description="Stable identity used to reference this profile.">
           <controls:SettingsRow.Value>
             <TextBox Classes="field" IsReadOnly="True" Text="{Binding SelectedProfile.Guid}" />
           </controls:SettingsRow.Value>
         </controls:SettingsRow>
         <controls:SettingsRow Header="Source"
+                              IsVisible="{Binding SelectedProfile.IsNamedProfile}"
                               Description="Dynamic profile generator or settings layer that owns this profile.">
           <controls:SettingsRow.Value>
             <TextBox Classes="field" IsReadOnly="True" Text="{Binding SelectedProfile.Source}" />
           </controls:SettingsRow.Value>
         </controls:SettingsRow>
         <controls:SettingsRow Header="Suppress application title"
+                              IsVisible="{Binding SelectedProfile.IsTerminal}"
                               Description="Keep the configured tab title instead of the shell-provided title.">
           <controls:SettingsRow.Value>
             <controls:SettingsToggle IsChecked="{Binding SelectedProfile.SuppressApplicationTitle}" />
@@ -393,44 +445,53 @@
         <TextBlock Classes="pageTitle" Text="{Binding Title}" />
         <TextBlock Classes="pageDescription" Text="{Binding Description}" />
         <ComboBox Classes="field" ItemsSource="{Binding Profiles}" SelectedItem="{Binding SelectedProfile}" />
+        <controls:SettingsRow Header="Color theme" IsVisible="{Binding SelectedProfile.IsPowerShellIse}"
+                              Description="The same palette applies to the script editor, completion popups and native PowerShell console.">
+          <controls:SettingsRow.Value>
+            <ComboBox AutomationProperties.Name="ISE color theme" ItemsSource="{Binding SelectedProfile.IseColorThemeChoices}" SelectedItem="{Binding SelectedProfile.IseColorTheme}" />
+          </controls:SettingsRow.Value>
+        </controls:SettingsRow>
         <Border Classes="settings-card">
           <Grid ColumnDefinitions="220,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
           <TextBlock Grid.Row="0" Classes="fieldLabel" Text="Font face" />
           <controls:FontFaceField Grid.Row="0" Grid.Column="1" Text="{Binding SelectedProfile.FontFace}" />
           <TextBlock Grid.Row="1" Classes="fieldLabel" Text="Font size" />
           <TextBox Grid.Row="1" Grid.Column="1" Classes="field" Text="{Binding SelectedProfile.FontSize}" />
-          <TextBlock Grid.Row="2" Classes="fieldLabel" Text="Font weight" />
-          <TextBox Grid.Row="2" Grid.Column="1" Classes="field" Text="{Binding SelectedProfile.FontWeight}" />
-          <TextBlock Grid.Row="3" Classes="fieldLabel" Text="Dark color scheme" />
-          <TextBox Grid.Row="3" Grid.Column="1" Classes="field" Text="{Binding SelectedProfile.DarkColorScheme}" />
-          <TextBlock Grid.Row="4" Classes="fieldLabel" Text="Light color scheme" />
-          <TextBox Grid.Row="4" Grid.Column="1" Classes="field" Text="{Binding SelectedProfile.LightColorScheme}" />
-          <TextBlock Grid.Row="5" Classes="fieldLabel" Text="Foreground" />
-          <controls:ColorField Grid.Row="5" Grid.Column="1" Text="{Binding SelectedProfile.Foreground}" />
-          <TextBlock Grid.Row="6" Classes="fieldLabel" Text="Background" />
-          <controls:ColorField Grid.Row="6" Grid.Column="1" Text="{Binding SelectedProfile.Background}" />
-          <TextBlock Grid.Row="7" Classes="fieldLabel" Text="Cursor color" />
-          <controls:ColorField Grid.Row="7" Grid.Column="1" Text="{Binding SelectedProfile.CursorColor}" />
-          <TextBlock Grid.Row="8" Classes="fieldLabel" Text="Selection background" />
-          <controls:ColorField Grid.Row="8" Grid.Column="1" Text="{Binding SelectedProfile.SelectionBackground}" />
-          <TextBlock Grid.Row="9" Classes="fieldLabel" Text="Opacity (0-100)" />
-          <TextBox Grid.Row="9" Grid.Column="1" Classes="field" Text="{Binding SelectedProfile.Opacity}" />
-          <TextBlock Grid.Row="10" Classes="fieldLabel" Text="Background image" />
+          <TextBlock Grid.Row="2" Classes="fieldLabel" Text="Font weight" IsVisible="{Binding SelectedProfile.IsTerminal}" />
+          <TextBox Grid.Row="2" Grid.Column="1" Classes="field" Text="{Binding SelectedProfile.FontWeight}" IsVisible="{Binding SelectedProfile.IsTerminal}" />
+          <TextBlock Grid.Row="3" Classes="fieldLabel" Text="Dark color scheme" IsVisible="{Binding SelectedProfile.IsTerminal}" />
+          <TextBox Grid.Row="3" Grid.Column="1" Classes="field" Text="{Binding SelectedProfile.DarkColorScheme}" IsVisible="{Binding SelectedProfile.IsTerminal}" />
+          <TextBlock Grid.Row="4" Classes="fieldLabel" Text="Light color scheme" IsVisible="{Binding SelectedProfile.IsTerminal}" />
+          <TextBox Grid.Row="4" Grid.Column="1" Classes="field" Text="{Binding SelectedProfile.LightColorScheme}" IsVisible="{Binding SelectedProfile.IsTerminal}" />
+          <TextBlock Grid.Row="5" Classes="fieldLabel" Text="Foreground" IsVisible="{Binding SelectedProfile.IsTerminal}" />
+          <controls:ColorField Grid.Row="5" Grid.Column="1" Text="{Binding SelectedProfile.Foreground}" IsVisible="{Binding SelectedProfile.IsTerminal}" />
+          <TextBlock Grid.Row="6" Classes="fieldLabel" Text="Background" IsVisible="{Binding SelectedProfile.IsTerminal}" />
+          <controls:ColorField Grid.Row="6" Grid.Column="1" Text="{Binding SelectedProfile.Background}" IsVisible="{Binding SelectedProfile.IsTerminal}" />
+          <TextBlock Grid.Row="7" Classes="fieldLabel" Text="Cursor color" IsVisible="{Binding SelectedProfile.IsTerminal}" />
+          <controls:ColorField Grid.Row="7" Grid.Column="1" Text="{Binding SelectedProfile.CursorColor}" IsVisible="{Binding SelectedProfile.IsTerminal}" />
+          <TextBlock Grid.Row="8" Classes="fieldLabel" Text="Selection background" IsVisible="{Binding SelectedProfile.IsTerminal}" />
+          <controls:ColorField Grid.Row="8" Grid.Column="1" Text="{Binding SelectedProfile.SelectionBackground}" IsVisible="{Binding SelectedProfile.IsTerminal}" />
+          <TextBlock Grid.Row="9" Classes="fieldLabel" Text="Opacity (0-100)" IsVisible="{Binding SelectedProfile.IsTerminal}" />
+          <TextBox Grid.Row="9" Grid.Column="1" Classes="field" Text="{Binding SelectedProfile.Opacity}" IsVisible="{Binding SelectedProfile.IsTerminal}" />
+          <TextBlock Grid.Row="10" Classes="fieldLabel" Text="Background image" IsVisible="{Binding SelectedProfile.IsTerminal}" />
           <controls:FilePathField Grid.Row="10" Grid.Column="1"
                                   Title="Select background image"
                                   ImageFiles="True"
+                                  IsVisible="{Binding SelectedProfile.IsTerminal}"
                                   Text="{Binding SelectedProfile.BackgroundImage}" />
-          <TextBlock Grid.Row="11" Classes="fieldLabel" Text="Background image opacity" />
-          <TextBox Grid.Row="11" Grid.Column="1" Classes="field" Text="{Binding SelectedProfile.BackgroundImageOpacity}" />
+          <TextBlock Grid.Row="11" Classes="fieldLabel" Text="Background image opacity" IsVisible="{Binding SelectedProfile.IsTerminal}" />
+          <TextBox Grid.Row="11" Grid.Column="1" Classes="field" Text="{Binding SelectedProfile.BackgroundImageOpacity}" IsVisible="{Binding SelectedProfile.IsTerminal}" />
           </Grid>
         </Border>
-        <controls:SettingsRow Header="Use acrylic"
+        <TextBlock Classes="pageDescription" IsVisible="{Binding SelectedProfile.IsPowerShellIse}"
+                   Text="The script editor and PowerShell console use the same profile font. Apply changes and reopen the ISE tab to use them." />
+        <controls:SettingsRow Header="Use acrylic" IsVisible="{Binding SelectedProfile.IsTerminal}"
                               Description="Not supported yet: acrylic material is not applied. Saved for compatibility only.">
           <controls:SettingsRow.Value>
             <controls:SettingsToggle IsEnabled="False" AutomationProperties.Name="Use acrylic (not supported)" IsChecked="{Binding SelectedProfile.UseAcrylic}" />
           </controls:SettingsRow.Value>
         </controls:SettingsRow>
-        <controls:SettingsRow Header="Retro terminal effect"
+        <controls:SettingsRow Header="Retro terminal effect" IsVisible="{Binding SelectedProfile.IsTerminal}"
                               Description="Add scan lines and glowing text for a CRT look.">
           <controls:SettingsRow.Value>
             <controls:SettingsToggle AutomationProperties.Name="Retro terminal effect" IsChecked="{Binding SelectedProfile.RetroTerminalEffect}" />
@@ -444,6 +505,9 @@
         <TextBlock Classes="pageTitle" Text="{Binding Title}" />
         <TextBlock Classes="pageDescription" Text="{Binding Description}" />
         <ComboBox Classes="field" ItemsSource="{Binding Profiles}" SelectedItem="{Binding SelectedProfile}" />
+        <TextBlock Classes="pageDescription" IsVisible="{Binding SelectedProfile.IsPowerShellIse}"
+                   Text="ISE editor and recovery options are on the profile page; fonts and themes are in Profile appearance. Shell-terminal options do not apply to ISE." />
+        <StackPanel IsVisible="{Binding SelectedProfile.IsTerminal}">
         <Border Classes="settings-card">
           <Grid ColumnDefinitions="220,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto">
           <TextBlock Grid.Row="0" Classes="fieldLabel" Text="History size" />
@@ -498,6 +562,7 @@
             <controls:SettingsToggle AutomationProperties.Name="Show marks on scrollbar" IsChecked="{Binding SelectedProfile.ShowMarksOnScrollbar}" />
           </controls:SettingsRow.Value>
         </controls:SettingsRow>
+        </StackPanel>
       </StackPanel>
     </DataTemplate>
 
@@ -506,6 +571,45 @@
         <TextBlock Classes="pageTitle" Text="{Binding Title}" />
         <TextBlock Classes="pageDescription" Text="{Binding Description}" />
         <ComboBox Classes="field" ItemsSource="{Binding Profiles}" SelectedItem="{Binding SelectedProfile}" />
+        <StackPanel IsVisible="{Binding SelectedProfile.IsPowerShellIse}">
+          <TextBlock Classes="sectionTitle" Text="PowerShell ISE editor and completion" />
+          <controls:SettingsRow Header="Console IntelliSense">
+            <controls:SettingsRow.Value><controls:SettingsToggle IsChecked="{Binding SelectedProfile.IseConsoleIntelliSense}" AutomationProperties.Name="Console IntelliSense" /></controls:SettingsRow.Value>
+          </controls:SettingsRow>
+          <controls:SettingsRow Header="Accept console completion with Enter">
+            <controls:SettingsRow.Value><controls:SettingsToggle IsChecked="{Binding SelectedProfile.IseConsoleCompletionOnEnter}" AutomationProperties.Name="Accept console completion with Enter" /></controls:SettingsRow.Value>
+          </controls:SettingsRow>
+          <controls:SettingsRow Header="Script IntelliSense">
+            <controls:SettingsRow.Value><controls:SettingsToggle IsChecked="{Binding SelectedProfile.IseScriptIntelliSense}" AutomationProperties.Name="Script IntelliSense" /></controls:SettingsRow.Value>
+          </controls:SettingsRow>
+          <controls:SettingsRow Header="Accept script completion with Enter">
+            <controls:SettingsRow.Value><controls:SettingsToggle IsChecked="{Binding SelectedProfile.IseScriptCompletionOnEnter}" AutomationProperties.Name="Accept script completion with Enter" /></controls:SettingsRow.Value>
+          </controls:SettingsRow>
+          <controls:SettingsRow Header="Completion timeout (seconds)" Description="Maximum time to wait for automatic completion, from 1 to 30 seconds.">
+            <controls:SettingsRow.Value><NumericUpDown Minimum="1" Maximum="30" Value="{Binding SelectedProfile.IseIntelliSenseTimeoutSeconds}" AutomationProperties.Name="Completion timeout" /></controls:SettingsRow.Value>
+          </controls:SettingsRow>
+          <controls:SettingsRow Header="Show outlining">
+            <controls:SettingsRow.Value><controls:SettingsToggle IsChecked="{Binding SelectedProfile.IseShowOutlining}" AutomationProperties.Name="Show outlining" /></controls:SettingsRow.Value>
+          </controls:SettingsRow>
+          <controls:SettingsRow Header="Warn about duplicate files">
+            <controls:SettingsRow.Value><controls:SettingsToggle IsChecked="{Binding SelectedProfile.IseWarnDuplicateFiles}" AutomationProperties.Name="Warn about duplicate files" /></controls:SettingsRow.Value>
+          </controls:SettingsRow>
+          <controls:SettingsRow Header="Use local help">
+            <controls:SettingsRow.Value><controls:SettingsToggle IsChecked="{Binding SelectedProfile.IseUseLocalHelp}" AutomationProperties.Name="Use local help" /></controls:SettingsRow.Value>
+          </controls:SettingsRow>
+          <controls:SettingsRow Header="Use default snippets">
+            <controls:SettingsRow.Value><controls:SettingsToggle IsChecked="{Binding SelectedProfile.IseUseDefaultSnippets}" AutomationProperties.Name="Use default snippets" /></controls:SettingsRow.Value>
+          </controls:SettingsRow>
+          <controls:SettingsRow Header="Recent file count">
+            <controls:SettingsRow.Value><NumericUpDown Minimum="0" Maximum="100" Value="{Binding SelectedProfile.IseRecentFileCount}" AutomationProperties.Name="Recent file count" /></controls:SettingsRow.Value>
+          </controls:SettingsRow>
+          <controls:SettingsRow Header="Show toolbar">
+            <controls:SettingsRow.Value><controls:SettingsToggle IsChecked="{Binding SelectedProfile.IseShowToolbar}" AutomationProperties.Name="Show toolbar" /></controls:SettingsRow.Value>
+          </controls:SettingsRow>
+        </StackPanel>
+        <TextBlock Classes="pageDescription" IsVisible="{Binding SelectedProfile.IsPowerShellIse}"
+                   Text="ISE runs in DT's process. Shell-terminal environment and VT options are retained for switching back to Terminal, but are not applied to the PowerShell runspace." />
+        <StackPanel IsVisible="{Binding SelectedProfile.IsTerminal}">
         <controls:SettingsRow Header="Reload environment variables"
                               Description="Refresh the environment block when a new terminal starts.">
           <controls:SettingsRow.Value>
@@ -553,6 +657,7 @@
         <TextBlock Margin="0,16,0,6" FontSize="18" FontWeight="SemiBold" Text="Environment JSON" />
         <TextBlock Opacity="0.7" Text="Values must be strings or null. JSON is validated before Apply." />
         <TextBox Classes="jsonEditor" Text="{Binding SelectedProfile.EnvironmentJson}" />
+        </StackPanel>
       </StackPanel>
     </DataTemplate>
 
@@ -870,11 +975,14 @@
                              IsVisible="{Binding HasGroupHeader}"
                              Text="{Binding GroupHeader}" />
                   <TextBlock Text="{Binding Icon}"
+                             IsVisible="{Binding !HasImageIcon}"
                              Grid.Row="1"
                              FontFamily="{Binding IconFontFamily}"
                              FontSize="16"
                              HorizontalAlignment="Center"
                              VerticalAlignment="Center" />
+                  <Image Grid.Row="1" Source="{Binding ImageIcon}" IsVisible="{Binding HasImageIcon}"
+                         Width="16" Height="16" HorizontalAlignment="Center" VerticalAlignment="Center" />
                   <TextBlock Grid.Row="1"
                              Grid.Column="1"
                              Text="{Binding Title}"
@@ -887,6 +995,7 @@
           <Border Grid.Row="2"
                   Background="{DynamicResource SettingsNavigationBackground}"
                   Padding="0,8,0,0">
+            <StackPanel>
             <Button Classes="settings-ghost"
                     HorizontalAlignment="Left"
                     Command="{Binding AddProfileCommand}"
@@ -899,6 +1008,7 @@
                 <TextBlock Text="Add a new profile" VerticalAlignment="Center" />
               </StackPanel>
             </Button>
+            </StackPanel>
           </Border>
         </Grid>
       </Border>

@@ -61,6 +61,13 @@ public enum TerminalEngineKind
     Ghostty,
 }
 
+public enum ProfileKind
+{
+    Terminal,
+    PowerShellIse,
+    Unsupported,
+}
+
 public enum NewTabMenuEntryType
 {
     Invalid,
@@ -266,6 +273,25 @@ public sealed class AppearanceSettings
 
 public sealed class ProfileSettings
 {
+    public ProfileKind Kind { get; set; }
+    public bool IseLoadProfiles { get; set; }
+    public string IseColorTheme { get; set; } = IsebergThemes.Classic;
+    public bool IseShowLineNumbers { get; set; } = true;
+    public bool IseWordWrap { get; set; }
+    public bool IsePromptToSaveBeforeRun { get; set; } = true;
+    public int IseAutoSaveMinutes { get; set; } = 2;
+    public bool IseConsoleIntelliSense { get; set; } = true;
+    public bool IseConsoleCompletionOnEnter { get; set; } = true;
+    public bool IseScriptIntelliSense { get; set; } = true;
+    public bool IseScriptCompletionOnEnter { get; set; } = true;
+    public int IseIntelliSenseTimeoutSeconds { get; set; } = 3;
+    public bool IseShowOutlining { get; set; } = true;
+    public bool IseWarnDuplicateFiles { get; set; } = true;
+    public bool IseUseLocalHelp { get; set; } = true;
+    public bool IseUseDefaultSnippets { get; set; } = true;
+    public int IseRecentFileCount { get; set; } = 10;
+    public bool IseShowToolbar { get; set; } = true;
+    public IseTerminalConfiguration? IseTerminalConfiguration { get; set; }
     public string? Guid { get; set; }
     public string Name { get; set; } = "Windows PowerShell";
     public string? Source { get; set; }
@@ -429,6 +455,19 @@ public sealed class ProfileSettings
         Commandline = commandline,
         Origin = SettingsOrigin.Generated,
     };
+
+    public static ProfileSettings CreatePowerShellIse() => new()
+    {
+        Guid = $"{{{System.Guid.NewGuid()}}}",
+        Name = "Iseberg",
+        Kind = ProfileKind.PowerShellIse,
+        Commandline = string.Empty,
+        Icon = PowerShellIseIcon,
+        StartingDirectory = System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile),
+        Origin = SettingsOrigin.User,
+    };
+
+    public const string PowerShellIseIcon = "ms-appx:///ProfileIcons/iseberg.png";
 
     public static ProfileSettings CreateBrowserShell() => new()
     {

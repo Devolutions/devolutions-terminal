@@ -29,6 +29,11 @@ public sealed class TerminalConnectionFactory
     public IRestartableTerminalConnection Create(ProfileSettings profile)
     {
         ArgumentNullException.ThrowIfNull(profile);
+        if (profile.Kind != ProfileKind.Terminal)
+        {
+            throw new NotSupportedException($"Profile '{profile.Name}' is not a terminal connection profile.");
+        }
+
         if (!Guid.TryParse(profile.ConnectionType, out var connectionType) ||
             connectionType != AzureCloudShellConnection.ConnectionTypeGuid)
         {

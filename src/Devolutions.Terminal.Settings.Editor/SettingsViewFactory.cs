@@ -17,8 +17,9 @@ public static class SettingsViewFactory
         Func<AppSettings> load,
         Action<AppSettings> save,
         Func<AppSettings> createDefault,
-        Func<string?>? getRevision = null) =>
-        new(CreateViewModel(load, save, createDefault, getRevision));
+        Func<string?>? getRevision = null,
+        bool supportsPowerShellIse = true) =>
+        new(new SettingsEditorViewModel(load, save, createDefault, getRevision, supportsPowerShellIse));
 
     private static SettingsEditorViewModel CreateViewModel(
         Func<AppSettings> load,

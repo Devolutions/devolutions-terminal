@@ -1,7 +1,7 @@
 # macOS support
 
 macOS is a first-class host for the managed app, Unix PTY transport, built-in
-and Ghostty engines, and NativeAOT `.app` packaging (including signed,
+and Ghostty engines, and self-contained `.app` packaging (including signed,
 notarized `.dmg` release artifacts). Global hotkeys, default terminal
 registration, and Homebrew remain out of scope.
 
@@ -28,7 +28,7 @@ registration, and Homebrew remain out of scope.
 - Notifications through `osascript` `display notification`
 - `dterm:` URL scheme declared in `macos/Info.plist` (argv and Apple Event
   protocol activation)
-- NativeAOT `.app` + zip packaging on Darwin
+- Managed single-file Iseberg desktop (or terminal-only NativeAOT) `.app` + zip packaging on Darwin
 - Signed, notarized `.dmg` release artifacts via
   `scripts/Release-MacOsPackage.ps1` (CI only; ad-hoc unsigned zip/dmg locally
   or without Apple signing secrets)
@@ -53,7 +53,7 @@ pwsh scripts/Test-MacOsPackage.ps1 osx-arm64 artifacts/packages/*.zip
 pwsh scripts/Test-MacOsRuntime.ps1 artifacts/packages
 ```
 
-`Build-MacOsPackage.ps1` publishes NativeAOT unless `MACOS_PUBLISH_DIR` is set,
+`Build-MacOsPackage.ps1` publishes the default managed single-file desktop unless `MACOS_PUBLISH_DIR` is set,
 stages `Devolutions Terminal.app` with `macos/Info.plist`, generates
 `DevolutionsTerminal.icns` from the original WT Distro vector artwork in
 `macos/DevolutionsTerminal.svg`. Its librsvg-rendered 1024px transparent master,
@@ -67,7 +67,7 @@ Published `THIRD-PARTY-NOTICES*.txt` files (including transitive dependency noti
 `Test-MacOsLegalNotices.ps1` checks this layout without requiring Apple signing credentials.
 Unix publishes exclude Windows-only ConPTY `OpenConsole.exe` hosts from the final publish list, including files supplied by RID-less project references.
 Package validation and signing check every file under `Contents/MacOS`, not just top-level files.
-Ordinary CI runs the release signing script with an ad-hoc identity on both actual NativeAOT app bundles, so nested-code failures are caught before a credentialed release.
+Ordinary CI runs the release signing script with an ad-hoc identity on both actual app bundles, so nested-code failures are caught before a credentialed release.
 `Stage-MacOsNuGetPayload.ps1` creates the existing flat NuGet native layout from that app and signs the copied code as standalone executables/libraries.
 Signed releases use the same Developer ID identity, Hardened Runtime, application entitlements, and secure timestamps; unsigned CI uses an ad-hoc identity.
 Both actual macOS NuGet packages are extracted and checked by `Test-MacOsNuGetPayload.ps1` on macOS before release publication.

@@ -396,4 +396,229 @@ public sealed class LayoutDescriptorTests
             Commandline = "cmd.exe",
             StartingDirectory = @"C:\",
         };
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void WholeTabIseLayoutRoundTripsKindOptionsAndIdentity(bool option)
+    {
+        var layout = IseLayout(option);
+        TerminalLayoutSerializer.Validate(layout);
+        var restored = TerminalLayoutSerializer.DeserializeTabs(TerminalLayoutSerializer.SerializeTabs(layout))!;
+        Assert.Equal(layout.ActiveTabId, restored.ActiveTabId);
+        var tab = Assert.Single(restored.Tabs);
+        Assert.Equal(layout.Tabs[0].TabId, tab.TabId);
+        Assert.Equal(layout.Tabs[0].ActiveSessionId, tab.ActiveSessionId);
+        Assert.Null(tab.ZoomedSessionId);
+        Assert.Equal("Iseberg work", tab.Title);
+        Assert.Equal("Custom ISE title", tab.CustomTitle);
+        Assert.Equal("#123456", tab.Color);
+        Assert.True(tab.Root.IsLeaf);
+        Assert.Null(tab.Root.First);
+        Assert.Null(tab.Root.Second);
+        var session = tab.Root.Session!;
+        Assert.Equal(ProfileKind.PowerShellIse, session.Kind);
+        Assert.Equal(option, session.IseLoadProfiles);
+        Assert.Equal(layout.Tabs[0].Root.Session!.SessionId, session.SessionId);
+        Assert.Equal("{12345678-1234-5678-9abc-123456789abc}", session.ProfileId);
+        Assert.Equal("Iseberg", session.ProfileName);
+        Assert.Empty(session.Commandline);
+        Assert.Equal(@"C:\scripts", session.StartingDirectory);
+        Assert.Equal("ISE session title", session.TabTitle);
+        Assert.Equal("#abcdef", session.TabColor);
+        Assert.Equal("\uE943", session.Icon);
+        Assert.True(tab.Root.Presentation.IsReadOnly);
+    }
+
+    [Fact]
+    public void LayoutCurrentVersionIsTwo()
+    {
+        Assert.Equal(2, TerminalWindowLayoutDescriptor.CurrentVersion);
+        Assert.Equal(2, new TerminalWindowLayoutDescriptor().Version);
+        Assert.Equal(2, TerminalLayoutSerializer.SerializeTabs(IseLayout(false))[0]!["version"]!.GetValue<int>());
+    }
+
+    [Fact]
+    public void VersionOneWithoutKindRestoresTerminal()
+    {
+        var input = JsonNode.Parse("""
+            [{"version":1,"activeTabId":"11111111-1111-1111-1111-111111111111",
+              "tabs":[{"tabId":"11111111-1111-1111-1111-111111111111",
+                "activeSessionId":"22222222-2222-2222-2222-222222222222",
+                "title":"Legacy PowerShell","root":{"session":{
+                  "sessionId":"22222222-2222-2222-2222-222222222222",
+                  "profileId":"{33333333-3333-3333-3333-333333333333}",
+                  "profileName":"PowerShell","commandline":"pwsh.exe","startingDirectory":"C:\\scripts"}}}]}]
+            """)!.AsArray();
+        Assert.True(TerminalLayoutSerializer.TryDeserializeTabs(input, out var layout, out var diagnostic), diagnostic);
+        Assert.Null(diagnostic);
+        Assert.Equal(Guid.Parse("11111111-1111-1111-1111-111111111111"), layout!.ActiveTabId);
+        var tab = Assert.Single(layout.Tabs);
+        var session = tab.Root.Session!;
+        Assert.Equal(ProfileKind.Terminal, session.Kind);
+        Assert.False(session.IseLoadProfiles);
+        Assert.Equal(Guid.Parse("22222222-2222-2222-2222-222222222222"), session.SessionId);
+        Assert.Equal(session.SessionId, tab.ActiveSessionId);
+        Assert.Equal("{33333333-3333-3333-3333-333333333333}", session.ProfileId);
+        Assert.Equal("pwsh.exe", session.Commandline);
+    }
+
+    [Theory]
+    [InlineData("Unsupported")]
+    [InlineData("futureWorkbench")]
+    public void UnsupportedSessionLayoutIsRejectedWithoutMutation(string kind)
+    {
+        var layout = IseLayout(false);
+        var input = TerminalLayoutSerializer.SerializeTabs(layout);
+        input[0]!["tabs"]![0]!["root"]!["session"]!["kind"] = kind;
+        AssertRejectedIseJson(input);
+        layout.Tabs[0].Root.Session!.Kind = ProfileKind.Unsupported;
+        Assert.Throws<InvalidOperationException>(() => TerminalLayoutSerializer.SerializeTabs(layout));
+    }
+
+    [Fact]
+    public void SplitContainingIseIsRejected()
+    {
+        var layout = IseLayout(false);
+        var input = TerminalLayoutSerializer.SerializeTabs(layout);
+        var ise = layout.Tabs[0].Root;
+        var terminal = Session("PowerShell terminal");
+        layout.Tabs[0].Root = new PaneLayoutDescriptor
+        {
+            Orientation = PaneSplitOrientation.Vertical,
+            First = new() { Session = terminal },
+            Second = ise,
+        };
+        var splitJson = new JsonObject
+        {
+            ["orientation"] = "Vertical", ["ratio"] = 0.5,
+            ["first"] = new JsonObject
+            {
+                ["session"] = new JsonObject { ["kind"] = "Terminal", ["sessionId"] = terminal.SessionId.ToString() },
+            },
+            ["second"] = input[0]!["tabs"]![0]!["root"]!.DeepClone(),
+        };
+        input[0]!["tabs"]![0]!["root"] = splitJson;
+        Assert.Contains("whole tab", Assert.Throws<InvalidOperationException>(() => TerminalLayoutSerializer.Validate(layout)).Message);
+        Assert.Throws<InvalidOperationException>(() => TerminalLayoutSerializer.SerializeTabs(layout));
+        AssertRejectedIseJson(input);
+    }
+
+    [Fact]
+    public void ZoomedWholeTabIseIsRejected()
+    {
+        var layout = IseLayout(false);
+        var input = TerminalLayoutSerializer.SerializeTabs(layout);
+        layout.Tabs[0].ZoomedSessionId = layout.Tabs[0].ActiveSessionId;
+        input[0]!["tabs"]![0]!["zoomedSessionId"] = layout.Tabs[0].ActiveSessionId.ToString();
+        Assert.Contains("whole tab", Assert.Throws<InvalidOperationException>(() => TerminalLayoutSerializer.Validate(layout)).Message);
+        Assert.Throws<InvalidOperationException>(() => TerminalLayoutSerializer.SerializeTabs(layout));
+        AssertRejectedIseJson(input);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void IseLayoutWithoutColorThemeDefaultsToClassic(int version)
+    {
+        var input = TerminalLayoutSerializer.SerializeTabs(IseLayout(false));
+        input[0]!["version"] = version;
+        Assert.True(input[0]!["tabs"]![0]!["root"]!["session"]!.AsObject().Remove("iseColorTheme"));
+        Assert.True(TerminalLayoutSerializer.TryDeserializeTabs(input, out var layout, out var diagnostic), diagnostic);
+        Assert.Null(diagnostic);
+        Assert.Equal(version, layout!.Version);
+        var session = Assert.Single(layout.Tabs).Root.Session!;
+        Assert.Equal("Classic ISE", session.IseColorTheme);
+        Assert.Equal(ProfileKind.PowerShellIse, session.Kind);
+        Assert.False(session.IseLoadProfiles);
+        Assert.Equal("{12345678-1234-5678-9abc-123456789abc}", session.ProfileId);
+    }
+
+    [Theory]
+    [InlineData("Classic ISE")]
+    [InlineData("Dark")]
+    [InlineData("Light")]
+    [InlineData("Follow DT")]
+    [InlineData("Future Theme")]
+    [InlineData("")]
+    public void IseLayoutPreservesColorThemeIncludingUnknownValues(string theme)
+    {
+        var layout = IseLayout(true);
+        var original = layout.Tabs[0].Root.Session!;
+        original.IseColorTheme = theme;
+        var saved = TerminalLayoutSerializer.SerializeTabs(layout);
+        Assert.Equal(theme, saved[0]!["tabs"]![0]!["root"]!["session"]!["iseColorTheme"]!.GetValue<string>());
+        var restored = TerminalLayoutSerializer.DeserializeTabs(saved)!;
+        var tab = Assert.Single(restored.Tabs);
+        var session = tab.Root.Session!;
+        Assert.Equal(theme, session.IseColorTheme);
+        Assert.Equal(ProfileKind.PowerShellIse, session.Kind);
+        Assert.True(session.IseLoadProfiles);
+        Assert.Equal(original.SessionId, session.SessionId);
+        Assert.Equal(original.ProfileId, session.ProfileId);
+        Assert.Equal(layout.ActiveTabId, restored.ActiveTabId);
+        Assert.Equal(original.SessionId, tab.ActiveSessionId);
+    }
+
+    private static void AssertRejectedIseJson(JsonArray input)
+    {
+        var before = input.ToJsonString();
+        Assert.False(TerminalLayoutSerializer.TryDeserializeTabs(input, out var layout, out var diagnostic));
+        Assert.Null(layout);
+        Assert.False(string.IsNullOrWhiteSpace(diagnostic));
+        Assert.Equal(before, input.ToJsonString());
+    }
+
+    private static TerminalWindowLayoutDescriptor IseLayout(bool option)
+    {
+        var session = new TerminalSessionDescriptor
+        {
+            Kind = ProfileKind.PowerShellIse, IseLoadProfiles = option,
+            ProfileId = "{12345678-1234-5678-9abc-123456789abc}",
+            ProfileName = "Iseberg", Commandline = "", StartingDirectory = @"C:\scripts",
+            TabTitle = "ISE session title", TabColor = "#abcdef", Icon = "\uE943",
+        };
+        var tab = new TabLayoutDescriptor
+        {
+            ActiveSessionId = session.SessionId, Title = "Iseberg work",
+            CustomTitle = "Custom ISE title", Color = "#123456",
+            Root = new() { Session = session, Presentation = new() { IsReadOnly = true } },
+        };
+        return new() { ActiveTabId = tab.TabId, Tabs = [tab] };
+    }
+
+    [Theory]
+    [InlineData("Dark Console, Light Editor (default)")]
+    [InlineData("Light Console, Dark Editor")]
+    [InlineData("Dark Console, Dark Editor")]
+    [InlineData("Light Console, Light Editor")]
+    [InlineData("Monochrome Green")]
+    [InlineData("Presentation")]
+    public void OriginalIseThemeLayoutRoundTripPreservesIdentityPresentationAndMetadata(string theme)
+    {
+        var layout = IseLayout(true);
+        var original = layout.Tabs[0].Root.Session!;
+        original.IseColorTheme = theme;
+        var input = TerminalLayoutSerializer.SerializeTabs(layout);
+        var before = input.ToJsonString();
+        Assert.True(TerminalLayoutSerializer.TryDeserializeTabs(input, out var restored, out var diagnostic));
+        Assert.Null(diagnostic);
+        Assert.NotNull(restored);
+        var tab = Assert.Single(restored.Tabs);
+        var session = tab.Root.Session!;
+        Assert.Equal(theme, session.IseColorTheme);
+        Assert.Equal(ProfileKind.PowerShellIse, session.Kind);
+        Assert.True(session.IseLoadProfiles);
+        Assert.Equal(original.SessionId, session.SessionId);
+        Assert.Equal(original.ProfileId, session.ProfileId);
+        Assert.Equal(layout.ActiveTabId, restored.ActiveTabId);
+        Assert.Equal(session.SessionId, tab.ActiveSessionId);
+        Assert.Equal("Iseberg work", tab.Title);
+        Assert.Equal("Custom ISE title", tab.CustomTitle);
+        Assert.Equal("#123456", tab.Color);
+        Assert.Equal("ISE session title", session.TabTitle);
+        Assert.Equal(@"C:\scripts", session.StartingDirectory);
+        Assert.True(tab.Root.Presentation.IsReadOnly);
+        Assert.Equal(before, input.ToJsonString());
+    }
 }

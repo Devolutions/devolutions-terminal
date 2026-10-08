@@ -1,0 +1,33 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Iseberg.Editor.EditorStyles">
+  <Styles.Resources>
+    <ResourceDictionary>
+      <x:Double x:Key="SearchPanelFontSize">14</x:Double>
+      <FontFamily x:Key="SearchPanelFontFamily">Default</FontFamily>
+      <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Default">
+          <SolidColorBrush x:Key="CompletionToolTipBackground" Color="#F7F7F7" />
+          <SolidColorBrush x:Key="CompletionToolTipForeground" Color="#202020" />
+          <SolidColorBrush x:Key="CompletionToolTipBorderBrush" Color="#A0A0A0" />
+          <Thickness x:Key="CompletionToolTipBorderThickness">1</Thickness>
+          <SolidColorBrush x:Key="SearchPanelBackgroundBrush" Color="#F7F7F7" />
+          <SolidColorBrush x:Key="SearchPanelBorderBrush" Color="#A0A0A0" />
+          <SolidColorBrush x:Key="TextAreaSelectionBrush" Color="{DynamicResource SystemAccentColor}" />
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="Dark">
+          <SolidColorBrush x:Key="CompletionToolTipBackground" Color="#252526" />
+          <SolidColorBrush x:Key="CompletionToolTipForeground" Color="#F0F0F0" />
+          <SolidColorBrush x:Key="CompletionToolTipBorderBrush" Color="#666666" />
+          <Thickness x:Key="CompletionToolTipBorderThickness">1</Thickness>
+          <SolidColorBrush x:Key="SearchPanelBackgroundBrush" Color="#252526" />
+          <SolidColorBrush x:Key="SearchPanelBorderBrush" Color="#666666" />
+          <SolidColorBrush x:Key="TextAreaSelectionBrush" Color="{DynamicResource SystemAccentColor}" />
+        </ResourceDictionary>
+      </ResourceDictionary.ThemeDictionaries>
+      <ResourceDictionary.MergedDictionaries>
+        <ResourceInclude Source="avares://AvaloniaEdit/Themes/Base.xaml" />
+      </ResourceDictionary.MergedDictionaries>
+    </ResourceDictionary>
+  </Styles.Resources>
+</Styles>

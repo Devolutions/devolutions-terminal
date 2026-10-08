@@ -16,6 +16,11 @@
     <Project Path="src/Devolutions.Terminal.Settings.Editor/Devolutions.Terminal.Settings.Editor.csproj" />
     <Project Path="src/Devolutions.Terminal/Devolutions.Terminal.csproj" />
   </Folder>
+  <Folder Name="/src/Devolutions.Terminal.Ise/">
+    <Project Path="src/Devolutions.Terminal.Ise/Iseberg.Core/Iseberg.Core.csproj" />
+    <Project Path="src/Devolutions.Terminal.Ise/Iseberg.Editor/Iseberg.Editor.csproj" />
+    <Project Path="src/Devolutions.Terminal.Ise/Iseberg/Iseberg.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Devolutions.Terminal.Connection.Tests/Devolutions.Terminal.Connection.Tests.csproj" />
     <Project Path="tests/Devolutions.Terminal.Control.Tests/Devolutions.Terminal.Control.Tests.csproj" />

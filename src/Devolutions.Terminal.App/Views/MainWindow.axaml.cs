@@ -48,6 +48,7 @@ public partial class MainWindow :
     private readonly TerminalConfirmationDialog _confirmationDialog = new();
     private bool _closeApproved;
     private bool _closeConfirmationPending;
+    private static bool _applicationClosePending;
     private readonly ApplicationStateStore _stateStore;
     private readonly TerminalConnectionFactory _connectionFactory;
     private readonly DynamicProfileManager _dynamicProfileManager;
@@ -602,10 +603,16 @@ public partial class MainWindow :
     /// </summary>
     private async Task LaunchProfileAsync(ProfileSettings profile, KeyModifiers modifiers)
     {
+        try { await LaunchProfileCoreAsync(profile, modifiers).ConfigureAwait(true); }
+        catch (Exception error) { ReportHostedTabError("Unable to launch profile", error); }
+    }
+
+    private async Task LaunchProfileCoreAsync(ProfileSettings profile, KeyModifiers modifiers)
+    {
         var elevate = OperatingSystem.IsWindows() && modifiers.HasFlag(KeyModifiers.Control);
         var effectiveProfile = NewTabMenuResolver.ForMenuLaunch(profile, elevate);
 
-        if (modifiers.HasFlag(KeyModifiers.Alt))
+        if (modifiers.HasFlag(KeyModifiers.Alt) && effectiveProfile.Kind == ProfileKind.Terminal)
         {
             await SplitActivePaneAsync(PaneSplitOrientation.Vertical, effectiveProfile).ConfigureAwait(true);
             return;
@@ -624,6 +631,24 @@ public partial class MainWindow :
 
     private async Task CreateTabAsync(ProfileSettings profile)
     {
+        if (_isClosed || _closeConfirmationPending || _applicationClosePending)
+            throw new InvalidOperationException("Cannot open a tab while the window is preparing to close.");
+        if (profile.Kind != ProfileKind.Terminal)
+        {
+            try
+            {
+                if (profile.Kind != ProfileKind.PowerShellIse)
+                    throw new NotSupportedException($"Profile '{profile.Name}' has an unsupported type.");
+                await CreatePowerShellIseTabAsync(profile).ConfigureAwait(true);
+            }
+            catch (Exception error)
+            {
+                ReportHostedTabError("Unable to launch Iseberg", error);
+                throw;
+            }
+            return;
+        }
+
         TerminalPane? pane = null;
         TerminalTab? tab = null;
         try
@@ -1114,12 +1139,17 @@ public partial class MainWindow :
     {
         var tab = _activeTab;
         var activePane = tab?.Panes.ActiveContent;
-        if (tab is null || tab.IsSettingsTab || activePane is null || tab.IsClosing)
+        if (tab is null || !tab.IsTerminalTab || activePane is null || tab.IsClosing)
         {
             return;
         }
 
         var paneProfile = profile ?? activePane.Profile;
+        if (paneProfile.Kind != ProfileKind.Terminal)
+        {
+            await CreateTabAsync(paneProfile).ConfigureAwait(true);
+            return;
+        }
         TerminalPane? newPane = null;
         try
         {
@@ -1162,10 +1192,11 @@ public partial class MainWindow :
         SynchronizeTitle(tab);
         RebuildTabs();
         RebuildTerminalHost();
-        if (tab.IsSettingsTab)
+        if (tab.CustomContent is not null)
         {
             UpdateRecordingStateBar();
-            tab.CustomContent?.Focus();
+            if (tab.CustomContent is IHostedTabContent hosted) hosted.FocusContent();
+            else tab.CustomContent.Focus();
             return;
         }
 
@@ -1224,13 +1255,17 @@ public partial class MainWindow :
             return;
         }
 
-        if ((!confirmed && !await ConfirmCloseAsync(tab.Panes.Leaves(), automaticExit).ConfigureAwait(true)) ||
+        if ((!confirmed && !await ConfirmTabsCloseAsync([tab], automaticExit).ConfigureAwait(true)) ||
             tab.IsClosing)
         {
             return;
         }
 
         var finalLayout = _tabs.Count == 1 ? CaptureLayout() : null;
+        if (tab.CustomContent is IHostedTabContent hosted)
+        {
+            if (!await CompleteHostedTabCloseAsync(hosted).ConfigureAwait(true)) return;
+        }
         tab.IsClosing = true;
         var wasActive = ReferenceEquals(_activeTab, tab);
         DetachPaneControls(tab);
@@ -1621,6 +1656,9 @@ public partial class MainWindow :
             return new TextBlock
             {
                 Text = icon,
+                FontFamily = icon == "\uE943"
+                    ? new FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets")
+                    : FontFamily.Default,
                 FontSize = 14,
                 VerticalAlignment = VerticalAlignment.Center,
             };
@@ -1689,11 +1727,12 @@ public partial class MainWindow :
                 {
                     Header = "Duplicate",
                     IsEnabled = !tab.IsSettingsTab,
-                    Command = new RelayCommand(() =>
+                    Command = new RelayCommand(async () =>
                     {
                         if (!tab.IsSettingsTab)
                         {
-                            _ = RestoreTabAsync(CaptureTab(tab), regenerateIdentities: true);
+                            try { await RestoreTabAsync(CaptureTab(tab), regenerateIdentities: true).ConfigureAwait(true); }
+                            catch (Exception error) { ReportHostedTabError("Unable to duplicate tab", error); }
                         }
                     }),
                 },
@@ -1766,7 +1805,7 @@ public partial class MainWindow :
             return;
         }
 
-        if (!tab.IsSettingsTab &&
+        if (tab.IsTerminalTab &&
             (position.Y < -24 || position.Y > TabStrip.Bounds.Height + 24))
         {
             var local = e.GetPosition(this);
@@ -1835,9 +1874,10 @@ public partial class MainWindow :
         return close;
     }
 
-    private TermControl? ActiveControl => _activeTab is { IsSettingsTab: false } terminalTab
+    private TermControl? ActiveControl => _activeTab is { IsTerminalTab: true } terminalTab
         ? terminalTab.Panes.ActiveContent?.Control
-        : null;
+        : _activeTab?.CustomContent is IHostedTerminalContent hosted && hosted.IsTerminalActive
+            ? hosted.Terminal : null;
 
     private void ConfigureActionDispatcher()
     {
@@ -2110,7 +2150,7 @@ public partial class MainWindow :
             async _ => await ClosePaneAsync(_activeTab!, _activeTab!.Panes.ActiveContent!).ConfigureAwait(true));
         Register(ShortcutAction.CloseOtherPanes, ActionScope.Pane, _ => _activeTab?.Panes.Count > 1,
             async _ => await CloseOtherPanesAsync().ConfigureAwait(true));
-        Register(ShortcutAction.TogglePaneZoom, ActionScope.Pane, _ => _activeTab?.Panes.ActiveContent is not null, _ =>
+        Register(ShortcutAction.TogglePaneZoom, ActionScope.Pane, _ => ActiveControl is not null, _ =>
         {
             _activeTab!.Panes.ToggleZoom();
             RebuildTerminalHost();
@@ -2129,7 +2169,7 @@ public partial class MainWindow :
                 return Task.CompletedTask;
             });
         Register(ShortcutAction.ResizePane, ActionScope.Pane,
-            action => _activeTab?.Panes.ActiveContent is not null && action.Args is ResizePaneArgs,
+            action => ActiveControl is not null && action.Args is ResizePaneArgs,
             action =>
             {
                 var direction = ToPaneDirection(((ResizePaneArgs)action.Args!).ResizeDirection);
@@ -2169,7 +2209,7 @@ public partial class MainWindow :
                 ActivatePane(_activeTab, pane);
                 return Task.CompletedTask;
             });
-        Register(ShortcutAction.RestartConnection, ActionScope.Pane, _ => ActiveControl is not null,
+        Register(ShortcutAction.RestartConnection, ActionScope.Pane, _ => _activeTab?.IsTerminalTab == true && ActiveControl is not null,
             async _ => await ActiveControl!.RestartAsync().ConfigureAwait(true));
         Register(ShortcutAction.TogglePaneReadOnly, ActionScope.Pane, _ => ActiveControl is not null, _ =>
         {
@@ -2530,10 +2570,10 @@ public partial class MainWindow :
             Close();
             return Task.CompletedTask;
         });
-        Register(ShortcutAction.Quit, ActionScope.Application, _ => true, _ =>
+        Register(ShortcutAction.Quit, ActionScope.Application, _ => true, async _ =>
         {
-            (Application.Current?.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime)?.Shutdown();
-            return Task.CompletedTask;
+            if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
+                await RequestApplicationCloseAsync(desktop).ConfigureAwait(true);
         });
         Register(ShortcutAction.ToggleFullscreen, ActionScope.Window, _ => true, _ =>
         {
@@ -2702,7 +2742,7 @@ public partial class MainWindow :
     {
         var keep = ResolveTab(index) ?? _activeTab;
         var closing = _tabs.Where(tab => !ReferenceEquals(tab, keep)).ToArray();
-        if (!await ConfirmCloseAsync(closing.SelectMany(tab => tab.Panes.Leaves())).ConfigureAwait(true))
+        if (!await ConfirmTabsCloseAsync(closing).ConfigureAwait(true))
         {
             return;
         }
@@ -2710,6 +2750,12 @@ public partial class MainWindow :
         foreach (var tab in closing)
         {
             await CloseTabAsync(tab, confirmed: true).ConfigureAwait(true);
+            if (_tabs.Contains(tab))
+            {
+                foreach (var remaining in closing.Select(candidate => candidate.CustomContent).OfType<IHostedTabContent>())
+                    remaining.CancelClosePreparation();
+                break;
+            }
         }
 
         if (keep is not null)
@@ -2723,7 +2769,7 @@ public partial class MainWindow :
         var keep = ResolveTab(index) ?? _activeTab;
         var keepIndex = keep is null ? -1 : TabIndexOf(keep);
         var closing = _tabs.Skip(keepIndex + 1).ToArray();
-        if (!await ConfirmCloseAsync(closing.SelectMany(tab => tab.Panes.Leaves())).ConfigureAwait(true))
+        if (!await ConfirmTabsCloseAsync(closing).ConfigureAwait(true))
         {
             return;
         }
@@ -2731,6 +2777,12 @@ public partial class MainWindow :
         foreach (var tab in closing)
         {
             await CloseTabAsync(tab, confirmed: true).ConfigureAwait(true);
+            if (_tabs.Contains(tab))
+            {
+                foreach (var remaining in closing.Select(candidate => candidate.CustomContent).OfType<IHostedTabContent>())
+                    remaining.CancelClosePreparation();
+                break;
+            }
         }
     }
 
@@ -2757,7 +2809,7 @@ public partial class MainWindow :
 
     private bool CanMoveFocus(MoveFocusArgs? args)
     {
-        if (_activeTab?.Panes.ActiveContent is null || args is null)
+        if (_activeTab is not { IsTerminalTab: true } || _activeTab.Panes.ActiveContent is null || args is null)
         {
             return false;
         }
@@ -2792,9 +2844,9 @@ public partial class MainWindow :
     private bool CanMovePane(ActionAndArgs action) =>
         action.Args is MovePaneArgs args &&
         string.IsNullOrEmpty(args.Window) &&
-        _activeTab is { IsSettingsTab: false } &&
+        _activeTab is { IsTerminalTab: true } &&
         _activeTab.Panes.ActiveContent is not null &&
-        ResolveTab(args.TabIndex) is { IsSettingsTab: false } target &&
+        ResolveTab(args.TabIndex) is { IsTerminalTab: true } target &&
         !ReferenceEquals(target, _activeTab);
 
     private void MovePane(MovePaneArgs args)
@@ -3117,7 +3169,8 @@ public partial class MainWindow :
         if (CommandPaletteList.SelectedItem is PaletteItem item)
         {
             CloseCommandPalette();
-            await item.Execute().ConfigureAwait(true);
+            try { await item.Execute().ConfigureAwait(true); }
+            catch (Exception error) { ReportHostedTabError("Command failed", error); }
         }
     }
 
@@ -3235,7 +3288,7 @@ public partial class MainWindow :
         var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
         var text = clipboard is null ? null : await clipboard.TryGetTextAsync().ConfigureAwait(true);
         if (tab is null ||
-            tab.IsSettingsTab ||
+            !tab.IsTerminalTab ||
             activePane is null ||
             !_tabs.Contains(tab) ||
             string.IsNullOrEmpty(text))
@@ -3608,7 +3661,7 @@ public partial class MainWindow :
     }
 
     private bool CanPaste() =>
-        _activeTab is { IsSettingsTab: false } &&
+        _activeTab is { IsTerminalTab: true } &&
         _activeTab.Panes.ActiveContent is { } activePane &&
         _activeTab.BroadcastInput.ResolveTargets(activePane, _activeTab.Panes.Leaves()).Count > 0;
 
@@ -3870,19 +3923,24 @@ public partial class MainWindow :
         };
     }
 
-    private void OpenSettingsTab()
+    private void OpenSettingsTab(string? profileGuid = null)
     {
         var existing = _tabs.FirstOrDefault(static tab => tab.IsSettingsTab);
         if (existing is not null)
         {
             ActivateTab(existing);
+            if (profileGuid is not null && existing.CustomContent is SettingsView settingsView &&
+                settingsView.DataContext is SettingsEditorViewModel editor) editor.SelectProfile(profileGuid);
             return;
         }
 
         var view = SettingsViewFactory.CreateView(
             () => SettingsService.LoadWithDynamicProfiles(_dynamicProfileManager),
             SaveSettingsAndRefresh,
-            SettingsService.CreateDefault);
+            SettingsService.CreateDefault,
+            supportsPowerShellIse: SupportsPowerShellIse);
+        if (profileGuid is not null && view.DataContext is SettingsEditorViewModel viewModel)
+            viewModel.SelectProfile(profileGuid);
         var profile = new ProfileSettings
         {
             Name = "Settings",
@@ -4200,6 +4258,32 @@ public partial class MainWindow :
         bool regenerateIdentities = false)
     {
         ArgumentNullException.ThrowIfNull(descriptor);
+        if (_isClosed || _closeConfirmationPending || _applicationClosePending)
+            throw new InvalidOperationException("Cannot restore a tab while DT is closing.");
+        if (descriptor.Root.Session is { Kind: ProfileKind.PowerShellIse } iseSession)
+        {
+            var profile = _settings.Profiles.FirstOrDefault(candidate =>
+                !string.IsNullOrEmpty(iseSession.ProfileId) && candidate.Guid == iseSession.ProfileId) ??
+                _settings.Profiles.FirstOrDefault(candidate => candidate.Name == iseSession.ProfileName) ??
+                new ProfileSettings
+                {
+                    Guid = iseSession.ProfileId,
+                    Name = iseSession.ProfileName,
+                    Kind = ProfileKind.PowerShellIse,
+                    Icon = "\uE943",
+                };
+            profile = profile.WithOverrides(new NewTerminalArgs(
+                StartingDirectory: iseSession.StartingDirectory,
+                TabTitle: iseSession.TabTitle ?? string.Empty,
+                TabColor: iseSession.TabColor,
+                Elevate: iseSession.Elevate));
+            profile.Kind = ProfileKind.PowerShellIse;
+            profile.Commandline = string.Empty;
+            profile.IseLoadProfiles = iseSession.IseLoadProfiles;
+            profile.IseColorTheme = iseSession.IseColorTheme;
+            return await CreatePowerShellIseTabAsync(profile, descriptor, regenerateIdentities).ConfigureAwait(true);
+        }
+
         var sessions = new Dictionary<Guid, TerminalPane>();
         var root = RestorePaneNode(descriptor.Root, sessions, regenerateIdentities);
         var activePane = sessions.GetValueOrDefault(descriptor.ActiveSessionId) ?? sessions.Values.First();
@@ -4261,6 +4345,9 @@ public partial class MainWindow :
                 SuppressApplicationTitle: session.SuppressApplicationTitle,
                 Elevate: session.Elevate,
                 ReloadEnvironmentVariables: session.ReloadEnvironmentVariables));
+            profile.Kind = session.Kind;
+            profile.IseLoadProfiles = session.IseLoadProfiles;
+            profile.IseColorTheme = session.IseColorTheme;
             var pane = CreatePane(profile, session, ClonePresentation(descriptor.Presentation));
             sessions.Add(savedSession.SessionId, pane);
 
@@ -4282,6 +4369,9 @@ public partial class MainWindow :
     private static TerminalSessionDescriptor CreateSessionDescriptor(ProfileSettings profile) =>
         new()
         {
+            Kind = profile.Kind,
+            IseLoadProfiles = profile.IseLoadProfiles,
+            IseColorTheme = profile.IseColorTheme,
             ProfileId = profile.Guid,
             ProfileName = profile.Name,
             Commandline = profile.Commandline,
@@ -4297,6 +4387,9 @@ public partial class MainWindow :
     private static TerminalSessionDescriptor CloneSession(TerminalSessionDescriptor session) =>
         new()
         {
+            Kind = session.Kind,
+            IseLoadProfiles = session.IseLoadProfiles,
+            IseColorTheme = session.IseColorTheme,
             SessionId = session.SessionId,
             ProfileId = session.ProfileId,
             ProfileName = session.ProfileName,
@@ -5072,8 +5165,12 @@ internal static class ProfileVisualDefaults
     {
         if (profile.IconResource?.ToString() is { Length: > 0 } icon)
         {
-            return icon;
+            return profile.Kind == ProfileKind.PowerShellIse && icon == "\uE943"
+                ? ProfileSettings.PowerShellIseIcon : icon;
         }
+
+        if (profile.Kind == ProfileKind.PowerShellIse)
+            return ProfileSettings.PowerShellIseIcon;
 
         if (profile.Commandline.Contains("pwsh.exe", StringComparison.OrdinalIgnoreCase))
         {
@@ -5170,7 +5267,8 @@ public sealed class TerminalTab
 
     public Control? CustomContent { get; set; }
 
-    public bool IsSettingsTab => CustomContent is not null;
+    public bool IsSettingsTab => CustomContent is not null && CustomContent is not IHostedTabContent;
+    public bool IsTerminalTab => CustomContent is null;
 
     public TerminalTab(Guid id, PaneTree<TerminalPane> panes)
     {

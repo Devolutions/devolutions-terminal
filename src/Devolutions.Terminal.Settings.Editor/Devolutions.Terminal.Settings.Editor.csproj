@@ -13,5 +13,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Devolutions.Terminal.Settings\Devolutions.Terminal.Settings.csproj" />
+    <AvaloniaResource Include="..\..\assets\profile-icons\iseberg.scale-100.png" Link="Assets\iseberg.scale-100.png" />
   </ItemGroup>
 </Project>

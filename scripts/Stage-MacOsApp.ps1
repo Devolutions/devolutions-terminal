@@ -2,7 +2,7 @@
 #Requires -Version 7
 <#
     .SYNOPSIS
-    Stages a Devolutions Terminal .app bundle from a NativeAOT publish
+    Stages a Devolutions Terminal .app bundle from a single-file managed or NativeAOT publish
     directory: copies the published output, writes Info.plist with the
     version substituted in, generates the .icns app icon, copies license and
     third-party notices, and normalizes timestamps for reproducibility.
@@ -67,8 +67,12 @@ $required = @(
 )
 foreach ($path in $required) {
     if (-not (Test-Path -LiteralPath (Join-Path $publishDir $path) -PathType Leaf)) {
-        throw "NativeAOT publish output is missing $path for $Rid."
+        throw "Desktop publish output is missing $path for $Rid."
     }
+}
+
+if (Test-Path -LiteralPath (Join-Path $publishDir 'Devolutions.Terminal.dll')) {
+    throw 'macOS packaging requires the default self-contained single-file Iseberg publish, or a terminal-only NativeAOT publish. A loose managed host needs its runtime configuration and cannot use this code-only bundle layout.'
 }
 
 if (Test-Path -LiteralPath $AppPath) {
@@ -84,8 +88,9 @@ Get-ChildItem -LiteralPath $macosDir -Recurse -Filter '*.pdb' | Remove-Item -For
 Get-ChildItem -LiteralPath $macosDir -Recurse -Filter '*.dbg' | Remove-Item -Force
 Get-ChildItem -LiteralPath $macosDir -Recurse -Directory -Filter '*.dSYM' |
     Remove-Item -Recurse -Force
-# NativeAOT compiles runtime configuration into the executable. Leaving this
-# build-time sidecar in Contents/MacOS makes Developer ID bundle signing treat
+# NativeAOT compiles configuration into the executable; single-file managed
+# publishes bundle it. Leaving a redundant build-time sidecar
+# in Contents/MacOS makes Developer ID bundle signing treat
 # it as unsigned nested code.
 Get-ChildItem -LiteralPath $macosDir -File -Filter '*.runtimeconfig.json' |
     Remove-Item -Force

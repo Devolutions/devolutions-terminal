@@ -28,6 +28,7 @@
             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
       <None Include="$(MSBuildThisFileDirectory)THIRD-PARTY-NOTICES-CONPTY.txt"
             Link="THIRD-PARTY-NOTICES-CONPTY.txt"
+            ExcludeFromSingleFile="true"
             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     </ItemGroup>
   </Target>

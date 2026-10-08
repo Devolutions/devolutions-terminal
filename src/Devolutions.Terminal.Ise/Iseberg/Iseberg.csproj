@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="Avalonia.Themes.Fluent" />
+    <PackageReference Include="Avalonia.AvaloniaEdit" />
+    <ProjectReference Include="..\Iseberg.Core\Iseberg.Core.csproj" />
+    <ProjectReference Include="..\Iseberg.Editor\Iseberg.Editor.csproj" />
+    <None Include="..\LICENSE" Link="THIRD-PARTY-NOTICES-ISEBERG.txt"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+    <None Include="..\EDITOR-NOTICES.md" Link="THIRD-PARTY-NOTICES-ISEBERG-EDITOR.txt"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+    <None Include="..\AVALONIAEDIT-LICENSE.txt" Link="THIRD-PARTY-NOTICES-AVALONIAEDIT.txt"
+          CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+  </ItemGroup>
+</Project>

@@ -493,4 +493,233 @@ public sealed class SettingsEditorViewModelTests
             load ?? (() => SettingsLoader.Load(Defaults)),
             save ?? (_ => { }),
             () => SettingsLoader.Load(Defaults));
+
+    [Fact]
+    public void AddPowerShellIseProfileCreatesDistinctIsebergProfile()
+    {
+        var editor = CreateEditor();
+        editor.AddPowerShellIseProfile();
+        var first = editor.SelectedNavigationItem!.Profile!;
+        Assert.Same(first, Assert.IsType<ProfilesSettingsViewModel>(editor.CurrentPage).SelectedProfile);
+        editor.AddPowerShellIseProfileCommand.Execute(null);
+        var second = editor.SelectedNavigationItem!.Profile!;
+        Assert.Same(second, Assert.IsType<ProfilesSettingsViewModel>(editor.CurrentPage).SelectedProfile);
+        Assert.All(new[] { first, second }, profile =>
+        {
+            Assert.Equal("Iseberg", profile.Name);
+            Assert.True(profile.IsPowerShellIse);
+            Assert.False(profile.IsTerminal);
+            Assert.NotEqual(Guid.Empty, Guid.Parse(profile.Guid!));
+        });
+        Assert.NotEqual(Guid.Parse(first.Guid!), Guid.Parse(second.Guid!));
+        Assert.True(editor.IsDirty);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void ApplyReloadPreservesIseAndExistingPowerShellProfiles(bool existing, bool option)
+    {
+        var persisted = existing
+            ? """{"profiles":{"list":[{"guid":"{22222222-2222-2222-2222-222222222222}","name":"Iseberg","type":"powershellIse","commandline":"","ise.loadProfiles":false}]}}"""
+            : """{"profiles":{"list":[]}}""";
+        var saveCount = 0;
+        var editor = CreateEditor(() => SettingsLoader.Load(Defaults, persisted), settings =>
+        {
+            saveCount++;
+            persisted = SettingsLoader.SerializeUserDocument(settings);
+        });
+        if (existing)
+            editor.SelectedNavigationItem = editor.VisibleNavigationItems.Single(item => item.Profile?.IsPowerShellIse == true);
+        else
+            editor.AddPowerShellIseProfile();
+        var item = editor.SelectedNavigationItem!.Profile!;
+        var id = Guid.Parse(item.Guid!);
+        item.Name = "Edited Iseberg";
+        item.IseLoadProfiles = option;
+
+        editor.Apply();
+
+        Assert.Equal(1, saveCount);
+        Assert.False(editor.IsDirty);
+        var json = JsonNode.Parse(persisted)!;
+        var saved = json["profiles"]!["list"]!.AsArray().Single(p => Guid.Parse(p!["guid"]!.GetValue<string>()) == id)!;
+        Assert.Equal("powershellIse", saved["type"]!.GetValue<string>());
+        if (existing)
+        {
+            Assert.Equal(option, saved["ise.loadProfiles"]!.GetValue<bool>());
+            if (option)
+                Assert.True(saved["ise"]!["loadProfiles"]!.GetValue<bool>());
+            else
+                Assert.Null(saved["ise"]?["loadProfiles"]);
+        }
+        else
+        {
+            Assert.Equal(option, saved["ise"]!["loadProfiles"]!.GetValue<bool>());
+            Assert.False(saved.AsObject().ContainsKey("ise.loadProfiles"));
+        }
+        Assert.Equal("Edited Iseberg", saved["name"]!.GetValue<string>());
+        var restoredNavigation = editor.VisibleNavigationItems.Single(p => p.Profile is { IsNamedProfile: true } && Guid.Parse(p.Profile.Guid!) == id);
+        editor.SelectedNavigationItem = restoredNavigation;
+        var restored = restoredNavigation.Profile!;
+        Assert.NotSame(item, restored);
+        Assert.Same(restored, Assert.IsType<ProfilesSettingsViewModel>(editor.CurrentPage).SelectedProfile);
+        Assert.True(restored.IsPowerShellIse);
+        Assert.False(restored.IsTerminal);
+        Assert.Equal(option, restored.IseLoadProfiles);
+        Assert.Equal("Edited Iseberg", restored.Name);
+        var terminal = editor.VisibleNavigationItems.Single(p => p.Profile?.Guid == "{11111111-1111-1111-1111-111111111111}").Profile!;
+        Assert.True(terminal.IsTerminal);
+        Assert.False(terminal.IsPowerShellIse);
+        Assert.Equal("PowerShell", terminal.Name);
+        Assert.False(terminal.IseLoadProfiles);
+        Assert.Equal("pwsh.exe", terminal.Commandline);
+        var model = SettingsLoader.Load(Defaults, persisted);
+        var preservedPowerShell = model.Profiles.Single(p => Guid.Parse(p.Guid!) == Guid.Parse(terminal.Guid!));
+        Assert.Equal(ProfileKind.Terminal, preservedPowerShell.Kind);
+        Assert.Equal("PowerShell", preservedPowerShell.Name);
+        Assert.False(preservedPowerShell.IseLoadProfiles);
+        Assert.Equal("Cascadia Mono", preservedPowerShell.FontFace);
+        Assert.Equal(12, preservedPowerShell.FontSize);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AddProfileStillCreatesTerminalProfile(bool command)
+    {
+        var persisted = """{"profiles":{"list":[]}}""";
+        var editor = CreateEditor(() => SettingsLoader.Load(Defaults, persisted),
+            settings => persisted = SettingsLoader.SerializeUserDocument(settings));
+        if (command) editor.AddProfileCommand.Execute(null);
+        else editor.AddProfile();
+        var item = editor.SelectedNavigationItem!.Profile!;
+        var id = Guid.Parse(item.Guid!);
+        Assert.True(item.IsTerminal);
+        Assert.False(item.IsPowerShellIse);
+        Assert.Same(item, Assert.IsType<ProfilesSettingsViewModel>(editor.CurrentPage).SelectedProfile);
+        editor.Apply();
+        var restored = editor.VisibleNavigationItems.Single(p => p.Profile is { IsNamedProfile: true } && Guid.Parse(p.Profile.Guid!) == id).Profile!;
+        Assert.True(restored.IsTerminal);
+        Assert.False(restored.IsPowerShellIse);
+        Assert.Equal(ProfileKind.Terminal, SettingsLoader.Load(Defaults, persisted).Profiles.Single(p => Guid.Parse(p.Guid!) == id).Kind);
+    }
+
+    [Theory]
+    [InlineData("Classic ISE")]
+    [InlineData("Dark")]
+    [InlineData("Light")]
+    [InlineData("Follow DT")]
+    public void ApplyReloadPreservesSelectedIseThemeWithoutChangingPowerShell(string theme)
+    {
+        var persisted = """{"profiles":{"list":[]}}""";
+        var editor = CreateEditor(() => SettingsLoader.Load(Defaults, persisted),
+            settings => persisted = SettingsLoader.SerializeUserDocument(settings));
+        editor.AddPowerShellIseProfile();
+        var id = Guid.Parse(editor.SelectedNavigationItem!.Profile!.Guid!);
+        editor.Apply();
+        var item = editor.VisibleNavigationItems.Single(entry => entry.Profile is { IsNamedProfile: true } && Guid.Parse(entry.Profile.Guid!) == id).Profile!;
+        Assert.Equal("Classic ISE", item.IseColorTheme);
+        Assert.Equal(new[]
+        {
+            "Dark Console, Light Editor (default)", "Light Console, Dark Editor", "Dark Console, Dark Editor",
+            "Light Console, Light Editor", "Monochrome Green", "Presentation",
+            "Classic ISE", "Dark", "Light", "Follow DT"
+        }, item.IseColorThemeChoices);
+        Assert.False(editor.IsDirty);
+        item.IseColorTheme = theme;
+        Assert.Equal(theme != "Classic ISE", editor.IsDirty);
+        editor.Apply();
+        Assert.False(editor.IsDirty);
+        var saved = JsonNode.Parse(persisted)!["profiles"]!["list"]!.AsArray()
+            .Single(profile => Guid.Parse(profile!["guid"]!.GetValue<string>()) == id)!;
+        Assert.Equal(theme, saved["ise"]!["colorTheme"]!.GetValue<string>());
+        Assert.Equal("powershellIse", saved["type"]!.GetValue<string>());
+        var restored = editor.VisibleNavigationItems.Single(entry => entry.Profile is { IsNamedProfile: true } && Guid.Parse(entry.Profile.Guid!) == id).Profile!;
+        Assert.Equal(theme, restored.IseColorTheme);
+        Assert.True(restored.IsPowerShellIse);
+        Assert.False(restored.IseLoadProfiles);
+        var powerShell = SettingsLoader.Load(Defaults, persisted).Profiles.Single(profile =>
+            profile.Guid == "{11111111-1111-1111-1111-111111111111}");
+        Assert.Equal(ProfileKind.Terminal, powerShell.Kind);
+        Assert.Equal("pwsh.exe", powerShell.Commandline);
+        Assert.Equal("Classic ISE", powerShell.IseColorTheme);
+    }
+
+    [Theory]
+    [InlineData(ProfileKind.PowerShellIse, "PowerShell ISE (Iseberg)", true, false)]
+    [InlineData(ProfileKind.Terminal, "Terminal", false, true)]
+    [InlineData(ProfileKind.Unsupported, "Unsupported profile type", false, false)]
+    public void IsePageFlagsAndOptInNotifyOnlyOnChange(ProfileKind kind, string label, bool ise, bool terminal)
+    {
+        var model = new ProfileSettings { Kind = kind };
+        var changes = 0;
+        var notifications = new List<string?>();
+        var page = new ProfileItemViewModel(model, () => changes++);
+        page.PropertyChanged += (_, e) => notifications.Add(e.PropertyName);
+        Assert.Equal(label, page.ProfileType);
+        Assert.Equal(ise, page.IsPowerShellIse);
+        Assert.Equal(terminal, page.IsTerminal);
+        Assert.Equal(OperatingSystem.IsWindows() && terminal, page.CanElevate);
+        page.IseLoadProfiles = true;
+        Assert.True(model.IseLoadProfiles);
+        Assert.Equal(1, changes);
+        Assert.Single(notifications, p => p == nameof(ProfileItemViewModel.IseLoadProfiles));
+        page.IseLoadProfiles = true;
+        Assert.Equal(1, changes);
+        Assert.Single(notifications);
+        page.IseLoadProfiles = false;
+        Assert.False(model.IseLoadProfiles);
+        Assert.Equal(2, changes);
+        Assert.Equal(2, notifications.Count);
+    }
+
+    [Theory]
+    [InlineData("Dark Console, Light Editor (default)")]
+    [InlineData("Light Console, Dark Editor")]
+    [InlineData("Dark Console, Dark Editor")]
+    [InlineData("Light Console, Light Editor")]
+    [InlineData("Monochrome Green")]
+    [InlineData("Presentation")]
+    public void OriginalBuiltInThemesAppearInProfileSelectionAndApplyReload(string theme)
+    {
+        var persisted = """{"profiles":{"list":[]}}""";
+        var saves = 0;
+        var editor = CreateEditor(() => SettingsLoader.Load(Defaults, persisted), settings =>
+        {
+            saves++;
+            persisted = SettingsLoader.SerializeUserDocument(settings);
+        });
+        editor.AddPowerShellIseProfile();
+        var selected = editor.SelectedNavigationItem!.Profile!;
+        var id = selected.Guid;
+        Assert.Equal(new[]
+        {
+            "Dark Console, Light Editor (default)", "Light Console, Dark Editor", "Dark Console, Dark Editor",
+            "Light Console, Light Editor", "Monochrome Green", "Presentation",
+            "Classic ISE", "Dark", "Light", "Follow DT"
+        }, selected.IseColorThemeChoices);
+        selected.IseColorTheme = theme;
+        selected.IseLoadProfiles = true;
+        editor.Apply();
+        Assert.Equal(1, saves);
+        Assert.False(editor.IsDirty);
+        var restored = editor.VisibleNavigationItems.Single(item => item.Profile?.Guid == id).Profile!;
+        Assert.NotSame(selected, restored);
+        Assert.Equal(theme, restored.IseColorTheme);
+        Assert.True(restored.IsPowerShellIse);
+        Assert.True(restored.IseLoadProfiles);
+        restored.IseColorTheme = theme;
+        Assert.False(editor.IsDirty);
+        var ordinary = editor.VisibleNavigationItems.Single(item =>
+            item.Profile?.Guid == "{11111111-1111-1111-1111-111111111111}").Profile!;
+        Assert.True(ordinary.IsTerminal);
+        Assert.Equal("PowerShell", ordinary.Name);
+        Assert.Equal("pwsh.exe", ordinary.Commandline);
+        var saved = JsonNode.Parse(persisted)!["profiles"]!["list"]!.AsArray().Single(node =>
+            node!["guid"]!.GetValue<string>() == id)!;
+        Assert.Equal(theme, saved["ise"]!["colorTheme"]!.GetValue<string>());
+    }
 }
