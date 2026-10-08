@@ -2681,50 +2681,39 @@ public sealed class PortableIseWorkbenchTests
     });
 
     [AvaloniaTheory]
-    [InlineData(7, 2, "$x", "$x")]
-    [InlineData(7, 16, "$x\n'café <&> 😀'", "$x\r\n'café <&> 😀'")]
-    [InlineData(10, 13, "'café <&> 😀'", "'café <&> 😀'")]
+    [InlineData(7, 2, "$x")]
+    [InlineData(7, 16, "$x\n'café <&> 😀'")]
+    [InlineData(10, 13, "'café <&> 😀'")]
     public async Task ActualHeadlessClipboardCopyCarriesOnlySelectedPlainTextAndRichHtml(
-        int start, int length, string selected, string clipboardText)
+        int start, int length, string selected)
     {
         await InitializeRuntimeAsync();
-        await RichClipboardCoreAsync(start, length, selected, clipboardText);
+        await RichClipboardCoreAsync(start, length, selected);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static Task RichClipboardCoreAsync(int start, int length, string selected, string clipboardText) => WithModuleWorkbenchAsync(false, async (workbench, _) =>
+    private static Task RichClipboardCoreAsync(int start, int length, string selected) => WithModuleWorkbenchAsync(false, async (workbench, _) =>
     {
+        var clipboardText = selected.Replace("\n", Environment.NewLine, StringComparison.Ordinal);
         var owner = Assert.IsType<Window>(TopLevel.GetTopLevel(workbench));
         var editor = workbench.ScriptEditorView;
         editor.Document.Text = "before $x\n'café <&> 😀' after";
         editor.Select(new(start, length));
         var caret = editor.CaretOffset;
-        var htmlFormat = Avalonia.Input.DataFormat.CreateBytesPlatformFormat("HTML Format");
+        var sentinelFormat = Avalonia.Input.DataFormat.CreateBytesPlatformFormat("DT-Iseberg-Clipboard-Sentinel");
         var sentinelBytes = System.Text.Encoding.UTF8.GetBytes("owned byte transport sentinel");
         var sentinel = new Avalonia.Input.DataTransfer();
         var sentinelItem = new Avalonia.Input.DataTransferItem();
         sentinelItem.SetText("owned clipboard sentinel");
-        sentinelItem.Set(htmlFormat, sentinelBytes);
+        sentinelItem.Set(sentinelFormat, sentinelBytes);
         sentinel.Add(sentinelItem);
         await owner.Clipboard!.SetDataAsync(sentinel);
-        Assert.Equal(sentinelBytes, await Avalonia.Input.Platform.ClipboardExtensions.TryGetValueAsync(owner.Clipboard!, htmlFormat));
-        Avalonia.Input.DataTransfer? observedCopy = null;
-        editor.TextEditor.TextArea.AddHandler(AvaloniaEdit.Utils.DataObjectEx.DataObjectCopyingEvent,
-            (_, args) => observedCopy = Assert.IsType<Avalonia.Input.DataTransfer>(args.DataObject));
+        Assert.Equal(sentinelBytes, await Avalonia.Input.Platform.ClipboardExtensions.TryGetValueAsync(owner.Clipboard!, sentinelFormat));
         editor.TextEditor.Copy();
         await WaitForAsync(() => Avalonia.Input.Platform.ClipboardExtensions.TryGetTextAsync(owner.Clipboard!).GetAwaiter().GetResult() == clipboardText,
             () => "Copy did not publish exactly the selected text to the owned clipboard.");
         Assert.Equal(clipboardText, await Avalonia.Input.Platform.ClipboardExtensions.TryGetTextAsync(owner.Clipboard!));
-        var bytes = await Avalonia.Input.Platform.ClipboardExtensions.TryGetValueAsync(owner.Clipboard!, Avalonia.Input.DataFormat.CreateBytesPlatformFormat("HTML Format"));
-        using var data = await owner.Clipboard!.TryGetDataAsync();
-        Assert.True(bytes is not null, "Missing rich HTML bytes. Copy event observed=" + (observedCopy is not null) +
-            "; actual clipboard formats: " + string.Join(", ", data!.Formats));
-        var payload = System.Text.Encoding.UTF8.GetString(bytes!);
-        var fragmentStart = int.Parse(payload.Split("\r\n").Single(line => line.StartsWith("StartFragment:", StringComparison.Ordinal))[14..],
-            System.Globalization.CultureInfo.InvariantCulture);
-        var fragmentEnd = int.Parse(payload.Split("\r\n").Single(line => line.StartsWith("EndFragment:", StringComparison.Ordinal))[12..],
-            System.Globalization.CultureInfo.InvariantCulture);
-        var fragment = System.Text.Encoding.UTF8.GetString(bytes!, fragmentStart, fragmentEnd - fragmentStart);
+        var fragment = await ReadRichClipboardFragmentAsync(owner.Clipboard!);
         var html = XElement.Parse(fragment, LoadOptions.PreserveWhitespace);
         Assert.Equal(selected, html.Value);
         Assert.Equal("pre", html.Name.LocalName);
@@ -2740,6 +2729,25 @@ public sealed class PortableIseWorkbenchTests
         Assert.Equal(caret, editor.CaretOffset);
         Assert.Equal(new Iseberg.Editor.EditorTextSpan(start, length), editor.Selection);
     });
+
+    private static async Task<string> ReadRichClipboardFragmentAsync(Avalonia.Input.Platform.IClipboard clipboard)
+    {
+        if (OperatingSystem.IsMacOS())
+            return System.Text.Encoding.UTF8.GetString(Assert.IsType<byte[]>(
+                await Avalonia.Input.Platform.ClipboardExtensions.TryGetValueAsync(clipboard,
+                    Avalonia.Input.DataFormat.CreateBytesPlatformFormat("public.html"))));
+        if (!OperatingSystem.IsWindows())
+            return Assert.IsType<string>(await Avalonia.Input.Platform.ClipboardExtensions.TryGetValueAsync(clipboard,
+                Avalonia.Input.DataFormat.CreateStringPlatformFormat("text/html")));
+        var bytes = Assert.IsType<byte[]>(await Avalonia.Input.Platform.ClipboardExtensions.TryGetValueAsync(clipboard,
+            Avalonia.Input.DataFormat.CreateBytesPlatformFormat("HTML Format")));
+        var header = System.Text.Encoding.UTF8.GetString(bytes).Split("\r\n");
+        var start = int.Parse(header.Single(line => line.StartsWith("StartFragment:", StringComparison.Ordinal))[14..],
+            System.Globalization.CultureInfo.InvariantCulture);
+        var end = int.Parse(header.Single(line => line.StartsWith("EndFragment:", StringComparison.Ordinal))[12..],
+            System.Globalization.CultureInfo.InvariantCulture);
+        return System.Text.Encoding.UTF8.GetString(bytes, start, end - start);
+    }
 
     [AvaloniaTheory]
     [InlineData(false, false)]
@@ -2762,17 +2770,10 @@ public sealed class PortableIseWorkbenchTests
         editor.TextEditor.Options.CutCopyWholeLine = wholeLine;
         await Avalonia.Input.Platform.ClipboardExtensions.SetTextAsync(owner.Clipboard!, "owned clipboard sentinel");
         editor.TextEditor.Copy();
-        Assert.Equal(wholeLine ? "café <&>\r\n" : "owned clipboard sentinel", await Avalonia.Input.Platform.ClipboardExtensions.TryGetTextAsync(owner.Clipboard!));
+        Assert.Equal(wholeLine ? "café <&>" + Environment.NewLine : "owned clipboard sentinel", await Avalonia.Input.Platform.ClipboardExtensions.TryGetTextAsync(owner.Clipboard!));
         if (wholeLine)
         {
-            var bytes = await Avalonia.Input.Platform.ClipboardExtensions.TryGetValueAsync(owner.Clipboard!, Avalonia.Input.DataFormat.CreateBytesPlatformFormat("HTML Format"));
-            var payload = Assert.IsType<byte[]>(bytes);
-            var header = System.Text.Encoding.UTF8.GetString(payload).Split("\r\n");
-            var start = int.Parse(header.Single(line => line.StartsWith("StartFragment:", StringComparison.Ordinal))[14..],
-                System.Globalization.CultureInfo.InvariantCulture);
-            var end = int.Parse(header.Single(line => line.StartsWith("EndFragment:", StringComparison.Ordinal))[12..],
-                System.Globalization.CultureInfo.InvariantCulture);
-            var fragment = System.Text.Encoding.UTF8.GetString(payload, start, end - start);
+            var fragment = await ReadRichClipboardFragmentAsync(owner.Clipboard!);
             Assert.Equal("café <&>\n", XElement.Parse(fragment, LoadOptions.PreserveWhitespace).Value);
             Assert.DoesNotContain("<&>", fragment, StringComparison.Ordinal);
         }

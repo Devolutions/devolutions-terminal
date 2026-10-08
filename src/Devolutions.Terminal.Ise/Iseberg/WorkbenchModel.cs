@@ -151,6 +151,8 @@ public sealed class SessionModel : ObservableModel
     internal int DebugRevisionCounter;
     internal SemaphoreSlim DebugRefreshGate { get; } = new(1, 1);
     public bool Evaluating { get; set; }
+    public bool IsConsoleSubmissionPending { get; internal set; }
+    public bool IsReady => Engine.State == SessionState.Ready && !IsConsoleSubmissionPending;
     internal bool PendingRunspaceRefresh { get; set; }
     public ScriptTab? SelectedFile
     {
@@ -173,7 +175,7 @@ public sealed class SessionModel : ObservableModel
         var batch = new List<OutputEntry>();
         while (batch.Count < 2000 && output.TryDequeue(out var entry)) batch.Add(entry);
         if (batch.Count > 0) Console.AppendBatch(batch);
-        if ((Engine.State == SessionState.Ready || Engine.IsDebuggerPaused || Engine.IsNestedPromptActive) && !Evaluating && output.IsEmpty)
+        if ((IsReady || Engine.IsDebuggerPaused || Engine.IsNestedPromptActive) && !Evaluating && output.IsEmpty)
         {
             changed |= Console.CompleteOutput();
             changed |= !Console.HasPrompt;

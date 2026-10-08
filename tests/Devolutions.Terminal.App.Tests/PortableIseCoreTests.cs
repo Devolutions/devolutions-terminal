@@ -1025,10 +1025,15 @@ public sealed class PortableIseCoreTests : IClassFixture<PortableIseRuntimeFixtu
         Assert.Equal(new[] { path }, Directory.GetFiles(service.UserDirectory));
     }
 
+    public static IEnumerable<TheoryDataRow<string>> SnippetReplacementFailureCases =>
+    [
+        new("invalid-xml"),
+        new("locked-destination") { Skip = OperatingSystem.IsWindows() ? null : "Unix permits atomic replacement of an open file." },
+        new("directory-destination")
+    ];
+
     [Theory]
-    [InlineData("invalid-xml")]
-    [InlineData("locked-destination")]
-    [InlineData("directory-destination")]
+    [MemberData(nameof(SnippetReplacementFailureCases))]
     public async Task DirectSnippetCreateFailedReplacementPreservesBaselineAndCleansTemporaryFile(string failure)
     {
         using var sandbox = new RecoverySandbox();
@@ -1040,7 +1045,8 @@ public sealed class PortableIseCoreTests : IClassFixture<PortableIseRuntimeFixtu
         {
             var collision = Path.Combine(service.UserDirectory, "Blocked.snippets.ps1xml");
             Directory.CreateDirectory(collision);
-            Assert.Throws<UnauthorizedAccessException>(() => service.Create("Blocked", "new", "new", "author", 1, true));
+            Assert.Throws(OperatingSystem.IsWindows() ? typeof(UnauthorizedAccessException) : typeof(IOException),
+                () => service.Create("Blocked", "new", "new", "author", 1, true));
             Assert.Empty(Directory.GetFileSystemEntries(collision));
         }
         else if (failure == "locked-destination")

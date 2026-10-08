@@ -79,6 +79,50 @@ public sealed class IsebergTerminalBridgeTests
     }
 
     [AvaloniaFact]
+    public async Task NativeInputWaitsForPostExecutionDebuggerReconciliation()
+    {
+        await InitializeRuntimeAsync();
+        await ReconciliationReadinessCoreAsync();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static Task ReconciliationReadinessCoreAsync() => WithHostAsync(async (tab, _) =>
+    {
+        var session = Assert.Single(tab.Workbench.Workbench.Sessions);
+        var connection = NativeConnection(tab);
+        var gate = Assert.IsType<SemaphoreSlim>(typeof(SessionModel).GetProperty("DebugRefreshGate",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(session));
+        await gate.WaitAsync();
+        Task? submission = null;
+        try
+        {
+            submission = tab.Workbench.SubmitConsoleInputAsync("'DT-RECONCILIATION-PENDING'");
+            await WaitForNativeOutputAsync(tab, "DT-RECONCILIATION-PENDING");
+            await WaitForAsync(() => session.Engine.State == SessionState.Ready,
+                () => $"Command has not finished: {session.Engine.State}.");
+            Assert.False(submission.IsCompleted);
+            Assert.True(session.IsConsoleSubmissionPending);
+            Assert.False(connection.IsInputEnabled);
+            Assert.False(tab.Workbench.FindControl<Button>("RunButton")!.IsEnabled);
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() => tab.Workbench.SubmitConsoleInputAsync(
+                "'DT-RECONCILIATION-REJECTED'").WaitAsync(TimeSpan.FromSeconds(60)));
+            Assert.Equal("This PowerShell tab is busy.", error.Message);
+            Assert.DoesNotContain("'DT-RECONCILIATION-REJECTED'", session.History);
+            Assert.True(session.IsConsoleSubmissionPending);
+        }
+        finally
+        {
+            gate.Release();
+            if (submission is not null) await submission.WaitAsync(TimeSpan.FromSeconds(60));
+        }
+        await WaitForAsync(() => connection.IsInputEnabled,
+            () => "Native input did not resume after debugger reconciliation.");
+        Assert.False(session.IsConsoleSubmissionPending);
+        Assert.True(tab.Workbench.FindControl<Button>("RunButton")!.IsEnabled);
+        await SubmitTokenAsync(tab, "'DT-RECONCILIATION-READY'", "DT-RECONCILIATION-READY");
+    });
+
+    [AvaloniaFact]
     public async Task ForcedDisposalCancelsPendingReadHostAndReleasesNativeEngine()
     {
         await InitializeRuntimeAsync();

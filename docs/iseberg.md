@@ -222,7 +222,10 @@ Iseberg profiles but reports the missing feature rather than silently opening
 PowerShell terminals. Its settings editor does not offer new Iseberg profiles.
 The second command produces an opt-in managed developer publish, not a default
 release package payload. Use the opt-in flag consistently for restore, build
-and test commands; engine/workbench tests are excluded when the feature is off.
+and test commands, and restore with `-p:Configuration=Release` before a Release
+build with `--no-restore`. Ordinary managed builds remain framework-dependent;
+self-contained deployment applies at publish time. Engine/workbench tests are
+excluded when the feature is off.
 CI still builds and tests this opt-in variant separately. Publishing an
 Iseberg-enabled build with trimming or NativeAOT explicitly enabled fails before
 compiling project dependencies.

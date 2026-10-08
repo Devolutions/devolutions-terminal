@@ -12,7 +12,7 @@
     <PublishTrimmed Condition="'$(Configuration)' == 'Debug'">false</PublishTrimmed>
     <PublishAot Condition="'$(EnablePowerShellIse)' == 'true'">false</PublishAot>
     <PublishTrimmed Condition="'$(EnablePowerShellIse)' == 'true'">false</PublishTrimmed>
-    <SelfContained Condition="'$(EnablePowerShellIse)' == 'true' and '$(Configuration)' != 'Debug'">true</SelfContained>
+    <PublishSelfContained Condition="'$(EnablePowerShellIse)' == 'true' and '$(Configuration)' != 'Debug'">true</PublishSelfContained>
     <PublishSingleFile Condition="'$(EnablePowerShellIse)' == 'true' and '$(Configuration)' != 'Debug'">true</PublishSingleFile>
     <IncludeAllContentForSelfExtract Condition="'$(EnablePowerShellIse)' == 'true'">true</IncludeAllContentForSelfExtract>
     <EnableSingleFileAnalyzer Condition="'$(EnablePowerShellIse)' == 'true'">false</EnableSingleFileAnalyzer>

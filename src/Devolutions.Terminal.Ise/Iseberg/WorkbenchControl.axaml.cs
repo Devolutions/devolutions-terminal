@@ -522,7 +522,7 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
         RenderProgress();
         SessionTabs.IsVisible = hostingOptions.ShowSessionTabs && Workbench.ShowSessionTabs;
         var state = displayedSession?.Engine.State ?? SessionState.Starting;
-        var ready = state == SessionState.Ready;
+        var ready = displayedSession?.IsReady == true;
         var paused = displayedSession?.Engine.IsDebuggerPaused == true;
         var nested = displayedSession?.Engine.IsNestedPromptActive == true;
         RunButton.IsEnabled = displayedFile is not null && (ready || paused) && displayedSession?.Evaluating != true;
@@ -983,6 +983,7 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
     {
         if (e.Handled) return;
         if (displayedSession is not { } session || session.Evaluating ||
+            session.Engine.State == SessionState.Ready && !session.IsReady ||
             session.Engine.State is not (SessionState.Ready or SessionState.Debugging or SessionState.NestedPrompt)) return;
         if (Completion is not null && (e.Key == Key.Tab || e.Key == Key.Enter && settings.ConsoleCompletionOnEnter)) return;
         if (e.Key == Key.Escape)
@@ -1166,7 +1167,7 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
         if (WorkbenchMenu is null) return;
         UpdateIseMenuState(AddonsMenu);
         var state = displayedSession?.Engine.State;
-        var ready = state == SessionState.Ready;
+        var ready = displayedSession?.IsReady == true;
         var paused = displayedSession?.Engine.IsDebuggerPaused == true;
         var nested = displayedSession?.Engine.IsNestedPromptActive == true;
         foreach (var item in ActionMenus())

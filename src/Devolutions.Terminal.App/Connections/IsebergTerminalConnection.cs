@@ -62,7 +62,9 @@ public sealed class IsebergTerminalConnection : IRestartableTerminalConnection
     public TerminalConnectionState State { get; private set; } = TerminalConnectionState.NotConnected;
     public TerminalProcessMetadata? ProcessMetadata => null;
     public TerminalExitInfo? LastExitInfo { get; private set; }
-    public bool IsInputEnabled => IsRunning && !_inputDisabled && (_acceptsCommands || _input is not null);
+    public bool IsInputEnabled => IsRunning && !_inputDisabled &&
+        (_input is not null || _acceptsCommands && (!_session.IsConsoleSubmissionPending ||
+            _session.Engine.IsDebuggerPaused || _session.Engine.IsNestedPromptActive));
     public bool HasPendingInput => _input is not null;
     public string InputText => _input?.Secret == true ? "" : _line.ToString();
     public int CaretOffset => _input?.Secret == true ? 0 : _caret;
@@ -225,7 +227,7 @@ public sealed class IsebergTerminalConnection : IRestartableTerminalConnection
         if (!IsRunning) return;
         _acceptsCommands = acceptsCommands;
         _inputDisabled = inputDisabled;
-        if (inputDisabled || !acceptsCommands || _input is not null) return;
+        if (!IsInputEnabled || _input is not null) return;
         if (!_promptShown)
         {
             Emit(Escape + "]133;D;0\a" + Escape + "]133;A\a");

@@ -123,6 +123,8 @@ public sealed partial class WorkbenchControl
 
     private async Task ExecuteConsoleTextAsync(SessionModel session, string text)
     {
+        if (session.IsConsoleSubmissionPending && !session.Engine.IsDebuggerPaused && !session.Engine.IsNestedPromptActive)
+            throw new InvalidOperationException("This PowerShell tab is busy.");
         session.Input = "";
         session.Console.HidePrompt();
         session.Completion = null;
@@ -134,8 +136,18 @@ public sealed partial class WorkbenchControl
         else if (session.Engine.IsNestedPromptActive) await EvaluateNestedConsoleAsync(session, text);
         else
         {
-            await session.Engine.ExecuteAsync(text);
-            if (!windowClosed) await RefreshDebuggerAsync(session, reconcile: true);
+            session.IsConsoleSubmissionPending = true;
+            RefreshState();
+            try
+            {
+                await session.Engine.ExecuteAsync(text);
+                if (!windowClosed) await RefreshDebuggerAsync(session, reconcile: true);
+            }
+            finally
+            {
+                session.IsConsoleSubmissionPending = false;
+                if (!windowClosed) RefreshState();
+            }
         }
         if (!windowClosed) FlushOutput();
     }
