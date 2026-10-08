@@ -165,7 +165,22 @@ jobs:
         run: pwsh -NoLogo -NoProfile -File scripts/Install-IsebergTestPowerShell.ps1
 
       - name: Run tests
-        run: dotnet test Devolutions.Terminal.slnx -c Release --no-build -p:EnablePowerShellIse=true -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
+        timeout-minutes: 20
+        run: >-
+          dotnet test Devolutions.Terminal.slnx -c Release --no-build
+          -p:EnablePowerShellIse=true -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
+          --logger "console;verbosity=normal" --logger trx
+          --results-directory artifacts/test-results/windows
+          --blame-hang --blame-hang-timeout 5min --blame-hang-dump-type none
+
+      - name: Upload Windows test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-test-diagnostics
+          path: artifacts/test-results/windows
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Test macOS legal notice layout
         run: pwsh -NoLogo -NoProfile -File scripts/Test-MacOsLegalNotices.ps1
