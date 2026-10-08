@@ -232,6 +232,10 @@ excluded when the feature is off.
 CI still builds and tests this opt-in variant separately. Publishing an
 Iseberg-enabled build with trimming or NativeAOT explicitly enabled fails before
 compiling project dependencies.
+Windows CI runs test projects sequentially (`-m:1`) to avoid concurrent test-host
+startup starving short broker deadlines. It retains TRX results and per-test
+hang diagnostics; the complete suite has a separate, longer time budget for the
+slower hosted Windows runner.
 
 Native libraries/helpers and legal notices remain loose for package signing and
 license checks. macOS packaging defaults to NativeAOT; an explicitly supplied

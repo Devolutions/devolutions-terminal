@@ -165,9 +165,9 @@ jobs:
         run: pwsh -NoLogo -NoProfile -File scripts/Install-IsebergTestPowerShell.ps1
 
       - name: Run tests
-        timeout-minutes: 20
+        timeout-minutes: 45
         run: >-
-          dotnet test Devolutions.Terminal.slnx -c Release --no-build
+          dotnet test Devolutions.Terminal.slnx -c Release --no-build -m:1
           -p:EnablePowerShellIse=true -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
           --logger "console;verbosity=normal" --logger trx
           --results-directory artifacts/test-results/windows
