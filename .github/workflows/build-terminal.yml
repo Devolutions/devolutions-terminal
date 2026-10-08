@@ -155,17 +155,17 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Restore
-        run: dotnet restore Devolutions.Terminal.slnx -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
+        run: dotnet restore Devolutions.Terminal.slnx -p:EnablePowerShellIse=true -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
 
       - name: Build
-        run: dotnet build Devolutions.Terminal.slnx -c Release --no-restore -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
+        run: dotnet build Devolutions.Terminal.slnx -c Release --no-restore -p:EnablePowerShellIse=true -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
 
       - name: Test
         # Engine tests resolve the separately installed runtime; it is not a DT package payload.
         run: pwsh -NoLogo -NoProfile -File scripts/Install-IsebergTestPowerShell.ps1
 
       - name: Run tests
-        run: dotnet test Devolutions.Terminal.slnx -c Release --no-build -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
+        run: dotnet test Devolutions.Terminal.slnx -c Release --no-build -p:EnablePowerShellIse=true -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
 
       - name: Test macOS legal notice layout
         run: pwsh -NoLogo -NoProfile -File scripts/Test-MacOsLegalNotices.ps1
@@ -216,7 +216,7 @@ jobs:
           if-no-files-found: error
 
   native-aot:
-    name: Iseberg desktop and terminal-only NativeAOT ${{ matrix.rid }}
+    name: NativeAOT desktop ${{ matrix.rid }}
     runs-on: windows-latest
     needs: release-metadata
     strategy:
@@ -245,26 +245,28 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Check terminal-only NativeAOT
+      - name: Publish NativeAOT desktop
         run: >
           dotnet publish src/Devolutions.Terminal/Devolutions.Terminal.csproj
           -c Release
           -r ${{ matrix.rid }}
           --self-contained
           -p:EnablePowerShellIse=false
+          -p:PublishAot=true
           -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
-          -o artifacts/terminal-only/${{ matrix.rid }}
+          -o artifacts/${{ matrix.rid }}
 
-      - name: Publish Iseberg desktop
+      - name: Check opt-in managed Iseberg desktop
         run: >
           dotnet publish src/Devolutions.Terminal/Devolutions.Terminal.csproj
           -c Release
           -r ${{ matrix.rid }}
           --self-contained
+          -p:EnablePowerShellIse=true
           -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
-          -o artifacts/${{ matrix.rid }}
+          -o artifacts/iseberg-validation/${{ matrix.rid }}
 
-      - name: Upload native executable
+      - name: Upload NativeAOT desktop
         uses: actions/upload-artifact@v4
         with:
           name: DevolutionsTerminal-${{ matrix.rid }}
@@ -296,13 +298,13 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Restore
-        run: dotnet restore Devolutions.Terminal.slnx -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
+        run: dotnet restore Devolutions.Terminal.slnx -p:EnablePowerShellIse=true -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
 
       - name: Run managed tests
         run: pwsh -NoLogo -NoProfile -File scripts/Install-IsebergTestPowerShell.ps1
 
       - name: Test managed projects
-        run: dotnet test Devolutions.Terminal.slnx -c Release --no-restore -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
+        run: dotnet test Devolutions.Terminal.slnx -c Release --no-restore -p:EnablePowerShellIse=true -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
 
       - name: Validate Linux scripts and metadata
         run: bash scripts/Test-LinuxPackagingMetadata.sh
@@ -332,13 +334,13 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Restore
-        run: dotnet restore Devolutions.Terminal.slnx -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
+        run: dotnet restore Devolutions.Terminal.slnx -p:EnablePowerShellIse=true -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
 
       - name: Run managed tests
         run: pwsh -NoLogo -NoProfile -File scripts/Install-IsebergTestPowerShell.ps1
 
       - name: Test managed projects
-        run: dotnet test Devolutions.Terminal.slnx -c Release --no-restore -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
+        run: dotnet test Devolutions.Terminal.slnx -c Release --no-restore -p:EnablePowerShellIse=true -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
 
       - name: Validate macOS scripts and metadata
         run: pwsh -NoLogo -NoProfile -File scripts/Test-MacOsPackagingMetadata.ps1
@@ -353,7 +355,7 @@ jobs:
         run: pwsh -NoLogo -NoProfile -File scripts/Test-MacOsNuGetSigning.ps1
 
   macos-native-aot:
-    name: macOS Iseberg desktop ${{ matrix.rid }}
+    name: macOS NativeAOT desktop ${{ matrix.rid }}
     runs-on: macos-26
     needs:
       - macos-managed
@@ -384,12 +386,14 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Iseberg desktop publish
+      - name: NativeAOT desktop publish
         run: >
           dotnet publish src/Devolutions.Terminal/Devolutions.Terminal.csproj
           -c Release
           -r ${{ matrix.rid }}
           --self-contained true
+          -p:EnablePowerShellIse=false
+          -p:PublishAot=true
           -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
           -p:DebugSymbols=false
           -p:DebugType=None
@@ -669,7 +673,7 @@ jobs:
             throw "Runtime hash mismatch: expected ${{ matrix.runtime_sha256 }}, got $actualHash."
           }
 
-      - name: Iseberg desktop publish
+      - name: NativeAOT desktop publish
         shell: pwsh
         run: |
           $publishArgs = @(
@@ -677,6 +681,8 @@ jobs:
             "-c", "Release",
             "-r", "${{ matrix.rid }}",
             "--self-contained", "true",
+            "-p:EnablePowerShellIse=false",
+            "-p:PublishAot=true",
             "-p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}",
             "-p:DebugSymbols=false",
             "-p:DebugType=None",

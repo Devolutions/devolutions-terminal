@@ -2,7 +2,7 @@
 
 The packaging area produces both an MSIX package and a per-machine MSI. The
 MSI is the replacement distribution path for the former `wt-distro` installer:
-it installs the self-contained desktop host and NativeAOT `dt.exe` under
+it installs the NativeAOT host and `dt.exe` under
 `C:\Program Files\Devolutions\Terminal`, creates a
 Devolutions Terminal Start Menu shortcut, and registers `dt.exe` through
 Windows App Paths. It does not install `wt.exe` or claim Windows Terminal
@@ -22,9 +22,11 @@ Build the MSI:
 ```
 
 This project owns the development package identity and the scripts that turn the
-`win-x64` and `win-arm64` publishes into per-architecture MSIX packages.
-The default host includes Iseberg and is managed, single-file and untrimmed;
-terminal-only NativeAOT publishes use `EnablePowerShellIse=false`.
+`win-x64` and `win-arm64` NativeAOT publishes into per-architecture MSIX packages.
+Default release packages exclude Iseberg. `Build-Packages.ps1` explicitly
+publishes with `EnablePowerShellIse=false` to retain NativeAOT packaging.
+Iseberg requires an explicit managed, untrimmed build with
+`EnablePowerShellIse=true`, outside the default packaging flow.
 See [Iseberg prerequisites and distribution](../../docs/iseberg.md).
 Direct `dotnet run` and `dotnet publish` remain unpackaged and do not require
 registration.
@@ -70,7 +72,7 @@ Install [winapp CLI](https://learn.microsoft.com/windows/apps/dev-tools/winapp-c
 Unsigned packages are the default so CI can publish artifacts for a trusted
 release-signing stage. They cannot be installed until signed.
 
-To package self-contained outputs produced elsewhere, place them in
+To package NativeAOT outputs produced elsewhere, place them in
 `artifacts\msix\layout\win-x64` and `artifacts\msix\layout\win-arm64`, then pass
 `-SkipPublish`. `Build-Packages.ps1` still cross-builds the x64/ARM64 shell
 helpers. `-SkipNativeBuild` is only valid when matching helper outputs already

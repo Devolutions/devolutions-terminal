@@ -72,7 +72,7 @@ foreach ($path in $required) {
 }
 
 if (Test-Path -LiteralPath (Join-Path $publishDir 'Devolutions.Terminal.dll')) {
-    throw 'macOS packaging requires the default self-contained single-file Iseberg publish, or a terminal-only NativeAOT publish. A loose managed host needs its runtime configuration and cannot use this code-only bundle layout.'
+    throw 'macOS packaging requires the default NativeAOT publish or an explicitly supplied self-contained single-file managed publish. A loose managed host needs its runtime configuration and cannot use this code-only bundle layout.'
 }
 
 if (Test-Path -LiteralPath $AppPath) {

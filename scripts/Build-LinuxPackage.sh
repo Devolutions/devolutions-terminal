@@ -98,6 +98,8 @@ else
         -c Release
         -r "$rid"
         --self-contained true
+        -p:EnablePowerShellIse=false
+        -p:PublishAot=true
         -o "$publish_dir"
         -p:VersionPrefix="$version"
         -p:DebugSymbols=false

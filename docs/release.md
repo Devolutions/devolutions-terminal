@@ -32,9 +32,10 @@ CI workflows:
 
 - `build-ghostty.yml` — compile `libghostty-vt` for every RID and upload
   artifacts (optional cache; not required to develop).
-- `build-terminal.yml` — restore natives from source, test, managed desktop and terminal-only NativeAOT, Linux
+- `build-terminal.yml` — restore natives from source, test, NativeAOT desktop, Linux
   packages, macOS `.app`/zip, MSIX, the `Devolutions.Terminal.Control`
-  NuGet package, and the browser WASM host.
+  NuGet package, and the browser WASM host. Opt-in managed Iseberg builds are
+  validated separately and are not release package payloads.
 
 ## Developer build
 
@@ -51,11 +52,13 @@ dynamic code and is deliberately excluded from those analyzers.
 
 ## Desktop distribution
 
-Default publishes include source-integrated Iseberg and are self-contained,
-single-file, managed and untrimmed. PowerShell is separately installed; it is
-not bundled. See [iseberg.md](iseberg.md) for prerequisites, legal notices and
-the incompatible-publish guards. Add `-p:EnablePowerShellIse=false` to publish
-a terminal-only NativeAOT host; `dt` remains NativeAOT in either variant.
+Default publishes and release packages are self-contained NativeAOT and exclude
+Iseberg (`EnablePowerShellIse=false`). CI uploads these NativeAOT publishes for
+Windows, Linux and macOS packaging; the separately validated managed Iseberg
+publish is not uploaded as a release payload. The `dt` CLI remains NativeAOT.
+Iseberg requires an explicit `-p:EnablePowerShellIse=true` developer build,
+which is managed and untrimmed and uses separately installed PowerShell.
+See [iseberg.md](iseberg.md) for prerequisites, legal notices and guards.
 
 ```powershell
 dotnet publish src/Devolutions.Terminal -c Release -r win-x64 --self-contained `

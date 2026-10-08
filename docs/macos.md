@@ -28,7 +28,7 @@ registration, and Homebrew remain out of scope.
 - Notifications through `osascript` `display notification`
 - `dterm:` URL scheme declared in `macos/Info.plist` (argv and Apple Event
   protocol activation)
-- Managed single-file Iseberg desktop (or terminal-only NativeAOT) `.app` + zip packaging on Darwin
+- NativeAOT desktop `.app` + zip packaging on Darwin (Iseberg disabled)
 - Signed, notarized `.dmg` release artifacts via
   `scripts/Release-MacOsPackage.ps1` (CI only; ad-hoc unsigned zip/dmg locally
   or without Apple signing secrets)
@@ -53,7 +53,8 @@ pwsh scripts/Test-MacOsPackage.ps1 osx-arm64 artifacts/packages/*.zip
 pwsh scripts/Test-MacOsRuntime.ps1 artifacts/packages
 ```
 
-`Build-MacOsPackage.ps1` publishes the default managed single-file desktop unless `MACOS_PUBLISH_DIR` is set,
+`Build-MacOsPackage.ps1` publishes the NativeAOT desktop with Iseberg disabled
+unless `MACOS_PUBLISH_DIR` supplies an existing publish,
 stages `Devolutions Terminal.app` with `macos/Info.plist`, generates
 `DevolutionsTerminal.icns` from the original WT Distro vector artwork in
 `macos/DevolutionsTerminal.svg`. Its librsvg-rendered 1024px transparent master,

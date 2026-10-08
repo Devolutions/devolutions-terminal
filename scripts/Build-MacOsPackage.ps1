@@ -72,6 +72,8 @@ try {
             '-c', 'Release',
             '-r', $Rid,
             '--self-contained', 'true',
+            '-p:EnablePowerShellIse=false',
+            '-p:PublishAot=true',
             '-o', $publishDir,
             "-p:VersionPrefix=$Version",
             '-p:DebugSymbols=false',

@@ -1,6 +1,8 @@
 # Original Windows PowerShell ISE feature comparison
 
-DT's source-integrated Iseberg already covers the main edit/run/debug workflow.
+DT's source-integrated Iseberg in an explicitly enabled managed developer build
+already covers the main edit/run/debug workflow. Default NativeAOT builds and
+release packages disable Iseberg; saved profile settings are preserved.
 The integration now matches additional portable ISE features, but this is **not a
 drop-in replacement for the original `$psISE` object model, WPF add-ons, or
 Windows PowerShell 5.1**. Several features exist in the imported workbench but

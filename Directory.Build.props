@@ -18,7 +18,7 @@
     <InvariantGlobalization>false</InvariantGlobalization>
     <NuGetAudit>true</NuGetAudit>
     <NuGetAuditMode>direct</NuGetAuditMode>
-    <EnablePowerShellIse Condition="'$(EnablePowerShellIse)' == ''">true</EnablePowerShellIse>
+    <EnablePowerShellIse Condition="'$(EnablePowerShellIse)' == ''">false</EnablePowerShellIse>
     <DevolutionsTerminalWindowsIcon>$(MSBuildThisFileDirectory)assets\icons\terminal.ico</DevolutionsTerminalWindowsIcon>
   </PropertyGroup>
 </Project>

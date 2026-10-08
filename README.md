@@ -1,14 +1,14 @@
 # Devolutions Terminal
 
 A cross-platform terminal emulator implemented in C# on **.NET 10**, published
-as a self-contained desktop app, and rendered with **Avalonia 12** / Skia:
+as a self-contained **NativeAOT** desktop app, and rendered with **Avalonia 12** / Skia:
 
 - **ConPTY** on Windows and a real **forkpty** transport on Linux and macOS
 - Azure Cloud Shell for remote Azure sessions
 - selectable built-in or **Ghostty** VT engine
 - Windows Terminal-compatible `settings.json`, actions, keybindings, and `dt` CLI
-- source-integrated **Iseberg** PowerShell ISE profiles: script editor above a DT
-  terminal sharing the same runspace, with Classic ISE, Dark, Light and Follow DT themes
+- optional source-integrated **Iseberg** PowerShell ISE profiles in managed
+  developer builds only (disabled in default NativeAOT builds and release packages)
 
 This is the [Devolutions Terminal](https://github.com/Devolutions/devolutions-terminal)
 source tree. Projects, namespaces, and the GUI host use `Devolutions.Terminal.*`.
@@ -40,10 +40,11 @@ dotnet publish src/Devolutions.Terminal -c Release -r win-x64 --self-contained
 The executable is written to
 `src/Devolutions.Terminal/bin/Release/net10.0/win-x64/publish/Devolutions.Terminal.exe`.
 
-The default Iseberg-enabled desktop is managed, untrimmed and single-file.
-Iseberg requires separately installed compatible PowerShell; see
-[docs/iseberg.md](docs/iseberg.md). The `dt` CLI remains NativeAOT.
-Use `-p:EnablePowerShellIse=false` when publishing a terminal-only NativeAOT desktop.
+The default desktop and `dt` CLI are NativeAOT. Release packages exclude Iseberg.
+An explicitly opted-in `-p:EnablePowerShellIse=true` developer build uses a
+managed, untrimmed desktop and separately installed compatible PowerShell; see
+[docs/iseberg.md](docs/iseberg.md). Saved Iseberg profiles remain intact, but
+cannot launch in the default build.
 
 macOS app bundles (Darwin only):
 

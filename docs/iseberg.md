@@ -1,13 +1,17 @@
 # Iseberg workbench profiles
 
 **Iseberg** is an embedded PowerShell ISE-style workbench, not a terminal
-command line or a separate application. In **Settings**, select **Add a new
+command line or a separate application. **It is disabled in default builds and
+release packages to preserve DT's NativeAOT desktop.** The workflow below requires
+an explicit managed developer build with `-p:EnablePowerShellIse=true`.
+In **Settings**, select **Add a new
 profile**, choose **PowerShell ISE (Iseberg)** under **Profile type**, configure
 its name, starting directory and font, then select that
 profile from the new-tab menu. Existing PowerShell profiles continue to launch
 their normal PTY/ConPTY terminal sessions.
 
-The default profile logo is an original ice cube over a terminal prompt.
+The default profile logo is an original ice cube and terminal prompt contained
+within a square terminal tile, with equal transparent margins on all four sides.
 `assets/profile-icons/iseberg.svg` is its vector source; the derived high-resolution
 PNG uses DT's existing profile-icon loader without adding an SVG runtime
 dependency. New profiles, icon-less Iseberg profiles and the earlier default
@@ -199,25 +203,44 @@ and original Invoke/InvokeSynchronous contracts remain unsupported.
 
 ## Build and distribution
 
-The default desktop includes Iseberg and publishes **self-contained, single-file,
-managed and untrimmed**. The full PowerShell parser/runspace/debugger requires
-dynamic code, so it cannot run in NativeAOT. The `dt` CLI remains NativeAOT.
+The default desktop and release packages use **NativeAOT with Iseberg disabled**.
+The full PowerShell parser/runspace/debugger requires dynamic code, so the
+current in-process integration cannot run in NativeAOT. Iseberg remains an
+explicit developer opt-in; its desktop publish is **self-contained, single-file,
+managed and untrimmed**. The `dt` CLI remains NativeAOT in both variants.
 
 ```powershell
 dotnet publish src/Devolutions.Terminal -c Release -r win-x64 --self-contained
 dotnet publish src/Devolutions.Terminal -c Release -r win-x64 --self-contained `
-  -p:EnablePowerShellIse=false -o artifacts/terminal-only/win-x64
+  -p:EnablePowerShellIse=true -o artifacts/iseberg-dev/win-x64
+dotnet run --project src/Devolutions.Terminal -p:EnablePowerShellIse=true
+dotnet test Devolutions.Terminal.slnx -p:EnablePowerShellIse=true
 ```
 
-The second command produces the terminal-only NativeAOT variant. It retains
-saved Iseberg profiles but reports the missing feature rather than silently
-opening PowerShell terminals. Publishing an Iseberg-enabled build with trimming
-or NativeAOT explicitly enabled fails before compiling project dependencies.
+The first command produces the default NativeAOT desktop. It retains saved
+Iseberg profiles but reports the missing feature rather than silently opening
+PowerShell terminals. Its settings editor does not offer new Iseberg profiles.
+The second command produces an opt-in managed developer publish, not a default
+release package payload. Use the opt-in flag consistently for restore, build
+and test commands; engine/workbench tests are excluded when the feature is off.
+CI still builds and tests this opt-in variant separately. Publishing an
+Iseberg-enabled build with trimming or NativeAOT explicitly enabled fails before
+compiling project dependencies.
 
 Native libraries/helpers and legal notices remain loose for package signing and
-license checks. macOS packaging supports the default managed single-file layout
-or terminal-only NativeAOT, not an arbitrary loose managed application layout.
+license checks. macOS packaging defaults to NativeAOT; an explicitly supplied
+managed publish must be self-contained and single-file, not an arbitrary loose
+managed application layout.
 Keep all `THIRD-PARTY-NOTICES*.txt` files in distributions.
+
+The restored default was validated with a fresh `win-x64` Release publish
+without an `EnablePowerShellIse` override. Both desktop and CLI are native PE
+executables without CLR headers; the output contains no Iseberg, PowerShell
+engine or CoreCLR payload, and `dt --help` exits zero. Default App, UI and
+Settings.Editor suites pass 213, 14 and 64 cases respectively. Explicit opt-in
+App/UI runs still pass all 533/664 cases. Platform script syntax and workflow
+YAML were checked on Windows; actual Linux/macOS publishing and packaging
+remain platform-CI validation responsibilities.
 
 For engine tests on a machine without the matching installation,
 `scripts/Install-IsebergTestPowerShell.ps1` downloads a pinned, SHA-256-verified
@@ -263,7 +286,7 @@ their respective platform/release environments.
 
 ### Final Windows integration evidence
 
-The final source passes **1,570 tests, 0 failed, 9 skipped** across the complete
+The Iseberg-enabled source passed **1,570 tests, 0 failed, 9 skipped** across the complete
 affected projects. The nine skips are the existing Unix PTY cases, which require
 Linux/macOS; no Iseberg case is skipped.
 
@@ -275,8 +298,10 @@ Linux/macOS; no Iseberg case is skipped.
 | Devolutions.Terminal.Settings.Editor.Tests | 64 | 0 | 0 |
 | Devolutions.Terminal.Connection.Tests | 119 | 0 | 9 |
 
-These are successful fresh Debug `dotnet test` runs, not sums of overlapping
-filtered runs. Each project was run with `-p:SkipNativeRestore=true`,
+These are successful fresh Debug `dotnet test` runs with Iseberg enabled, not
+sums of overlapping filtered runs. With the feature now disabled by default,
+repeat them with `-p:EnablePowerShellIse=true`.
+Each project was run with `-p:SkipNativeRestore=true`,
 `-p:UseArtifactsOutput=true` and the same absolute `ArtifactsPath`, sequentially
 to avoid shared build-output collisions. Exact results are retained locally in
 ignored `artifacts\iseberg\portable-final-results`: `final-App.trx`,
@@ -343,9 +368,13 @@ installed-engine resolver in DT's connections layer. DT remains on Avalonia
 12.1.1; AvaloniaEdit is 12.0.0 and the compile-time PowerShell SDK is 7.6.6.
 
 Iseberg is **MIT**, copyright (c) 2026 Adam Driscoll. Its license is retained in
-the module and emitted as `THIRD-PARTY-NOTICES-ISEBERG.txt`. The copied upstream
-`EDITOR-NOTICES.md` describes upstream's editor distribution; DT also includes
+[`docs/licenses/iseberg.txt`](licenses/iseberg.txt) and emitted as
+`THIRD-PARTY-NOTICES-ISEBERG.txt`. The copied upstream
+[editor notices](licenses/iseberg-editor.md) describe upstream's editor
+distribution and are emitted as `THIRD-PARTY-NOTICES-ISEBERG-EDITOR.txt`.
+DT also includes
 the full AvaloniaEdit/AvalonEdit MIT notices, including AvaloniaUI, AvalonEdit
 Contributors and AlphaSierraPapa/SharpDevelop attribution, in
-`AVALONIAEDIT-LICENSE.txt` / `THIRD-PARTY-NOTICES-AVALONIAEDIT.txt`.
+[`docs/licenses/avaloniaedit.txt`](licenses/avaloniaedit.txt), emitted as
+`THIRD-PARTY-NOTICES-AVALONIAEDIT.txt`.
 Other DT dependency notices and their own licenses still apply.
