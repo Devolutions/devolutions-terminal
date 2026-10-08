@@ -1,12 +1,14 @@
 # Devolutions Terminal
 
 A cross-platform terminal emulator implemented in C# on **.NET 10**, published
-with **NativeAOT**, and rendered with **Avalonia 12** / Skia:
+as a self-contained **NativeAOT** desktop app, and rendered with **Avalonia 12** / Skia:
 
 - **ConPTY** on Windows and a real **forkpty** transport on Linux and macOS
 - Azure Cloud Shell for remote Azure sessions
 - selectable built-in or **Ghostty** VT engine
 - Windows Terminal-compatible `settings.json`, actions, keybindings, and `dt` CLI
+- optional source-integrated **Iseberg** PowerShell ISE profiles in managed
+  developer builds only (disabled in default NativeAOT builds and release packages)
 
 This is the [Devolutions Terminal](https://github.com/Devolutions/devolutions-terminal)
 source tree. Projects, namespaces, and the GUI host use `Devolutions.Terminal.*`.
@@ -29,23 +31,29 @@ Install [gsudo](https://gerardog.github.io/gsudo/) and ensure `gsudo.exe` is on
 Elevation is only available for local Windows sessions; UAC approval is still
 required, and cancelling it does not launch an unelevated shell.
 
-## NativeAOT publish
+## Desktop publish
 
 ```powershell
 dotnet publish src/Devolutions.Terminal -c Release -r win-x64 --self-contained
 ```
 
-The native executable is written to
+The executable is written to
 `src/Devolutions.Terminal/bin/Release/net10.0/win-x64/publish/Devolutions.Terminal.exe`.
 
-macOS NativeAOT app bundles (Darwin only):
+The default desktop and `dt` CLI are NativeAOT. Release packages exclude Iseberg.
+An explicitly opted-in `-p:EnablePowerShellIse=true` developer build uses a
+managed, untrimmed desktop and separately installed compatible PowerShell; see
+[docs/iseberg.md](docs/iseberg.md). Saved Iseberg profiles remain intact, but
+cannot launch in the default build.
+
+macOS app bundles (Darwin only):
 
 ```bash
 pwsh scripts/Build-MacOsPackage.ps1 osx-arm64 2026.3.0 artifacts/packages
 pwsh scripts/Test-MacOsPackage.ps1 osx-arm64 artifacts/packages/*.zip
 ```
 
-Linux x64 and ARM64 NativeAOT packages are built on Linux with:
+Linux x64 and ARM64 packages are built on Linux with:
 
 ```bash
 scripts/Build-LinuxPackage.sh linux-x64 2026.3.0 artifacts/packages all
@@ -113,7 +121,8 @@ Devolutions.Terminal.Connection   ConPTY + Linux PTY + Azure Cloud Shell + brows
 Devolutions.Terminal.Settings     Layered Windows Terminal-compatible JSON settings
 Devolutions.Terminal.Control      Avalonia TermControl renderer
 Devolutions.Terminal.App   Tabs, title bar, panes, actions, window behavior
-Devolutions.Terminal       NativeAOT executable and composition root
+Devolutions.Terminal.Ise   Imported Iseberg engine, editor and embedded workbench
+Devolutions.Terminal       Desktop executable and composition root
 Devolutions.Terminal.Browser      Avalonia WebAssembly host (in-process dt-wasm shell)
 Devolutions.Terminal.Browser.Host Loopback server for profile tabs and a real PTY
 ```

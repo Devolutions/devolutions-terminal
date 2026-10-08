@@ -155,13 +155,32 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Restore
-        run: dotnet restore Devolutions.Terminal.slnx -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
+        run: dotnet restore Devolutions.Terminal.slnx -p:Configuration=Release -p:EnablePowerShellIse=true -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
 
       - name: Build
-        run: dotnet build Devolutions.Terminal.slnx -c Release --no-restore -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
+        run: dotnet build Devolutions.Terminal.slnx -c Release --no-restore -p:EnablePowerShellIse=true -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
 
       - name: Test
-        run: dotnet test Devolutions.Terminal.slnx -c Release --no-build -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
+        # Engine tests resolve the separately installed runtime; it is not a DT package payload.
+        run: pwsh -NoLogo -NoProfile -File scripts/Install-IsebergTestPowerShell.ps1
+
+      - name: Run tests
+        timeout-minutes: 60
+        run: >-
+          dotnet test Devolutions.Terminal.slnx -c Release --no-build -m:1
+          -p:EnablePowerShellIse=true -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
+          --logger "console;verbosity=normal" --logger trx
+          --results-directory artifacts/test-results/windows
+          --blame-hang --blame-hang-timeout 5min --blame-hang-dump-type none
+
+      - name: Upload Windows test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-test-diagnostics
+          path: artifacts/test-results/windows
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Test macOS legal notice layout
         run: pwsh -NoLogo -NoProfile -File scripts/Test-MacOsLegalNotices.ps1
@@ -212,7 +231,7 @@ jobs:
           if-no-files-found: error
 
   native-aot:
-    name: NativeAOT ${{ matrix.rid }}
+    name: NativeAOT desktop ${{ matrix.rid }}
     runs-on: windows-latest
     needs: release-metadata
     strategy:
@@ -241,16 +260,28 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Publish
+      - name: Publish NativeAOT desktop
         run: >
           dotnet publish src/Devolutions.Terminal/Devolutions.Terminal.csproj
           -c Release
           -r ${{ matrix.rid }}
           --self-contained
+          -p:EnablePowerShellIse=false
+          -p:PublishAot=true
           -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
           -o artifacts/${{ matrix.rid }}
 
-      - name: Upload native executable
+      - name: Check opt-in managed Iseberg desktop
+        run: >
+          dotnet publish src/Devolutions.Terminal/Devolutions.Terminal.csproj
+          -c Release
+          -r ${{ matrix.rid }}
+          --self-contained
+          -p:EnablePowerShellIse=true
+          -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
+          -o artifacts/iseberg-validation/${{ matrix.rid }}
+
+      - name: Upload NativeAOT desktop
         uses: actions/upload-artifact@v4
         with:
           name: DevolutionsTerminal-${{ matrix.rid }}
@@ -282,10 +313,13 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Restore
-        run: dotnet restore Devolutions.Terminal.slnx -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
+        run: dotnet restore Devolutions.Terminal.slnx -p:Configuration=Release -p:EnablePowerShellIse=true -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
 
       - name: Run managed tests
-        run: dotnet test Devolutions.Terminal.slnx -c Release --no-restore -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
+        run: pwsh -NoLogo -NoProfile -File scripts/Install-IsebergTestPowerShell.ps1
+
+      - name: Test managed projects
+        run: dotnet test Devolutions.Terminal.slnx -c Release --no-restore -p:EnablePowerShellIse=true -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
 
       - name: Validate Linux scripts and metadata
         run: bash scripts/Test-LinuxPackagingMetadata.sh
@@ -315,10 +349,13 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Restore
-        run: dotnet restore Devolutions.Terminal.slnx -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
+        run: dotnet restore Devolutions.Terminal.slnx -p:Configuration=Release -p:EnablePowerShellIse=true -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
 
       - name: Run managed tests
-        run: dotnet test Devolutions.Terminal.slnx -c Release --no-restore -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
+        run: pwsh -NoLogo -NoProfile -File scripts/Install-IsebergTestPowerShell.ps1
+
+      - name: Test managed projects
+        run: dotnet test Devolutions.Terminal.slnx -c Release --no-restore -p:EnablePowerShellIse=true -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
 
       - name: Validate macOS scripts and metadata
         run: pwsh -NoLogo -NoProfile -File scripts/Test-MacOsPackagingMetadata.ps1
@@ -333,7 +370,7 @@ jobs:
         run: pwsh -NoLogo -NoProfile -File scripts/Test-MacOsNuGetSigning.ps1
 
   macos-native-aot:
-    name: macOS NativeAOT ${{ matrix.rid }}
+    name: macOS NativeAOT desktop ${{ matrix.rid }}
     runs-on: macos-26
     needs:
       - macos-managed
@@ -364,19 +401,21 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: NativeAOT publish
+      - name: NativeAOT desktop publish
         run: >
           dotnet publish src/Devolutions.Terminal/Devolutions.Terminal.csproj
           -c Release
           -r ${{ matrix.rid }}
           --self-contained true
+          -p:EnablePowerShellIse=false
+          -p:PublishAot=true
           -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
           -p:DebugSymbols=false
           -p:DebugType=None
           -p:NativeDebugSymbols=false
           -o artifacts/publish/${{ matrix.rid }}
 
-      - name: Upload macOS NativeAOT publish
+      - name: Upload macOS desktop publish
         uses: actions/upload-artifact@v4
         with:
           name: DevolutionsTerminal-${{ matrix.rid }}
@@ -649,7 +688,7 @@ jobs:
             throw "Runtime hash mismatch: expected ${{ matrix.runtime_sha256 }}, got $actualHash."
           }
 
-      - name: NativeAOT publish
+      - name: NativeAOT desktop publish
         shell: pwsh
         run: |
           $publishArgs = @(
@@ -657,6 +696,8 @@ jobs:
             "-c", "Release",
             "-r", "${{ matrix.rid }}",
             "--self-contained", "true",
+            "-p:EnablePowerShellIse=false",
+            "-p:PublishAot=true",
             "-p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}",
             "-p:DebugSymbols=false",
             "-p:DebugType=None",
@@ -668,7 +709,7 @@ jobs:
           }
           dotnet publish @publishArgs
 
-      - name: Upload Linux NativeAOT publish
+      - name: Upload Linux desktop publish
         uses: actions/upload-artifact@v4
         with:
           name: DevolutionsTerminal-${{ matrix.rid }}

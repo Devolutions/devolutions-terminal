@@ -5,6 +5,14 @@
     <Description>Avalonia application shell for tabs, panes, actions, and windows.</Description>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(EnablePowerShellIse)' == 'true'">
+    <DefineConstants>$(DefineConstants);POWERSHELL_ISE</DefineConstants>
+    <IsAotCompatible>false</IsAotCompatible>
+    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(EnablePowerShellIse)' != 'true'">
+    <Compile Remove="Connections\PowerShellInstallation.cs" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Avalonia" />
@@ -28,5 +36,7 @@
     <ProjectReference Include="..\Devolutions.Terminal.Settings\Devolutions.Terminal.Settings.csproj" />
     <ProjectReference Include="..\Devolutions.Terminal.Package\Devolutions.Terminal.Package.csproj" />
     <ProjectReference Include="..\Devolutions.Terminal.Settings.Editor\Devolutions.Terminal.Settings.Editor.csproj" />
+    <ProjectReference Include="..\Devolutions.Terminal.Ise\Iseberg\Iseberg.csproj"
+                      Condition="'$(EnablePowerShellIse)' == 'true'" />
   </ItemGroup>
 </Project>

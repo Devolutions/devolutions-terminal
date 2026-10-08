@@ -22,13 +22,21 @@ as a tab on `/pty/{id}` (`ws` on this HTTP host, `wss` when the page is HTTPS).
 The browser never supplies a command line, and the host does not send one back.
 Elevated profiles are listed and refused.
 
-Warnings are errors. Prefer small, reviewable changes that keep NativeAOT publish green.
+Warnings are errors. Keep the default NativeAOT desktop publish green.
+Iseberg is disabled by default; its managed developer build and regression suite
+require `-p:EnablePowerShellIse=true`. See [Iseberg](docs/iseberg.md) for the
+installed-engine boundary.
 
-## NativeAOT
+## Desktop publish
 
 ```powershell
 dotnet publish src/Devolutions.Terminal -c Release -r win-x64 --self-contained
 ```
+
+The default desktop and release packages use NativeAOT and exclude Iseberg.
+Add `-p:EnablePowerShellIse=true` only for an optional managed, untrimmed
+Iseberg developer build. Use the same flag for restore/build/test/run commands
+when working on Iseberg. The CLI remains NativeAOT in both variants.
 
 Linux packages:
 

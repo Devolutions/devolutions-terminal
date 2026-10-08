@@ -209,14 +209,90 @@ public sealed class ThemeItemViewModel(ThemeSettings theme, Action changed)
     }
 }
 
-public sealed class ProfileItemViewModel(ProfileSettings profile, Action changed) : ObservableObject
+public sealed class ProfileItemViewModel(ProfileSettings profile, Action changed, bool supportsPowerShellIse = true,
+    Func<bool>? prepareTypeChange = null) : ObservableObject
 {
     public static IReadOnlyList<string> TerminalEngineChoices { get; } =
         ["Inherit", "Built-in", "Ghostty"];
     private string _environmentJson = SerializeEnvironment(profile.Environment);
 
-    public string DisplayName => $"{profile.Name} ({profile.Origin})";
-    public string Name { get => profile.Name; set => Change(profile.Name, value, v => profile.Name = v); }
+    public string DisplayName => IsDefaults ? "Defaults" : $"{profile.Name} ({profile.Origin})";
+    public bool IsDefaults => profile.Origin == SettingsOrigin.ProfilesDefaults;
+    public bool IsNamedProfile => !IsDefaults;
+    public bool IsTerminalProfile => IsNamedProfile && IsTerminal;
+    public bool CanChangeProfileType => supportsPowerShellIse && !IsDefaults;
+    public IReadOnlyList<string> ProfileTypeChoices { get; } = ["Terminal", "PowerShell ISE (Iseberg)"];
+    public bool IsPowerShellIse => !IsDefaults && profile.Kind == ProfileKind.PowerShellIse;
+    public bool IsTerminal => profile.Kind == ProfileKind.Terminal;
+    public string ProfileType
+    {
+        get => profile.Kind switch
+        {
+            ProfileKind.Terminal => "Terminal",
+            ProfileKind.PowerShellIse => "PowerShell ISE (Iseberg)",
+            _ => "Unsupported profile type",
+        };
+        set
+        {
+            if (!CanChangeProfileType || value is not ("Terminal" or "PowerShell ISE (Iseberg)")) return;
+            var kind = value == "Terminal" ? ProfileKind.Terminal : ProfileKind.PowerShellIse;
+            if (profile.Kind == kind) return;
+            if (prepareTypeChange?.Invoke() == false)
+            {
+                OnPropertyChanged(nameof(ProfileType));
+                return;
+            }
+            if (kind == ProfileKind.PowerShellIse)
+            {
+                profile.IseTerminalConfiguration = new(profile.Commandline, profile.ConnectionType, profile.Elevate,
+                    new Dictionary<string, string?>(profile.Environment));
+                profile.Commandline = "";
+                profile.ConnectionType = null;
+                profile.Elevate = false;
+                profile.Environment = [];
+            }
+            else if (profile.IseTerminalConfiguration is { } terminal)
+            {
+                profile.Commandline = terminal.Commandline;
+                profile.ConnectionType = terminal.ConnectionType;
+                profile.Elevate = terminal.Elevate;
+                profile.Environment = new Dictionary<string, string?>(terminal.Environment);
+            }
+            else
+            {
+                profile.Commandline = UnixShellCommandline.DefaultNewProfileCommandline();
+            }
+            profile.Kind = kind;
+            _environmentJson = SerializeEnvironment(profile.Environment);
+            OnPropertyChanged(nameof(ProfileType));
+            OnPropertyChanged(nameof(IsPowerShellIse));
+            OnPropertyChanged(nameof(IsTerminal));
+            OnPropertyChanged(nameof(IsTerminalProfile));
+            OnPropertyChanged(nameof(Commandline));
+            OnPropertyChanged(nameof(Elevate));
+            OnPropertyChanged(nameof(EnvironmentJson));
+            changed();
+        }
+    }
+    public bool IseLoadProfiles { get => profile.IseLoadProfiles; set => Change(profile.IseLoadProfiles, value, v => profile.IseLoadProfiles = v); }
+    public IReadOnlyList<string> IseColorThemeChoices => IsebergThemes.Choices;
+    public string IseColorTheme { get => profile.IseColorTheme; set => Change(profile.IseColorTheme, value, v => profile.IseColorTheme = v); }
+    public bool IseShowLineNumbers { get => profile.IseShowLineNumbers; set => Change(profile.IseShowLineNumbers, value, v => profile.IseShowLineNumbers = v); }
+    public bool IseWordWrap { get => profile.IseWordWrap; set => Change(profile.IseWordWrap, value, v => profile.IseWordWrap = v); }
+    public bool IsePromptToSaveBeforeRun { get => profile.IsePromptToSaveBeforeRun; set => Change(profile.IsePromptToSaveBeforeRun, value, v => profile.IsePromptToSaveBeforeRun = v); }
+    public int IseAutoSaveMinutes { get => profile.IseAutoSaveMinutes; set => Change(profile.IseAutoSaveMinutes, value, v => profile.IseAutoSaveMinutes = Math.Clamp(v, 0, 120)); }
+    public bool IseConsoleIntelliSense { get => profile.IseConsoleIntelliSense; set => Change(profile.IseConsoleIntelliSense, value, v => profile.IseConsoleIntelliSense = v); }
+    public bool IseConsoleCompletionOnEnter { get => profile.IseConsoleCompletionOnEnter; set => Change(profile.IseConsoleCompletionOnEnter, value, v => profile.IseConsoleCompletionOnEnter = v); }
+    public bool IseScriptIntelliSense { get => profile.IseScriptIntelliSense; set => Change(profile.IseScriptIntelliSense, value, v => profile.IseScriptIntelliSense = v); }
+    public bool IseScriptCompletionOnEnter { get => profile.IseScriptCompletionOnEnter; set => Change(profile.IseScriptCompletionOnEnter, value, v => profile.IseScriptCompletionOnEnter = v); }
+    public int IseIntelliSenseTimeoutSeconds { get => profile.IseIntelliSenseTimeoutSeconds; set => Change(profile.IseIntelliSenseTimeoutSeconds, value, v => profile.IseIntelliSenseTimeoutSeconds = Math.Clamp(v, 1, 30)); }
+    public bool IseShowOutlining { get => profile.IseShowOutlining; set => Change(profile.IseShowOutlining, value, v => profile.IseShowOutlining = v); }
+    public bool IseWarnDuplicateFiles { get => profile.IseWarnDuplicateFiles; set => Change(profile.IseWarnDuplicateFiles, value, v => profile.IseWarnDuplicateFiles = v); }
+    public bool IseUseLocalHelp { get => profile.IseUseLocalHelp; set => Change(profile.IseUseLocalHelp, value, v => profile.IseUseLocalHelp = v); }
+    public bool IseUseDefaultSnippets { get => profile.IseUseDefaultSnippets; set => Change(profile.IseUseDefaultSnippets, value, v => profile.IseUseDefaultSnippets = v); }
+    public int IseRecentFileCount { get => profile.IseRecentFileCount; set => Change(profile.IseRecentFileCount, value, v => profile.IseRecentFileCount = Math.Clamp(v, 0, 100)); }
+    public bool IseShowToolbar { get => profile.IseShowToolbar; set => Change(profile.IseShowToolbar, value, v => profile.IseShowToolbar = v); }
+    public string Name { get => IsDefaults ? "Defaults" : profile.Name; set { if (!IsDefaults) Change(profile.Name, value, v => profile.Name = v); } }
     public string? Guid => profile.Guid;
     public string? Source => profile.Source;
     public string TerminalEngine
@@ -245,7 +321,7 @@ public sealed class ProfileItemViewModel(ProfileSettings profile, Action changed
     public string? TabColor { get => profile.TabColor; set => Change(profile.TabColor, value, v => profile.TabColor = v); }
     public bool SuppressApplicationTitle { get => profile.SuppressApplicationTitle; set => Change(profile.SuppressApplicationTitle, value, v => profile.SuppressApplicationTitle = v); }
     public bool Elevate { get => profile.Elevate; set => Change(profile.Elevate, value, v => profile.Elevate = v); }
-    public bool CanElevate => OperatingSystem.IsWindows();
+    public bool CanElevate => OperatingSystem.IsWindows() && IsTerminal;
     public string DarkColorScheme { get => profile.DarkColorScheme; set => Change(profile.DarkColorScheme, value, v => profile.DarkColorScheme = v); }
     public string LightColorScheme { get => profile.LightColorScheme; set => Change(profile.LightColorScheme, value, v => profile.LightColorScheme = v); }
     public string FontFace { get => profile.FontFace; set => Change(profile.FontFace, value, v => profile.FontFace = v); }

@@ -116,6 +116,12 @@ public sealed class HostProfileCatalog
 
     private static bool IsLaunchable(ProfileSettings profile, string commandLine, out string? reason)
     {
+        if (profile.Kind != ProfileKind.Terminal)
+        {
+            reason = "This profile requires the desktop PowerShell ISE workbench.";
+            return false;
+        }
+
         if (Guid.TryParse(profile.ConnectionType, out var connectionType) &&
             connectionType == AzureCloudShellConnection.ConnectionTypeGuid)
         {

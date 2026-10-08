@@ -454,6 +454,7 @@ public static class SettingsLoader
     private static ProfileSettings ResolveProfile(JsonObject profile, bool generateGuid = true)
     {
         var font = profile["font"] as JsonObject;
+        var ise = profile["ise"] as JsonObject;
         var unfocused = profile["unfocusedAppearance"] as JsonObject;
         var name = String(profile, "name") ?? "Unnamed profile";
         var source = String(profile, "source");
@@ -465,6 +466,35 @@ public static class SettingsLoader
 
         return new ProfileSettings
         {
+            Kind = String(profile, "type") switch
+            {
+                null or "terminal" => ProfileKind.Terminal,
+                "powershellIse" => ProfileKind.PowerShellIse,
+                _ => ProfileKind.Unsupported,
+            },
+            IseLoadProfiles = Bool(ise, "loadProfiles", Bool(profile, "ise.loadProfiles")),
+            IseColorTheme = IsebergThemes.Canonicalize(String(ise, "colorTheme") ?? String(profile, "ise.colorTheme") ?? IsebergThemes.Classic),
+            IseShowLineNumbers = Bool(ise, "showLineNumbers", true),
+            IseWordWrap = Bool(ise, "wordWrap"),
+            IsePromptToSaveBeforeRun = Bool(ise, "promptToSaveBeforeRun", true),
+            IseAutoSaveMinutes = Int(ise, "autoSaveMinutes", 2, 0, 120),
+            IseConsoleIntelliSense = Bool(ise, "consoleIntelliSense", true),
+            IseConsoleCompletionOnEnter = Bool(ise, "consoleCompletionOnEnter", true),
+            IseScriptIntelliSense = Bool(ise, "scriptIntelliSense", true),
+            IseScriptCompletionOnEnter = Bool(ise, "scriptCompletionOnEnter", true),
+            IseIntelliSenseTimeoutSeconds = Int(ise, "intelliSenseTimeoutSeconds", 3, 1, 30),
+            IseShowOutlining = Bool(ise, "showOutlining", true),
+            IseWarnDuplicateFiles = Bool(ise, "warnDuplicateFiles", true),
+            IseUseLocalHelp = Bool(ise, "useLocalHelp", true),
+            IseUseDefaultSnippets = Bool(ise, "useDefaultSnippets", true),
+            IseRecentFileCount = Int(ise, "recentFileCount", 10, 0, 100),
+            IseShowToolbar = Bool(ise, "showToolbar", true),
+            IseTerminalConfiguration = ise?["terminal"] is JsonObject terminal ? new IseTerminalConfiguration(
+                String(terminal, "commandline") ?? "",
+                String(terminal, "connectionType"),
+                Bool(terminal, "elevate"),
+                (terminal["environment"] as JsonObject ?? new JsonObject()).ToDictionary(
+                    pair => pair.Key, pair => pair.Value is null ? null : StringValue(pair.Value))) : null,
             Guid = guid,
             Name = name,
             Source = source,
@@ -526,7 +556,9 @@ public static class SettingsLoader
             AllowKeypadMode = Bool(profile, "compatibility.allowDECNKM"),
             DragDropDelimiter = String(profile, "dragDropDelimiter") ?? " ",
             PathTranslationStyle = String(profile, "pathTranslationStyle") ?? "none",
-            Environment = StringMap(profile["environment"]),
+            Environment = StringMap(profile["environment"]).Where(pair =>
+                String(profile, "type") != "powershellIse" || ise?["terminal"] is not JsonObject || pair.Value is not null)
+                .ToDictionary(pair => pair.Key, pair => pair.Value),
         };
     }
 
@@ -632,6 +664,14 @@ public static class SettingsLoader
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var profile in settings.Profiles)
         {
+            if (profile.Kind == ProfileKind.Unsupported)
+            {
+                settings.Diagnostics.Add(new SettingsDiagnostic(
+                    SettingsDiagnosticSeverity.Error,
+                    "UnsupportedProfileType",
+                    $"Profile '{profile.Name}' has an unsupported type and cannot be launched."));
+            }
+
             if (!schemeNames.Contains(profile.DarkColorScheme) ||
                 !schemeNames.Contains(profile.LightColorScheme))
             {
@@ -1279,6 +1319,13 @@ public static class SettingsLoader
             }
 
             ApplyObjectChanges(targetProfile, baselineProfile, currentProfile);
+            foreach (var legacyKey in new[] { "ise.loadProfiles", "ise.colorTheme" })
+            {
+                if (targetProfile.ContainsKey(legacyKey) && currentProfile.TryGetPropertyValue(legacyKey, out var value))
+                {
+                    targetProfile[legacyKey] = value?.DeepClone();
+                }
+            }
         }
 
         foreach (var baselineProfile in baselineList.OfType<JsonObject>())
@@ -1438,6 +1485,51 @@ public static class SettingsLoader
         result["startingDirectory"] = profile.StartingDirectory;
         result["icon"] = profile.Icon;
         result["connectionType"] = profile.ConnectionType;
+        if (profile.Kind == ProfileKind.PowerShellIse)
+        {
+            result["type"] = "powershellIse";
+            if (result.ContainsKey("ise.loadProfiles")) result["ise.loadProfiles"] = profile.IseLoadProfiles;
+            if (result.ContainsKey("ise.colorTheme")) result["ise.colorTheme"] = profile.IseColorTheme;
+        }
+        else if (profile.Kind == ProfileKind.Terminal)
+        {
+            // Do not add a discriminator to legacy terminal profiles.
+            if (result.ContainsKey("type")) result["type"] = "terminal";
+            if (result.ContainsKey("ise.loadProfiles")) result["ise.loadProfiles"] = profile.IseLoadProfiles;
+            if (result.ContainsKey("ise.colorTheme")) result["ise.colorTheme"] = profile.IseColorTheme;
+        }
+        if (profile.Kind == ProfileKind.PowerShellIse || result.ContainsKey("ise") || profile.IseTerminalConfiguration is not null)
+        {
+            var ise = result["ise"] as JsonObject ?? new JsonObject();
+            ise["loadProfiles"] = profile.IseLoadProfiles;
+            ise["colorTheme"] = profile.IseColorTheme;
+            ise["showLineNumbers"] = profile.IseShowLineNumbers;
+            ise["wordWrap"] = profile.IseWordWrap;
+            ise["promptToSaveBeforeRun"] = profile.IsePromptToSaveBeforeRun;
+            ise["autoSaveMinutes"] = profile.IseAutoSaveMinutes;
+            ise["consoleIntelliSense"] = profile.IseConsoleIntelliSense;
+            ise["consoleCompletionOnEnter"] = profile.IseConsoleCompletionOnEnter;
+            ise["scriptIntelliSense"] = profile.IseScriptIntelliSense;
+            ise["scriptCompletionOnEnter"] = profile.IseScriptCompletionOnEnter;
+            ise["intelliSenseTimeoutSeconds"] = profile.IseIntelliSenseTimeoutSeconds;
+            ise["showOutlining"] = profile.IseShowOutlining;
+            ise["warnDuplicateFiles"] = profile.IseWarnDuplicateFiles;
+            ise["useLocalHelp"] = profile.IseUseLocalHelp;
+            ise["useDefaultSnippets"] = profile.IseUseDefaultSnippets;
+            ise["recentFileCount"] = profile.IseRecentFileCount;
+            ise["showToolbar"] = profile.IseShowToolbar;
+            if (profile.IseTerminalConfiguration is { } savedTerminal)
+            {
+                var terminal = ise["terminal"] as JsonObject ?? new JsonObject();
+                terminal["commandline"] = savedTerminal.Commandline;
+                terminal["connectionType"] = savedTerminal.ConnectionType;
+                terminal["elevate"] = savedTerminal.Elevate;
+                terminal["environment"] = new JsonObject(savedTerminal.Environment.Select(pair =>
+                    KeyValuePair.Create<string, JsonNode?>(pair.Key, pair.Value is null ? null : JsonValue.Create(pair.Value))));
+                ise["terminal"] = terminal;
+            }
+            result["ise"] = ise;
+        }
         if (profile.TerminalEngine is { } terminalEngine)
         {
             result["experimental.terminalEngine"] = TerminalEngineName(terminalEngine);

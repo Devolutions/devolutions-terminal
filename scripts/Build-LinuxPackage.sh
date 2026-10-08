@@ -98,6 +98,8 @@ else
         -c Release
         -r "$rid"
         --self-contained true
+        -p:EnablePowerShellIse=false
+        -p:PublishAot=true
         -o "$publish_dir"
         -p:VersionPrefix="$version"
         -p:DebugSymbols=false
@@ -169,7 +171,7 @@ Section: utils
 Priority: optional
 Homepage: $HOMEPAGE
 Description: $SUMMARY
- Cross-platform Avalonia terminal emulator published with .NET NativeAOT.
+ Cross-platform Avalonia terminal emulator with an embedded Iseberg PowerShell workbench.
 EOF
     (
         cd "$package_root"
@@ -229,7 +231,7 @@ Requires: $RUNTIME_DEPENDENCIES_RPM
 AutoReqProv: no
 
 %description
-Cross-platform Avalonia terminal emulator published with .NET NativeAOT.
+Cross-platform Avalonia terminal emulator with an embedded Iseberg PowerShell workbench.
 
 %prep
 

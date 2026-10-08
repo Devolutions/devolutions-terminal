@@ -938,6 +938,19 @@ public sealed class TermControl : Avalonia.Controls.Control
         InvalidateVisual();
     }
 
+    public void ApplyAppearance(ProfileSettings profile)
+    {
+        ArgumentNullException.ThrowIfNull(profile);
+        ObjectDisposedException.ThrowIf(_rendererDisposed, this);
+        Profile = profile;
+        _padding = ParsePadding(profile.Padding);
+        _defaultFontSize = profile.FontSize <= 0 ? 12 : profile.FontSize;
+        ConfigureRenderer(profile);
+        if (VisualRoot is not null) MeasureGlyph();
+        InvalidateMeasure();
+        InvalidateVisual();
+    }
+
     public void ResetFontSize()
     {
         _fontSize = _defaultFontSize;

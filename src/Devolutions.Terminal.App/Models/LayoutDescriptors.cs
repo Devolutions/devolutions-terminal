@@ -8,6 +8,9 @@ namespace Devolutions.Terminal.App.Models;
 
 public sealed class TerminalSessionDescriptor
 {
+    public ProfileKind Kind { get; set; }
+    public bool IseLoadProfiles { get; set; }
+    public string IseColorTheme { get; set; } = IsebergThemes.Classic;
     public Guid SessionId { get; set; } = Guid.NewGuid();
     public string? ProfileId { get; set; }
     public string ProfileName { get; set; } = string.Empty;
@@ -47,7 +50,7 @@ public sealed class TabLayoutDescriptor
 
 public sealed class TerminalWindowLayoutDescriptor
 {
-    public const int CurrentVersion = 1;
+    public const int CurrentVersion = 2;
 
     public int Version { get; set; } = CurrentVersion;
     public Guid? ActiveTabId { get; set; }
@@ -161,7 +164,7 @@ public static class TerminalLayoutSerializer
     public static void Validate(TerminalWindowLayoutDescriptor layout)
     {
         ArgumentNullException.ThrowIfNull(layout);
-        if (layout.Version != TerminalWindowLayoutDescriptor.CurrentVersion)
+        if (layout.Version is < 1 or > TerminalWindowLayoutDescriptor.CurrentVersion)
         {
             throw new InvalidOperationException($"Unsupported terminal layout version '{layout.Version}'.");
         }
@@ -185,6 +188,9 @@ public static class TerminalLayoutSerializer
             }
 
             var sessions = new HashSet<Guid>();
+            if (ContainsNonTerminalSession(tab.Root) &&
+                (tab.Root.Session is not { Kind: ProfileKind.PowerShellIse } || tab.ZoomedSessionId is not null))
+                throw new InvalidOperationException("An Iseberg workbench must occupy a whole tab.");
             ValidatePane(tab.Root, sessions);
             if (!sessions.Contains(tab.ActiveSessionId) ||
                 (tab.ZoomedSessionId is { } zoomed && !sessions.Contains(zoomed)))
@@ -208,6 +214,8 @@ public static class TerminalLayoutSerializer
 
         if (pane.Session is { } session)
         {
+            if (session.Kind is not (ProfileKind.Terminal or ProfileKind.PowerShellIse))
+                throw new InvalidOperationException("The saved session has an unsupported profile type.");
             if (pane.First is not null ||
                 pane.Second is not null ||
                 pane.Orientation is not null ||
@@ -232,6 +240,11 @@ public static class TerminalLayoutSerializer
 
     private static double NormalizeRatio(double ratio) =>
         Math.Round(Math.Clamp(double.IsFinite(ratio) ? ratio : 0.5, 0.1, 0.9), 6);
+
+    private static bool ContainsNonTerminalSession(PaneLayoutDescriptor pane) =>
+        pane.Session is { Kind: not ProfileKind.Terminal } ||
+        pane.First is not null && ContainsNonTerminalSession(pane.First) ||
+        pane.Second is not null && ContainsNonTerminalSession(pane.Second);
 }
 
 [JsonSourceGenerationOptions(

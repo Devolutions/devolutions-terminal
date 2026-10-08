@@ -2,13 +2,21 @@ using Devolutions.Terminal.Settings;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Security.Cryptography;
+using Avalonia.Media.Imaging;
+using Avalonia.Platform;
 
 namespace Devolutions.Terminal.Settings.Editor;
 
 public sealed record SettingsDiagnosticViewModel(string Severity, string Code, string Message, string? Source);
 
-public sealed class SettingsNavigationItem
+public sealed class SettingsNavigationItem : ObservableObject
 {
+    private static readonly Lazy<Bitmap> IseIcon = new(() =>
+    {
+        using var stream = AssetLoader.Open(new Uri("avares://Devolutions.Terminal.Settings.Editor/Assets/iseberg.scale-100.png"));
+        return new Bitmap(stream);
+    });
+    private ProfileItemViewModel? _profile;
     public required SettingsPage Page { get; init; }
     public required string Icon { get; init; }
     public required string IconFontFamily { get; init; }
@@ -17,7 +25,25 @@ public sealed class SettingsNavigationItem
     public bool HasGroupHeader => !string.IsNullOrEmpty(GroupHeader);
     public required string Keywords { get; init; }
     public required object ViewModel { get; init; }
-    public ProfileItemViewModel? Profile { get; init; }
+    public ProfileItemViewModel? Profile
+    {
+        get => _profile;
+        init
+        {
+            _profile = value;
+            if (value is not null) value.PropertyChanged += (_, change) =>
+            {
+                if (change.PropertyName is nameof(ProfileItemViewModel.ProfileType) or nameof(ProfileItemViewModel.Icon))
+                {
+                    OnPropertyChanged(nameof(HasImageIcon));
+                    OnPropertyChanged(nameof(ImageIcon));
+                }
+            };
+        }
+    }
+    public bool HasImageIcon => Profile is { IsPowerShellIse: true } profile &&
+        (string.IsNullOrWhiteSpace(profile.Icon) || profile.Icon is "\uE943" or ProfileSettings.PowerShellIseIcon);
+    public Bitmap? ImageIcon => HasImageIcon ? IseIcon.Value : null;
 
     public override string ToString() => Title;
 }
@@ -33,6 +59,7 @@ public sealed class SettingsEditorViewModel : ObservableObject
     private IReadOnlyList<SettingsNavigationItem> _navigationItems = [];
     private IReadOnlyList<SettingsNavigationItem> _visibleNavigationItems = [];
     private IReadOnlyList<ProfileItemViewModel> _profiles = [];
+    private ProfileItemViewModel? _profileDefaults;
     private SettingsNavigationItem? _selectedNavigationItem;
     private string _searchText = string.Empty;
     private bool _isSearchOpen;
@@ -55,19 +82,22 @@ public sealed class SettingsEditorViewModel : ObservableObject
         Func<AppSettings> load,
         Action<AppSettings> save,
         Func<AppSettings> createDefault,
-        Func<string?>? getRevision = null)
+        Func<string?>? getRevision = null,
+        bool supportsPowerShellIse = true)
     {
         _load = load ?? throw new ArgumentNullException(nameof(load));
         _save = save ?? throw new ArgumentNullException(nameof(save));
         _createDefault = createDefault ?? throw new ArgumentNullException(nameof(createDefault));
         _getRevision = getRevision ?? (() => null);
         _settings = _load();
+        SupportsPowerShellIse = supportsPowerShellIse;
         _loadedRevision = _getRevision();
         ApplyCommand = new(Apply);
         RevertCommand = new(Revert);
         ResetCommand = new(ResetToDefaults);
         OpenJsonCommand = new(OpenJsonFile);
         AddProfileCommand = new(AddProfile);
+        AddPowerShellIseProfileCommand = new(AddPowerShellIseProfile, () => SupportsPowerShellIse);
         BuildPages(SettingsPage.Startup);
     }
 
@@ -112,6 +142,12 @@ public sealed class SettingsEditorViewModel : ObservableObject
                     value.ViewModel is ProfilesSettingsViewModel profilesPage)
                 {
                     profilesPage.SelectedProfile = profile;
+                    foreach (var item in _navigationItems)
+                    {
+                        if (item.ViewModel is ProfileAppearanceSettingsViewModel appearance) appearance.SelectedProfile = profile;
+                        if (item.ViewModel is ProfileTerminalSettingsViewModel terminal) terminal.SelectedProfile = profile;
+                        if (item.ViewModel is ProfileAdvancedSettingsViewModel advanced) advanced.SelectedProfile = profile;
+                    }
                 }
 
                 OnPropertyChanged(nameof(CurrentPage));
@@ -140,6 +176,8 @@ public sealed class SettingsEditorViewModel : ObservableObject
     public RelayCommand ResetCommand { get; }
     public RelayCommand OpenJsonCommand { get; }
     public RelayCommand AddProfileCommand { get; }
+    public RelayCommand AddPowerShellIseProfileCommand { get; }
+    public bool SupportsPowerShellIse { get; }
 
     public void SelectPage(SettingsPage page)
     {
@@ -148,6 +186,14 @@ public sealed class SettingsEditorViewModel : ObservableObject
         {
             SelectedNavigationItem = item;
         }
+    }
+
+    public void SelectProfile(string guid)
+    {
+        var item = _navigationItems.FirstOrDefault(candidate =>
+            candidate.Profile is { IsNamedProfile: true } profile &&
+            string.Equals(profile.Guid, guid, StringComparison.OrdinalIgnoreCase));
+        if (item is not null) SelectedNavigationItem = item;
     }
 
     public void Apply()
@@ -199,7 +245,20 @@ public sealed class SettingsEditorViewModel : ObservableObject
         StatusMessage = "Factory defaults loaded. Apply to save them.";
     }
 
-    public void AddProfile()
+    public void AddProfile() => AddProfile(new ProfileSettings
+    {
+        Guid = $"{{{Guid.NewGuid()}}}",
+        Name = "New profile",
+        Commandline = UnixShellCommandline.DefaultNewProfileCommandline(),
+        Origin = SettingsOrigin.User,
+    });
+
+    public void AddPowerShellIseProfile()
+    {
+        if (SupportsPowerShellIse) AddProfile(ProfileSettings.CreatePowerShellIse());
+    }
+
+    private void AddProfile(ProfileSettings profile)
     {
         if (!TryCommitEditors(out var error))
         {
@@ -207,13 +266,6 @@ public sealed class SettingsEditorViewModel : ObservableObject
             return;
         }
 
-        var profile = new ProfileSettings
-        {
-            Guid = $"{{{Guid.NewGuid()}}}",
-            Name = "New profile",
-            Commandline = UnixShellCommandline.DefaultNewProfileCommandline(),
-            Origin = SettingsOrigin.User,
-        };
         _settings.Profiles.Add(profile);
         MarkDirty();
         BuildPages(SettingsPage.Profiles);
@@ -265,6 +317,7 @@ public sealed class SettingsEditorViewModel : ObservableObject
                 return false;
             }
         }
+        if (_profileDefaults is not null && !_profileDefaults.TryCommitEnvironment(out error)) return false;
 
         error = null;
         return true;
@@ -272,12 +325,16 @@ public sealed class SettingsEditorViewModel : ObservableObject
 
     private void BuildPages(SettingsPage selectedPage)
     {
+        var selectedGuid = SelectedNavigationItem?.Profile?.Guid;
         _profiles = _settings.Profiles
-            .Select(profile => new ProfileItemViewModel(profile, MarkDirty))
+            .Select(profile => new ProfileItemViewModel(profile, MarkDirty, SupportsPowerShellIse, PrepareProfileTypeChange))
             .ToArray();
+        var defaults = new ProfileItemViewModel(_settings.ProfileDefaults, MarkDirty, SupportsPowerShellIse);
+        _profileDefaults = defaults;
+        var editableProfiles = new[] { defaults }.Concat(_profiles).ToArray();
         _actions = new(_settings, MarkDirty);
         _newTabMenu = new(_settings, MarkDirty);
-        var profilesPage = new ProfilesSettingsViewModel(_profiles);
+        var profilesPage = new ProfilesSettingsViewModel(editableProfiles);
         var items = new List<SettingsNavigationItem>
         {
             Item(SettingsPage.Startup, "Startup", "launch default profile window position startup actions", new StartupSettingsViewModel(_settings, MarkDirty)),
@@ -289,7 +346,7 @@ public sealed class SettingsEditorViewModel : ObservableObject
             Item(SettingsPage.Actions, "Actions", "keybindings key chord command json", _actions),
             Item(SettingsPage.NewTabMenu, "New Tab Menu", "menu folder separator profile action json", _newTabMenu),
             Item(SettingsPage.Extensions, "Extensions", "sources fragments experimental language notification", new ExtensionsSettingsViewModel(_settings, MarkDirty)),
-            Item(SettingsPage.Profiles, "Defaults", "profile commandline directory icon tab title hidden", profilesPage, "Profiles"),
+            Item(SettingsPage.Profiles, "Defaults", "profile commandline directory icon tab title hidden", profilesPage, "Profiles", defaults),
         };
         var windows = OperatingSystem.IsWindows();
         foreach (var profile in _profiles)
@@ -306,9 +363,9 @@ public sealed class SettingsEditorViewModel : ObservableObject
             });
         }
 
-        items.Add(Item(SettingsPage.ProfileAppearance, "Profile appearance", "profile font colors opacity background image", new ProfileAppearanceSettingsViewModel(_profiles)));
-        items.Add(Item(SettingsPage.ProfileTerminal, "Profile terminal", "profile scrollback cursor close antialiasing", new ProfileTerminalSettingsViewModel(_profiles)));
-        items.Add(Item(SettingsPage.ProfileAdvanced, "Profile advanced", "profile vt environment kitty osc compatibility", new ProfileAdvancedSettingsViewModel(_profiles)));
+        items.Add(Item(SettingsPage.ProfileAppearance, "Profile appearance", "profile font colors opacity background image ise theme editor", new ProfileAppearanceSettingsViewModel(editableProfiles)));
+        items.Add(Item(SettingsPage.ProfileTerminal, "Profile terminal", "profile scrollback cursor close antialiasing", new ProfileTerminalSettingsViewModel(editableProfiles)));
+        items.Add(Item(SettingsPage.ProfileAdvanced, "Profile advanced", "profile vt environment kitty osc compatibility", new ProfileAdvancedSettingsViewModel(editableProfiles)));
         _navigationItems = items;
         Diagnostics = _settings.Diagnostics
             .Select(diagnostic => new SettingsDiagnosticViewModel(
@@ -319,9 +376,18 @@ public sealed class SettingsEditorViewModel : ObservableObject
             .ToArray();
         FilterNavigation();
         SelectedNavigationItem =
+            _navigationItems.FirstOrDefault(item => item.Page == selectedPage && selectedGuid is not null &&
+                string.Equals(item.Profile?.Guid, selectedGuid, StringComparison.OrdinalIgnoreCase)) ??
             _navigationItems.FirstOrDefault(item => item.Page == selectedPage) ??
             _navigationItems[0];
         OnPropertyChanged(nameof(SettingsPath));
+    }
+
+    private bool PrepareProfileTypeChange()
+    {
+        if (TryCommitEditors(out var error)) return true;
+        StatusMessage = error!;
+        return false;
     }
 
     private static string NavigationIcon(string? icon, bool windows)
@@ -343,12 +409,14 @@ public sealed class SettingsEditorViewModel : ObservableObject
         string title,
         string keywords,
         object viewModel,
-        string groupHeader = "")
+        string groupHeader = "",
+        ProfileItemViewModel? profile = null)
     {
         var windows = OperatingSystem.IsWindows();
         return new()
         {
             Page = page,
+            Profile = profile,
             IconFontFamily = windows ? "Segoe Fluent Icons" : "Cascadia Mono",
             Icon = windows ? page switch
             {

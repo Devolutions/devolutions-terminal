@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <title>Iseberg</title>
+  <desc>An ice cube and PowerShell-style prompt contained within a square blue terminal icon.</desc>
+  <path fill="#123D69" d="M6 2H26Q30 2 30 6V26Q30 30 26 30H6Q2 30 2 26V6Q2 2 6 2Z"/>
+  <path fill="#216BB0" d="M6 3H26Q29 3 29 6V26Q29 29 26 29H6Q3 29 3 26V6Q3 3 6 3Z"/>
+  <path fill="#FFFFFF" d="M6 18L12 22L6 26V23.5L8.5 22L6 20.5ZM14 24H21V26H14Z"/>
+  <path fill="#123D69" d="M20 4L28 8.5V17.5L20 22L12 17.5V8.5Z"/>
+  <path fill="#DBF7FF" d="M20 5.5L26.5 9.2L20 12.9L13.5 9.2Z"/>
+  <path fill="#8CD9F0" d="M13.5 10.7L19.3 14V19.8L13.5 16.5Z"/>
+  <path fill="#3B9EC8" d="M20.7 14L26.5 10.7V16.5L20.7 19.8Z"/>
+  <path fill="#FFFFFF" d="M20 7L23.8 9.2L22.5 10L18.7 7.8ZM15 12.3L16.5 13.2V16.1L15 15.2Z"/>
+</svg>

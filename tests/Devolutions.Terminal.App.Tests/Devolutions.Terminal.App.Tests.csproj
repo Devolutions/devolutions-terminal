@@ -5,6 +5,9 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Devolutions.Terminal.App\Devolutions.Terminal.App.csproj" />
   </ItemGroup>
+  <ItemGroup Condition="'$(EnablePowerShellIse)' != 'true'">
+    <Compile Remove="PortableIse*.cs;PowerShellIseWorkspaceCatalogTests.cs" />
+  </ItemGroup>
   <Import Project="..\..\native\NativeLibraries.targets" />
   <ItemGroup>
     <None Include="..\..\linux\**\*"

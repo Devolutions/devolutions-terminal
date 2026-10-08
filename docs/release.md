@@ -32,9 +32,10 @@ CI workflows:
 
 - `build-ghostty.yml` — compile `libghostty-vt` for every RID and upload
   artifacts (optional cache; not required to develop).
-- `build-terminal.yml` — restore natives from source, test, NativeAOT, Linux
+- `build-terminal.yml` — restore natives from source, test, NativeAOT desktop, Linux
   packages, macOS `.app`/zip, MSIX, the `Devolutions.Terminal.Control`
-  NuGet package, and the browser WASM host.
+  NuGet package, and the browser WASM host. Opt-in managed Iseberg builds are
+  validated separately and are not release package payloads.
 
 ## Developer build
 
@@ -45,10 +46,19 @@ dotnet test Devolutions.Terminal.slnx -c Release
 dotnet run --project src/Devolutions.Terminal
 ```
 
-Warnings are errors for production projects. The trim and NativeAOT analyzers
-run continuously rather than only during release packaging.
+Warnings are errors for production projects. Trim and NativeAOT analyzers run
+continuously on compatible projects. The imported PowerShell workbench requires
+dynamic code and is deliberately excluded from those analyzers.
 
-## NativeAOT
+## Desktop distribution
+
+Default publishes and release packages are self-contained NativeAOT and exclude
+Iseberg (`EnablePowerShellIse=false`). CI uploads these NativeAOT publishes for
+Windows, Linux and macOS packaging; the separately validated managed Iseberg
+publish is not uploaded as a release payload. The `dt` CLI remains NativeAOT.
+Iseberg requires an explicit `-p:EnablePowerShellIse=true` developer build,
+which is managed and untrimmed and uses separately installed PowerShell.
+See [iseberg.md](iseberg.md) for prerequisites, legal notices and guards.
 
 ```powershell
 dotnet publish src/Devolutions.Terminal -c Release -r win-x64 --self-contained `
@@ -68,7 +78,7 @@ MSIX staging additionally builds `dt-shell-integration.exe` and
 `Devolutions.Terminal.ShellExt.dll` for the package architecture with the installed
 MSVC/Windows SDK toolchain.
 
-macOS NativeAOT app bundles (Darwin only):
+macOS app bundles (Darwin only):
 
 ```bash
 dotnet publish src/Devolutions.Terminal -c Release -r osx-arm64 --self-contained \
@@ -95,7 +105,7 @@ scripts/Build-LinuxPackage.sh linux-x64 2026.3.0 artifacts/packages all
 scripts/Build-LinuxPackage.sh linux-arm64 2026.3.0 artifacts/packages all
 ```
 
-These commands publish NativeAOT executables and create reproducible tar, DEB,
+These commands publish the default self-contained desktop and create reproducible tar, DEB,
 RPM, and AppImage artifacts plus a SHA-256 manifest. Every format is staged from
 one canonical filesystem root and includes `Devolutions.Terminal`, `dt`,
 `dt-pty-host`, Ghostty, Skia, HarfBuzz, licenses, freedesktop metadata, icons,

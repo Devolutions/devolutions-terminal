@@ -44,7 +44,7 @@ public partial class TerminalApp : Application
                         about: () => DispatchToActiveWindow(ShortcutAction.OpenAbout),
                         settings: () => DispatchToActiveWindow(ShortcutAction.OpenSettings),
                         hide: () => (desktop as IActivatableLifetime)?.TryEnterBackground(),
-                        quit: () => desktop.Shutdown()));
+                        quit: () => _ = MainWindow.RequestApplicationCloseAsync(desktop)));
             }
 
             desktop.MainWindow = _router.CreateInitial(
@@ -137,7 +137,10 @@ public partial class TerminalApp : Application
         RefreshNotificationIcon();
     }
 
-    private void Exit_OnClick(object? sender, EventArgs e) => _desktop?.Shutdown();
+    private async void Exit_OnClick(object? sender, EventArgs e)
+    {
+        if (_desktop is not null) await MainWindow.RequestApplicationCloseAsync(_desktop);
+    }
 
     private void OnActivated(object? sender, ActivatedEventArgs e)
     {

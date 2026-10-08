@@ -97,4 +97,28 @@ public sealed class TerminalConnectionFactoryTests
                 previous);
         }
     }
+
+    [Fact]
+    public void FactoryRejectsIseBeforeCreatingLocalConnection()
+    {
+        var profile = ProfileSettings.CreatePowerShellIse();
+        var error = Assert.Throws<NotSupportedException>(() => new TerminalConnectionFactory(Callbacks).Create(profile));
+        Assert.Contains("Iseberg", error.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void FactoryRejectsUnsupportedBeforeConnectionSelection(bool azure)
+    {
+        var profile = new ProfileSettings
+        {
+            Kind = ProfileKind.Unsupported,
+            Name = "Future workbench",
+            Commandline = "pwsh.exe",
+            ConnectionType = azure ? AzureCloudShellConnection.ConnectionTypeGuid.ToString("B") : null,
+        };
+        var error = Assert.Throws<NotSupportedException>(() => new TerminalConnectionFactory(Callbacks).Create(profile));
+        Assert.Contains("Future workbench", error.Message, StringComparison.Ordinal);
+    }
 }

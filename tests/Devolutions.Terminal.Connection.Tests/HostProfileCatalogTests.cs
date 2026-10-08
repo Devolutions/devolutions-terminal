@@ -64,4 +64,41 @@ public sealed class HostProfileCatalogTests
             80,
             24));
     }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("pwsh.exe")]
+    public void CatalogListsIseAsNonlaunchableAndRefusesLaunchOptions(string commandline)
+    {
+        var terminal = ProfileSettings.CreatePwsh();
+        var ise = ProfileSettings.CreatePowerShellIse();
+        ise.Commandline = commandline;
+        var settings = new AppSettings { Profiles = [terminal, ise], DefaultProfile = ise.Guid };
+        var catalog = HostProfileCatalog.FromSettings(settings);
+        var info = catalog.Profiles.Single(p => p.Id == ise.Guid);
+
+        Assert.False(info.Launchable);
+        Assert.Equal("This profile requires the desktop PowerShell ISE workbench.", info.Reason);
+        Assert.Throws<InvalidOperationException>(() => catalog.CreateLaunchOptions(info, 80, 24));
+        Assert.Equal(terminal.Guid, catalog.DefaultProfileId);
+        var launch = catalog.CreateLaunchOptions(catalog.Profiles.Single(p => p.Id == terminal.Guid), 80, 24);
+        Assert.Equal("pwsh.exe", launch.CommandLine);
+        Assert.Equal(80, launch.Columns);
+        Assert.Equal(24, launch.Rows);
+    }
+
+    [Theory]
+    [InlineData(ProfileKind.PowerShellIse)]
+    [InlineData(ProfileKind.Unsupported)]
+    public void CatalogWithoutLaunchableTerminalHasNoDefault(ProfileKind kind)
+    {
+        var profile = ProfileSettings.CreatePowerShellIse();
+        profile.Kind = kind;
+        var catalog = HostProfileCatalog.FromSettings(new AppSettings { Profiles = [profile], DefaultProfile = profile.Guid });
+
+        Assert.Null(catalog.DefaultProfileId);
+        var info = Assert.Single(catalog.Profiles);
+        Assert.False(info.Launchable);
+        Assert.Throws<InvalidOperationException>(() => catalog.CreateLaunchOptions(info, 80, 24));
+    }
 }

@@ -69,6 +69,12 @@ public sealed class DynamicProfileGenerationResult
             Add(node, "source", profile.Source);
             Add(node, "icon", profile.Icon);
             Add(node, "connectionType", profile.ConnectionType);
+            if (profile.Kind == ProfileKind.PowerShellIse)
+            {
+                node["type"] = "powershellIse";
+                node["ise.loadProfiles"] = profile.IseLoadProfiles;
+                node["ise.colorTheme"] = profile.IseColorTheme;
+            }
             if (!string.Equals(profile.PathTranslationStyle, "none", StringComparison.Ordinal))
             {
                 node["pathTranslationStyle"] = profile.PathTranslationStyle;

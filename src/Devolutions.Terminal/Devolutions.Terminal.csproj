@@ -10,12 +10,20 @@
     <PublishTrimmed>true</PublishTrimmed>
     <PublishAot Condition="'$(Configuration)' == 'Debug'">false</PublishAot>
     <PublishTrimmed Condition="'$(Configuration)' == 'Debug'">false</PublishTrimmed>
+    <PublishAot Condition="'$(EnablePowerShellIse)' == 'true'">false</PublishAot>
+    <PublishTrimmed Condition="'$(EnablePowerShellIse)' == 'true'">false</PublishTrimmed>
+    <PublishSelfContained Condition="'$(EnablePowerShellIse)' == 'true' and '$(Configuration)' != 'Debug'">true</PublishSelfContained>
+    <PublishSingleFile Condition="'$(EnablePowerShellIse)' == 'true' and '$(Configuration)' != 'Debug'">true</PublishSingleFile>
+    <IncludeAllContentForSelfExtract Condition="'$(EnablePowerShellIse)' == 'true'">true</IncludeAllContentForSelfExtract>
+    <EnableSingleFileAnalyzer Condition="'$(EnablePowerShellIse)' == 'true'">false</EnableSingleFileAnalyzer>
+    <IsAotCompatible Condition="'$(EnablePowerShellIse)' == 'true'">false</IsAotCompatible>
+    <EnableTrimAnalyzer Condition="'$(EnablePowerShellIse)' == 'true'">false</EnableTrimAnalyzer>
     <InvariantGlobalization>false</InvariantGlobalization>
     <IlcOptimizationPreference>Speed</IlcOptimizationPreference>
     <DebugType>embedded</DebugType>
     <AssemblyName>Devolutions.Terminal</AssemblyName>
     <Product>Devolutions Terminal</Product>
-    <Description>NativeAOT Avalonia terminal emulator.</Description>
+    <Description>Avalonia terminal emulator with an embedded PowerShell ISE workbench.</Description>
   </PropertyGroup>
 
   <ItemGroup>
@@ -25,15 +33,43 @@
     <PackageReference Include="AvaloniaUI.DiagnosticsSupport" />
     <None Include="..\..\native\ghostty\LICENSE"
           Link="THIRD-PARTY-NOTICES-GHOSTTY.txt"
+          ExcludeFromSingleFile="true"
           CopyToOutputDirectory="PreserveNewest"
           CopyToPublishDirectory="PreserveNewest" />
     <None Include="..\..\native\noto-emoji\LICENSE"
           Link="THIRD-PARTY-NOTICES-NOTO-EMOJI.txt"
+          ExcludeFromSingleFile="true"
           CopyToOutputDirectory="PreserveNewest"
           CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <Import Project="..\..\native\NativeLibraries.targets" />
+
+  <Target Name="ValidatePowerShellIsePublish" BeforeTargets="PrepareForBuild;PrepareForPublish"
+          Condition="'$(EnablePowerShellIse)' == 'true'">
+    <Error Condition="'$(PublishAot)' == 'true' or '$(PublishTrimmed)' == 'true'"
+           Text="PowerShell ISE requires dynamic code and reflection. Publish untrimmed without NativeAOT, or set EnablePowerShellIse=false for a terminal-only NativeAOT distribution." />
+  </Target>
+
+  <Target Name="KeepNativePayloadSignable" BeforeTargets="_ComputeFilesToBundle"
+          Condition="'$(PublishSingleFile)' == 'true'">
+    <ItemGroup>
+      <ResolvedFileToPublish Update="@(ResolvedFileToPublish)"
+                            Condition="'%(ResolvedFileToPublish.AssetType)' == 'native' or '%(ResolvedFileToPublish.Filename)' == 'OpenConsole' or ('%(ResolvedFileToPublish.Filename)' == 'dt' and '%(ResolvedFileToPublish.Extension)' == '.exe') or '%(ResolvedFileToPublish.Filename)' == 'dt-pty-host' or '%(ResolvedFileToPublish.Filename)' == 'ghostty-vt' or '%(ResolvedFileToPublish.Filename)' == 'libghostty-vt'">
+        <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
+
+  <Target Name="ValidateInstalledPowerShellBoundary" BeforeTargets="_ComputeFilesToBundle;CopyFilesToPublishDirectory"
+          Condition="'$(EnablePowerShellIse)' == 'true'">
+    <ItemGroup>
+      <_ForbiddenPowerShellPayload Include="@(ResolvedFileToPublish)"
+          Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('%(ResolvedFileToPublish.Filename)', '(?i)^(System\.Management\.Automation|Microsoft\.PowerShell\.|PowerShell\.|Microsoft\.Management\.Infrastructure)'))" />
+    </ItemGroup>
+    <Error Condition="'@(_ForbiddenPowerShellPayload)' != ''"
+           Text="Iseberg must load the separately installed PowerShell runtime, not redistribute SDK runtime assets: @(_ForbiddenPowerShellPayload)" />
+  </Target>
 
   <Target Name="PublishDtCli" AfterTargets="Publish">
     <PropertyGroup>
@@ -43,7 +79,7 @@
     <MSBuild
       Projects="..\Devolutions.Terminal.Cli\Devolutions.Terminal.Cli.csproj"
       Targets="Publish"
-      Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishAot=$(PublishAot);PublishDir=$(_HostPublishDir)" />
+      Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishAot=true;PublishTrimmed=true;PublishDir=$(_HostPublishDir)" />
   </Target>
 
   <ItemGroup>
