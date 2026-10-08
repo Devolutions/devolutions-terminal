@@ -162,6 +162,9 @@ or tear off into other windows. Save scripts explicitly; recovery is not a
 replacement for saving or backups.
 Automatic same-profile recovery discovery requires a saved, nonempty profile
 identity; anonymous profiles do not share recovery candidates.
+Profile identity publication never replaces another owner, even across concurrent
+processes. Linux/macOS workspace storage must support hard links for this atomic
+publication; unsupported filesystems report a storage error.
 
 Closing a tab/window or quitting DT prompts to stop running commands and
 save/discard dirty documents. Cancel leaves the tab alive. Bulk/application

@@ -1,11 +1,12 @@
 #if POWERSHELL_ISE
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using Iseberg.Core;
 
 namespace Devolutions.Terminal.App.Views;
 
-public static class PowerShellIseWorkspaceCatalog
+public static partial class PowerShellIseWorkspaceCatalog
 {
     public static async Task RecordProfileAsync(string workspaceDirectory, string? profileId)
     {
@@ -24,10 +25,27 @@ public static class PowerShellIseWorkspaceCatalog
         try
         {
             await File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(profileId));
-            File.Move(temporary, path, overwrite: false);
+            if (OperatingSystem.IsWindows()) File.Move(temporary, path, overwrite: false);
+            else
+            {
+                // Unix File.Move can race through an overwriting rename; link publishes without replacing an owner.
+                var result = OperatingSystem.IsMacOS() ? LinkMacOS(temporary, path) : LinkUnix(temporary, path);
+                if (result != 0)
+                {
+                    var error = Marshal.GetLastPInvokeError();
+                    throw new IOException($"Could not publish ISE profile identity '{path}': {new System.ComponentModel.Win32Exception(error).Message}",
+                        unchecked((int)0x80070000) | error);
+                }
+            }
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
+
+    [LibraryImport("libc", EntryPoint = "link", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
+    private static partial int LinkUnix(string source, string destination);
+
+    [LibraryImport("/usr/lib/libSystem.B.dylib", EntryPoint = "link", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
+    private static partial int LinkMacOS(string source, string destination);
 
     /// <summary>Finds one abandoned dirty workspace for the same profile; never consumes another live tab.</summary>
     public static async Task<Guid?> FindRecoverableAsync(string stateRoot, string? profileId)
