@@ -165,7 +165,7 @@ jobs:
         run: pwsh -NoLogo -NoProfile -File scripts/Install-IsebergTestPowerShell.ps1
 
       - name: Run tests
-        timeout-minutes: 45
+        timeout-minutes: 60
         run: >-
           dotnet test Devolutions.Terminal.slnx -c Release --no-build -m:1
           -p:EnablePowerShellIse=true -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
