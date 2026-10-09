@@ -1,4 +1,3 @@
-using System.Management.Automation;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -16,10 +15,25 @@ public sealed partial class WorkbenchControl
 
     private void AttachDebugger(SessionModel session)
     {
-        Action<SessionState> stateChanged = _ => Dispatcher.UIThread.Post(async () =>
+        Action<SessionState> stateChanged = state => Dispatcher.UIThread.Post(async () =>
         {
             if (windowClosed || !Workbench.Sessions.Contains(session)) return;
             RefreshState();
+            if (state == SessionState.Failed)
+            {
+                session.Console.CancelAnalysis();
+                session.IsConsoleSubmissionPending = false;
+                session.IsConsoleAnalysisPending = false;
+                session.Evaluating = false;
+                session.DebugLocation = null;
+                session.DebugSnapshot = null;
+                session.SelectedDebugFrame = 0;
+                Interlocked.Increment(ref session.DebugRevisionCounter);
+                Completion?.Close();
+                RenderDebugger();
+                await ReportErrorAsync("PowerShell session lost", new InvalidOperationException(
+                    "The PowerShell process or private bridge failed. Editor documents are preserved, but variables, debugger state, and menu actions are lost. Reopen this tab to start a new session; scripts will not be replayed."));
+            }
             await RefreshChangedRunspaceAsync(session);
         });
         Action<DebugLocation?> stopped = location =>
@@ -227,7 +241,7 @@ public sealed partial class WorkbenchControl
         var spec = selected?.Spec ?? new BreakpointSpec(displayedFile?.File.Path is null ? BreakpointKind.Command : BreakpointKind.Line, displayedFile?.File.Path,
             Line: ScriptEditor.TextArea.Caret.Line);
         await PrepareBreakpointEditAsync(session);
-        var edited = await ShowDialogAsync<BreakpointSpec?>(new BreakpointWindow(spec));
+        var edited = await ShowDialogAsync<BreakpointSpec?>(new BreakpointWindow(spec, session.Engine.ValidateBreakpointAsync));
         if (edited is null) return;
         if (selected is null) await session.Engine.AddBreakpointAsync(edited);
         else await session.Engine.UpdateBreakpointAsync(selected.Id, edited);

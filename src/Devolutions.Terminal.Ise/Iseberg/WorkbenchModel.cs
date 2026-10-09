@@ -19,6 +19,9 @@ public sealed class ScriptTab : ObservableModel
     private readonly List<(TextAnchor Anchor, BreakpointSpec Spec)> breakpointAnchors = [];
     public ScriptFile File { get; private set; }
     public TextDocument Document { get; }
+    internal ScriptAnalysis? Analysis { get; set; }
+    internal string? AnalysisText { get; set; }
+    internal ScriptAnalysis? CurrentAnalysis => AnalysisText == Document.Text ? Analysis : null;
     public ScriptTab(ScriptFile file)
     {
         File = file;
@@ -152,8 +155,12 @@ public sealed class SessionModel : ObservableModel
     internal SemaphoreSlim DebugRefreshGate { get; } = new(1, 1);
     public bool Evaluating { get; set; }
     public bool IsConsoleSubmissionPending { get; internal set; }
-    public bool IsReady => Engine.State == SessionState.Ready && !IsConsoleSubmissionPending;
+    internal bool IsConsoleAnalysisPending { get; set; }
+    internal bool IsInitialized { get; set; }
+    public bool IsReady => Engine.State == SessionState.Ready && !Engine.IsExecuting &&
+        !IsConsoleSubmissionPending && !IsConsoleAnalysisPending;
     internal bool PendingRunspaceRefresh { get; set; }
+    internal bool RefreshingRunspace { get; set; }
     public ScriptTab? SelectedFile
     {
         get => selectedFile;

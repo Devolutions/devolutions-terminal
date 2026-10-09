@@ -43,7 +43,8 @@ public static class SnippetCatalog
 {
     private static readonly XNamespace Namespace = "http://schemas.microsoft.com/PowerShell/Snippets";
     private const string Legacy = "Requires Windows PowerShell 5.1; workflow and classic DSC syntax are not supported by PowerShell 7.";
-    public static string UserDirectory => Path.Combine(Path.GetDirectoryName(UserSettings.SettingsPath)!, "Snippets");
+    public static string UserDirectory => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Iseberg", "Snippets");
     public static IReadOnlyList<PowerShellSnippet> BuiltIns { get; } = Array.AsReadOnly(new[]
     {
         Template("if", "Conditional execution.", "if ($condition) {\n    <caret>\n}"),

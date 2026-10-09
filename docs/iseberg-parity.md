@@ -1,8 +1,8 @@
 # Original Windows PowerShell ISE feature comparison
 
-DT's source-integrated Iseberg in an explicitly enabled managed developer build
-already covers the main edit/run/debug workflow. Default NativeAOT builds and
-release packages disable Iseberg; saved profile settings are preserved.
+DT's source-integrated Iseberg covers the main edit/run/debug workflow in the
+NativeAOT desktop, with PowerShell execution isolated in an owned `pwsh`
+subprocess. Default desktop releases include the workbench and its private bridge.
 The integration now matches additional portable ISE features, but this is **not a
 drop-in replacement for the original `$psISE` object model, WPF add-ons, or
 Windows PowerShell 5.1**. Several features exist in the imported workbench but
@@ -78,14 +78,14 @@ Evidence codes in the matrices refer to these concrete implementation surfaces:
 | Code | DT / imported source |
 | --- | --- |
 | `L` | [DT tab creation and closing](../src/Devolutions.Terminal.App/Views/MainWindow.PowerShellIse.cs), [tab host options](../src/Devolutions.Terminal.App/Views/PowerShellIseTab.cs) |
-| `R` | `src\Devolutions.Terminal.Ise\Iseberg.Core\PowerShellSession*.cs`, `WorkbenchHost.cs` |
+| `R` | [parent IPC session](../src/Devolutions.Terminal.Ise/Iseberg.Core/PowerShellSession.cs), [child execution/custom host](../src/Devolutions.Terminal.Ise/Iseberg.PowerShell) |
 | `C` | [native console adapter](../src/Devolutions.Terminal.App/Connections/IsebergTerminalConnection.cs), [console control bridge](../src/Devolutions.Terminal.App/Views/DtIsebergConsole.cs) |
-| `E` | [editor control](../src/Devolutions.Terminal.Ise/Iseberg.Editor/PowerShellEditorControl.cs), [analysis](../src/Devolutions.Terminal.Ise/Iseberg.Core/EditorAnalysis.cs), [rendering](../src/Devolutions.Terminal.Ise/Iseberg/EditorRendering.cs) |
+| `E` | [editor control](../src/Devolutions.Terminal.Ise/Iseberg.Editor/PowerShellEditorControl.cs), [analysis contracts/helpers](../src/Devolutions.Terminal.Ise/Iseberg.Contracts), [child parser](../src/Devolutions.Terminal.Ise/Iseberg.PowerShell), [rendering](../src/Devolutions.Terminal.Ise/Iseberg/EditorRendering.cs) |
 | `W` | [workbench editor, commands, help, and snippet actions](../src/Devolutions.Terminal.Ise/Iseberg/WorkbenchControl.axaml.cs) |
-| `F` | [persistence/recovery integration](../src/Devolutions.Terminal.Ise/Iseberg/WorkbenchControl.Persistence.cs), `Iseberg.Core\ScriptRecovery.cs`, `ScriptFile.cs` |
-| `N` | [snippet service](../src/Devolutions.Terminal.Ise/Iseberg.Core/IseSnippetService.cs), `Iseberg.Core\SnippetCatalog.cs` |
-| `B` | [debugger UI](../src/Devolutions.Terminal.Ise/Iseberg/WorkbenchControl.Debugger.cs), `Iseberg.Core\PowerShellSession.Debugger.cs`, `DebuggerModels.cs` |
-| `O` | [ISE scripting wrappers](../src/Devolutions.Terminal.Ise/Iseberg/WorkbenchControl.Scripting.cs) |
+| `F` | [persistence/recovery integration](../src/Devolutions.Terminal.Ise/Iseberg/WorkbenchControl.Persistence.cs), `Iseberg.Core\ScriptRecovery.cs`, shared file models in [contracts](../src/Devolutions.Terminal.Ise/Iseberg.Contracts) |
+| `N` | [snippet service](../src/Devolutions.Terminal.Ise/Iseberg.Core/IseSnippetService.cs), shared catalog models in [contracts](../src/Devolutions.Terminal.Ise/Iseberg.Contracts), cmdlets in [the child module](../src/Devolutions.Terminal.Ise/Iseberg.PowerShell) |
+| `B` | [debugger UI](../src/Devolutions.Terminal.Ise/Iseberg/WorkbenchControl.Debugger.cs), [child debugger](../src/Devolutions.Terminal.Ise/Iseberg.PowerShell), DTOs in [contracts](../src/Devolutions.Terminal.Ise/Iseberg.Contracts) |
+| `O` | [ISE scripting UI wrappers](../src/Devolutions.Terminal.Ise/Iseberg/WorkbenchControl.Scripting.cs), [typed reverse dispatch](../src/Devolutions.Terminal.Ise/Iseberg/WorkbenchControl.ScriptingBridge.cs), child proxies in [the module](../src/Devolutions.Terminal.Ise/Iseberg.PowerShell) |
 | `P` | [DT themes](../src/Devolutions.Terminal.Settings/IsebergThemes.cs), `Iseberg\OptionsWindow.axaml.cs`, `Iseberg.Core\UserSettings.cs` |
 | `A` | [editor accessibility peer](../src/Devolutions.Terminal.Ise/Iseberg.Editor/AccessibleTextEditor.cs), installed AvaloniaEdit editing handlers |
 

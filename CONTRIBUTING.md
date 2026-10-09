@@ -23,9 +23,10 @@ The browser never supplies a command line, and the host does not send one back.
 Elevated profiles are listed and refused.
 
 Warnings are errors. Keep the default NativeAOT desktop publish green.
-Iseberg is disabled by default; its managed developer build and regression suite
-require `-p:EnablePowerShellIse=true`. See [Iseberg](docs/iseberg.md) for the
-installed-engine boundary.
+Iseberg is enabled by default; its engine and regression suite require separately
+installed PowerShell 7.4.6+ within 7.4.x, 7.5.x or 7.6.x with its bundled runtime.
+See [Iseberg](docs/iseberg.md) for the
+subprocess/module boundary.
 
 ## Desktop publish
 
@@ -33,10 +34,11 @@ installed-engine boundary.
 dotnet publish src/Devolutions.Terminal -c Release -r win-x64 --self-contained
 ```
 
-The default desktop and release packages use NativeAOT and exclude Iseberg.
-Add `-p:EnablePowerShellIse=true` only for an optional managed, untrimmed
-Iseberg developer build. Use the same flag for restore/build/test/run commands
-when working on Iseberg. The CLI remains NativeAOT in both variants.
+The default desktop and release packages use NativeAOT and include Iseberg.
+Only the private PowerShell bridge is managed: it is imported by the installed
+`pwsh` subprocess, never loaded into DT. Use `-p:EnablePowerShellIse=false`
+consistently across build/test/publish commands for a terminal-only configuration.
+The CLI remains NativeAOT in both variants.
 
 Linux packages:
 

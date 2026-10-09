@@ -42,12 +42,14 @@ public sealed class UserSettings
         path ??= SettingsPath;
         if (!File.Exists(path)) return new();
         var json = await File.ReadAllTextAsync(path);
-        var settings = JsonSerializer.Deserialize<UserSettings>(json) ?? throw new InvalidDataException("The settings file is empty.");
+        var settings = JsonSerializer.Deserialize(json, IseJsonContext.Default.UserSettings)
+            ?? throw new InvalidDataException("The settings file is empty.");
         settings.Normalize();
         return settings;
     }
 
-    public UserSettings Copy() => JsonSerializer.Deserialize<UserSettings>(JsonSerializer.Serialize(this))!;
+    public UserSettings Copy() => JsonSerializer.Deserialize(
+        JsonSerializer.Serialize(this, IseJsonContext.Default.UserSettings), IseJsonContext.Default.UserSettings)!;
 
     public void Normalize()
     {
@@ -82,7 +84,7 @@ public sealed class UserSettings
             {
                 if (breakpoint is null) throw new InvalidDataException("A saved breakpoint is empty.");
                 try { breakpoint.Validate(); }
-                catch (Exception exception) when (exception is ArgumentException or System.Management.Automation.ParseException)
+                catch (ArgumentException exception)
                 { throw new InvalidDataException("A saved breakpoint is invalid.", exception); }
             }
         }
@@ -95,7 +97,7 @@ public sealed class UserSettings
         var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            await File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
+            await File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(this, IseJsonContext.Default.UserSettings));
             File.Move(temporary, path, overwrite: true);
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }

@@ -1,4 +1,5 @@
-<Styles xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+<Styles xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Iseberg.CommandDialogStyles">
   <StyleInclude Source="avares://Iseberg/OptionsStyles.axaml" />
   <Style Selector="Window.options Expander">
     <Setter Property="Template">

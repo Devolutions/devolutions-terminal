@@ -5,8 +5,11 @@ using Xunit;
 
 namespace Devolutions.Terminal.App.Tests;
 
-public sealed class PortableIseCoreTests : IClassFixture<PortableIseRuntimeFixture>
+public sealed class PortableIseCoreTests(PortableIseRuntimeFixture runtime) : IClassFixture<PortableIseRuntimeFixture>
 {
+    private Task<ScriptAnalysis> AnalyzeAsync(string text, string? path = null) =>
+        runtime.Analysis.AnalyzeAsync(text, path, CancellationToken.None);
+
     [Fact]
     public void PersistenceLeaseContentionPreservesFirstOwnerAndLockBytes()
     {
@@ -486,22 +489,22 @@ public sealed class PortableIseCoreTests : IClassFixture<PortableIseRuntimeFixtu
     [InlineData("<#\n{\n}\n#>", 0, 9)]
     [InlineData("@'\n#region x\n'@", 0, 15)]
     [InlineData("@'\n'@", 0, 5)]
-    public void AnalysisClosedMultilineConstructsHaveExactFolds(string text, int start, int end)
+    public async Task AnalysisClosedMultilineConstructsHaveExactFolds(string text, int start, int end)
     {
-        var analysis = EditorAnalysis.Analyze(text);
+        var analysis = await AnalyzeAsync(text);
         Assert.False(analysis.IsXml);
         Assert.Empty(analysis.Errors);
         Assert.Empty(analysis.Diagnostics);
-        Assert.Equal(new[] { (start, end) }, analysis.Folds);
+        Assert.Equal(new[] { (start, end) }, analysis.Folds.Select(span => (span.Start, span.End)));
     }
 
     [Fact]
-    public void AnalysisNestedRegionsAndBracesAreSortedByAuthoredOffsets()
+    public async Task AnalysisNestedRegionsAndBracesAreSortedByAuthoredOffsets()
     {
         const string text = "#region outer\n{\n#region inner\n$x\n#endregion\n}\n#endregion";
-        var analysis = EditorAnalysis.Analyze(text);
+        var analysis = await AnalyzeAsync(text);
         Assert.Empty(analysis.Diagnostics);
-        Assert.Equal(new[] { (0, 56), (14, 45), (16, 43) }, analysis.Folds);
+        Assert.Equal(new[] { (0, 56), (14, 45), (16, 43) }, analysis.Folds.Select(span => (span.Start, span.End)));
     }
 
     [Theory]
@@ -519,9 +522,9 @@ public sealed class PortableIseCoreTests : IClassFixture<PortableIseRuntimeFixtu
     [InlineData("# {\n# }")]
     [InlineData("<##>")]
     [InlineData("<# single line #>")]
-    public void AnalysisDoesNotFoldSingleLineInvalidDirectivesOrUnclosedConstructs(string text)
+    public async Task AnalysisDoesNotFoldSingleLineInvalidDirectivesOrUnclosedConstructs(string text)
     {
-        Assert.Empty(EditorAnalysis.Analyze(text).Folds);
+        Assert.Empty((await AnalyzeAsync(text)).Folds);
     }
 
     [Theory]
@@ -534,17 +537,17 @@ public sealed class PortableIseCoreTests : IClassFixture<PortableIseRuntimeFixtu
     [InlineData("folder/a.XmL", true)]
     [InlineData("a.PS1XML", true)]
     [InlineData(".xml", true)]
-    public void XmlDocumentModeUsesOnlyTheFinalCaseInsensitiveExtension(string? path, bool expected)
+    public async Task XmlDocumentModeUsesOnlyTheFinalCaseInsensitiveExtension(string? path, bool expected)
     {
         Assert.Equal(expected, EditorAnalysis.IsXmlDocument(path));
-        Assert.Equal(expected, EditorAnalysis.Analyze("<r/>", path).IsXml);
+        Assert.Equal(expected, (await AnalyzeAsync("<r/>", path)).IsXml);
     }
 
     [Fact]
-    public void XmlAnalysisHasExactTagAttributeQuotedValueCommentAndFoldRanges()
+    public async Task XmlAnalysisHasExactTagAttributeQuotedValueCommentAndFoldRanges()
     {
         const string text = "<r a=\"v\">\n<!--x\ny-->\n<c/>\n</r>";
-        var analysis = EditorAnalysis.Analyze(text, "owned.ps1xml");
+        var analysis = await AnalyzeAsync(text, "owned.ps1xml");
         Assert.True(analysis.IsXml);
         Assert.Empty(analysis.Tokens);
         Assert.Empty(analysis.Errors);
@@ -554,7 +557,7 @@ public sealed class PortableIseCoreTests : IClassFixture<PortableIseRuntimeFixtu
             new(1, 2, "Tag"), new(3, 4, "Attribute"), new(5, 8, "Value"),
             new(10, 20, "Comment"), new(22, 23, "Tag"), new(28, 29, "Tag")
         }, analysis.XmlTokens);
-        Assert.Equal(new[] { (0, 30), (10, 20) }, analysis.Folds);
+        Assert.Equal(new[] { (0, 30), (10, 20) }, analysis.Folds.Select(span => (span.Start, span.End)));
     }
 
     [Theory]
@@ -563,10 +566,10 @@ public sealed class PortableIseCoreTests : IClassFixture<PortableIseRuntimeFixtu
     [InlineData("<r", 0, 1, "Data at the root level is invalid")]
     [InlineData("<r a=1/>", 5, 6, "unexpected token")]
     [InlineData("<!DOCTYPE r [<!ENTITY x 'owned'>]><r>&x;</r>", 0, 1, "DTD is prohibited")]
-    public void XmlDiagnosticsUseInvalidXmlAndClampTheOneCharacterSpan(
+    public async Task XmlDiagnosticsUseInvalidXmlAndClampTheOneCharacterSpan(
         string text, int start, int end, string messagePart)
     {
-        var analysis = EditorAnalysis.Analyze(text, "owned.xml");
+        var analysis = await AnalyzeAsync(text, "owned.xml");
         var diagnostic = Assert.Single(analysis.Diagnostics);
         Assert.Equal("InvalidXml", diagnostic.Code);
         Assert.Equal(start, diagnostic.Start);
@@ -588,9 +591,9 @@ public sealed class PortableIseCoreTests : IClassFixture<PortableIseRuntimeFixtu
     }
 
     [Fact]
-    public void PowerShellDiagnosticsRetainParserCodeMessageAndExactIncompleteExtent()
+    public async Task PowerShellDiagnosticsRetainParserCodeMessageAndExactIncompleteExtent()
     {
-        var analysis = EditorAnalysis.Analyze("'unterminated");
+        var analysis = await AnalyzeAsync("'unterminated");
         var error = Assert.Single(analysis.Errors);
         Assert.Equal("TerminatorExpectedAtEndOfString", error.ErrorId);
         Assert.True(error.IncompleteInput);
@@ -602,7 +605,7 @@ public sealed class PortableIseCoreTests : IClassFixture<PortableIseRuntimeFixtu
         Assert.Equal(0, diagnostic.Start);
         Assert.Equal(13, diagnostic.End);
         Assert.Empty(analysis.Folds);
-        Assert.Equal("text", Assert.Throws<ArgumentNullException>(() => EditorAnalysis.Analyze(null!)).ParamName);
+        Assert.Equal("text", (await Assert.ThrowsAsync<ArgumentNullException>(() => AnalyzeAsync(null!))).ParamName);
     }
 
     [Theory]
@@ -619,14 +622,15 @@ public sealed class PortableIseCoreTests : IClassFixture<PortableIseRuntimeFixtu
     [InlineData(41, "last")]
     [InlineData(45, "last")]
     [InlineData(46, null)]
-    public void VariableLookupHonorsTokenExtentsAndIgnoresCommentsAndLiteralStrings(int offset, string? name)
+    public async Task VariableLookupHonorsTokenExtentsAndIgnoresCommentsAndLiteralStrings(int offset, string? name)
     {
         const string text = "$real; '# $fake'; \"x $nested\" # $comment\n$last";
-        var result = EditorAnalysis.VariableAtOffset(EditorAnalysis.Analyze(text).Tokens, offset);
+        var result = EditorAnalysis.VariableAtOffset((await AnalyzeAsync(text)).Tokens, offset);
         if (name is null) Assert.Null(result);
         else
         {
             Assert.NotNull(result);
+            Assert.NotNull(result.VariablePath);
             Assert.Equal(name, result.VariablePath.UserPath);
             Assert.Equal(name == "real" ? 0 : name == "nested" ? 21 : 41, result.Extent.StartOffset);
             Assert.Equal(name == "real" ? 5 : name == "nested" ? 28 : 46, result.Extent.EndOffset);
@@ -646,11 +650,11 @@ public sealed class PortableIseCoreTests : IClassFixture<PortableIseRuntimeFixtu
     [InlineData(1, 0, -1, -1)]
     [InlineData(5, 1, -1, -1)]
     [InlineData(1, 100, -1, -1)]
-    public void StatementLookupRequiresAnExactStatementStartAndKeepsMultilineExtent(
+    public async Task StatementLookupRequiresAnExactStatementStartAndKeepsMultilineExtent(
         int line, int column, int start, int end)
     {
         const string text = "$x = 1; $y = (\n  2 + 3\n)\nWrite-Output $y";
-        var statement = EditorAnalysis.StatementAtPosition(text, line, column);
+        var statement = EditorAnalysis.StatementAtPosition(await AnalyzeAsync(text), line, column);
         if (start < 0) Assert.Null(statement);
         else Assert.Equal((start, end), statement);
     }
@@ -659,10 +663,11 @@ public sealed class PortableIseCoreTests : IClassFixture<PortableIseRuntimeFixtu
     [InlineData("\n", 7)]
     [InlineData("\r", 7)]
     [InlineData("\r\n", 8)]
-    public void StatementLookupHandlesEachLineDelimiterWithoutMovingAdjacentStatements(string newline, int start)
+    public async Task StatementLookupHandlesEachLineDelimiterWithoutMovingAdjacentStatements(string newline, int start)
     {
-        Assert.Equal((start, start + 6), EditorAnalysis.StatementAtPosition("$x = 1" + newline + "$y = 2", 2, 1));
-        Assert.Null(EditorAnalysis.StatementAtPosition("", 1, 1));
+        Assert.Equal((start, start + 6), EditorAnalysis.StatementAtPosition(
+            await AnalyzeAsync("$x = 1" + newline + "$y = 2"), 2, 1));
+        Assert.Null(EditorAnalysis.StatementAtPosition(await AnalyzeAsync(""), 1, 1));
     }
 
     [Theory]
@@ -806,10 +811,10 @@ public sealed class PortableIseCoreTests : IClassFixture<PortableIseRuntimeFixtu
     [InlineData("Write-Output (Get-Date)", 18, "Get-Date")]
     [InlineData("Get-Date | Write-Output", 17, "Write-Output")]
     [InlineData("Get-Date -Format o", 13, "Get-Date")]
-    public void CommandContextForHelpFindsTheSmallestEnclosingCommandRatherThanAnArgument(
+    public async Task CommandContextForHelpFindsTheSmallestEnclosingCommandRatherThanAnArgument(
         string text, int caret, string? command)
     {
-        Assert.Equal(command, EditorAnalysis.CommandNameAtCaret(text, caret));
+        Assert.Equal(command, EditorAnalysis.CommandNameAtCaret(await AnalyzeAsync(text), caret));
     }
 
     [Theory]
@@ -822,10 +827,10 @@ public sealed class PortableIseCoreTests : IClassFixture<PortableIseRuntimeFixtu
     [InlineData("# {}", 2, -1, -1)]
     [InlineData("{", 0, -1, -1)]
     [InlineData("@{ A=1 }", 1, 1, 7)]
-    public void BraceContextIgnoresLiteralAndCommentCharactersAndSupportsAdjacentCaret(
+    public async Task BraceContextIgnoresLiteralAndCommentCharactersAndSupportsAdjacentCaret(
         string text, int caret, int open, int close)
     {
-        var result = EditorAnalysis.MatchingBrace(text, caret);
+        var result = EditorAnalysis.MatchingBrace(await AnalyzeAsync(text), caret);
         if (open < 0) Assert.Null(result);
         else Assert.Equal((open, close), result);
     }
@@ -880,36 +885,36 @@ public sealed class PortableIseCoreTests : IClassFixture<PortableIseRuntimeFixtu
     }
 
     [Fact]
-    public void AdjacentClosedRegionsHaveIndependentSortedFolds()
+    public async Task AdjacentClosedRegionsHaveIndependentSortedFolds()
     {
         const string text = "#region a\n$x\n#endregion\n#region b\n$y\n#endregion";
-        var analysis = EditorAnalysis.Analyze(text);
+        var analysis = await AnalyzeAsync(text);
         Assert.Empty(analysis.Diagnostics);
-        Assert.Equal(new[] { (0, 23), (24, 47) }, analysis.Folds);
+        Assert.Equal(new[] { (0, 23), (24, 47) }, analysis.Folds.Select(span => (span.Start, span.End)));
     }
 
     [Fact]
-    public void XmlAnalysisSeparatesDeclarationAndCdataTokensAndKeepsNestedMultilineFolds()
+    public async Task XmlAnalysisSeparatesDeclarationAndCdataTokensAndKeepsNestedMultilineFolds()
     {
-        var declaration = EditorAnalysis.Analyze("<?xml version='1.0'?>\n<r/>", "owned.xml");
+        var declaration = await AnalyzeAsync("<?xml version='1.0'?>\n<r/>", "owned.xml");
         Assert.Empty(declaration.Diagnostics);
         Assert.Equal(new XmlTokenSpan[] { new(0, 21, "Tag"), new(23, 24, "Tag") }, declaration.XmlTokens);
         Assert.Empty(declaration.Folds);
-        var cdata = EditorAnalysis.Analyze("<r><![CDATA[x\ny]]></r>", "owned.xml");
+        var cdata = await AnalyzeAsync("<r><![CDATA[x\ny]]></r>", "owned.xml");
         Assert.Empty(cdata.Diagnostics);
         Assert.Equal(new XmlTokenSpan[] { new(1, 2, "Tag"), new(3, 18, "Value"), new(20, 21, "Tag") }, cdata.XmlTokens);
-        Assert.Equal(new[] { (0, 22), (3, 18) }, cdata.Folds);
+        Assert.Equal(new[] { (0, 22), (3, 18) }, cdata.Folds.Select(span => (span.Start, span.End)));
     }
 
     [Fact]
-    public void NestedAndAdjacentBraceFoldsUseExactIndependentOffsets()
+    public async Task NestedAndAdjacentBraceFoldsUseExactIndependentOffsets()
     {
-        var nested = EditorAnalysis.Analyze("{\n{\n$x\n}\n}");
+        var nested = await AnalyzeAsync("{\n{\n$x\n}\n}");
         Assert.Empty(nested.Diagnostics);
-        Assert.Equal(new[] { (0, 10), (2, 8) }, nested.Folds);
-        var adjacent = EditorAnalysis.Analyze("{\n$x\n}\n{\n$y\n}");
+        Assert.Equal(new[] { (0, 10), (2, 8) }, nested.Folds.Select(span => (span.Start, span.End)));
+        var adjacent = await AnalyzeAsync("{\n$x\n}\n{\n$y\n}");
         Assert.Empty(adjacent.Diagnostics);
-        Assert.Equal(new[] { (0, 6), (7, 13) }, adjacent.Folds);
+        Assert.Equal(new[] { (0, 6), (7, 13) }, adjacent.Folds.Select(span => (span.Start, span.End)));
     }
 
     [Theory]
@@ -942,10 +947,10 @@ public sealed class PortableIseCoreTests : IClassFixture<PortableIseRuntimeFixtu
     [InlineData("\"dir\\\"", 5, "ProviderContainer,ProviderItem")]
     [InlineData("# dir/", 6, null)]
     [InlineData("word", 4, null)]
-    public void AutomaticCompletionContextReturnsExactSupportedCategoriesOrNull(
+    public async Task AutomaticCompletionContextReturnsExactSupportedCategoriesOrNull(
         string text, int caret, string? categories)
     {
-        var filter = EditorAnalysis.CompletionFilter(text, caret);
+        var filter = EditorAnalysis.CompletionFilter(await AnalyzeAsync(text), text, caret);
         if (categories is null)
             Assert.Null(filter);
         else

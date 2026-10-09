@@ -1,6 +1,7 @@
 using System.Management.Automation;
 
-namespace Iseberg.Core;
+using Iseberg.Core;
+namespace Iseberg.PowerShellHost;
 
 public abstract class IseSnippetCommand : PSCmdlet
 {

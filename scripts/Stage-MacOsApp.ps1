@@ -84,6 +84,15 @@ $resources = Join-Path $contents 'Resources'
 New-Item -ItemType Directory -Force -Path $macosDir, $resources | Out-Null
 
 Invoke-Native -FilePath cp -ArgumentList '-a', "$publishDir/.", "$macosDir/"
+$bridgeDirectory = Join-Path $macosDir 'Iseberg.PowerShell'
+if (Test-Path -LiteralPath $bridgeDirectory -PathType Container) {
+    foreach ($assembly in @('Iseberg.PowerShell.dll', 'Iseberg.Contracts.dll')) {
+        if (-not (Test-Path -LiteralPath (Join-Path $bridgeDirectory $assembly) -PathType Leaf)) {
+            throw "Iseberg bridge payload is missing $assembly."
+        }
+    }
+    Move-Item -LiteralPath $bridgeDirectory -Destination $resources
+}
 Get-ChildItem -LiteralPath $macosDir -Recurse -Filter '*.pdb' | Remove-Item -Force
 Get-ChildItem -LiteralPath $macosDir -Recurse -Filter '*.dbg' | Remove-Item -Force
 Get-ChildItem -LiteralPath $macosDir -Recurse -Directory -Filter '*.dSYM' |

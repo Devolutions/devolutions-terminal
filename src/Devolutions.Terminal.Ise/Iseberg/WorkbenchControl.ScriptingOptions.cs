@@ -1,4 +1,3 @@
-using System.Management.Automation;
 using Avalonia.Threading;
 using Iseberg.Core;
 
@@ -137,7 +136,7 @@ public sealed partial class WorkbenchControl
                     throw new ArgumentException("Specify Top, Right, or Maximized.", nameof(SelectedScriptPaneState));
                 if (!owner.hostingOptions.ShowScriptPane ||
                     value != "Maximized" && !owner.hostingOptions.ShowConsolePane)
-                    throw new PSNotSupportedException("This pane layout is disabled by the workbench host.");
+                    throw new NotSupportedException("This pane layout is disabled by the workbench host.");
                 s.Layout = value;
             });
         }
@@ -150,7 +149,7 @@ public sealed partial class WorkbenchControl
             set => Write(s =>
             {
                 if (value && !owner.hostingOptions.ShowToolbar)
-                    throw new PSNotSupportedException("The toolbar is disabled by the workbench host.");
+                    throw new NotSupportedException("The toolbar is disabled by the workbench host.");
                 s.ShowToolbar = value;
             });
         }
@@ -189,12 +188,12 @@ public sealed partial class WorkbenchControl
         public bool LoadProfiles
         {
             get => Read(s => s.LoadProfiles);
-            set => owner.IseInvoke<bool>(() => throw new PSNotSupportedException("Profile loading is owned by DT's PowerShell ISE profile."));
+            set => owner.IseInvoke<bool>(() => throw new NotSupportedException("Profile loading is owned by DT's PowerShell ISE profile."));
         }
         public EditorTheme Theme
         {
             get => Read(s => s.Copy().Theme);
-            set => owner.IseInvoke<bool>(() => throw new PSNotSupportedException("Choose the theme through the host's settings UI."));
+            set => owner.IseInvoke<bool>(() => throw new NotSupportedException("Choose the theme through the host's settings UI."));
         }
         public object TokenColors
         {
@@ -239,8 +238,8 @@ public sealed partial class WorkbenchControl
         public void RestoreDefaultTokenColors() => RejectThemeChange();
         public void RestoreDefaultConsoleTokenColors() => RejectThemeChange();
         public void RestoreDefaultXmlTokenColors() => RejectThemeChange();
-        private void RejectThemeChange() => owner.IseInvoke<bool>(() => throw new PSNotSupportedException("Token colors are owned by the host's theme settings."));
+        private void RejectThemeChange() => owner.IseInvoke<bool>(() => throw new NotSupportedException("Token colors are owned by the host's theme settings."));
         private object UnsupportedTokenColors() => owner.IseInvoke<object>(() =>
-            throw new PSNotSupportedException("ISE token-color dictionaries are not exposed; choose colors through the host's theme settings."));
+            throw new NotSupportedException("ISE token-color dictionaries are not exposed; choose colors through the host's theme settings."));
     }
 }

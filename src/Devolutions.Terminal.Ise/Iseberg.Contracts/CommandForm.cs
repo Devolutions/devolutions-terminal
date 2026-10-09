@@ -1,6 +1,3 @@
-using System.Management.Automation;
-using System.Management.Automation.Language;
-
 namespace Iseberg.Core;
 
 public enum CommandParameterKind { Text, Switch, Boolean, Choice }
@@ -56,7 +53,7 @@ public sealed class CommandForm
         return value;
     }
 
-    public CommandFormResult Build()
+    public CommandFormResult Build(IReadOnlyDictionary<string, bool>? expressionValidity = null)
     {
         var parts = new List<string>
         {
@@ -90,8 +87,9 @@ public sealed class CommandForm
             else if (value.IsExpression)
             {
                 argument = "(" + value.Text + "\n)";
-                Parser.ParseInput(argument, out _, out var errors);
-                if (string.IsNullOrWhiteSpace(value.Text) || errors.Length > 0) invalid.Add(parameter.Name);
+                if (string.IsNullOrWhiteSpace(value.Text) ||
+                    expressionValidity is null || !expressionValidity.TryGetValue(parameter.Name, out var valid) || !valid)
+                    invalid.Add(parameter.Name);
             }
             else if (parameter.IsArray)
                 argument = "@(" + string.Join(", ", value.Text.Replace("\r\n", "\n").Split('\n').Select(entry =>
@@ -106,41 +104,10 @@ public sealed class CommandForm
 
     private static string Quote(string text) => "'" + text.Replace("'", "''") + "'";
 
-    internal static CommandFormDescription Describe(CommandInfo command)
-    {
-        var resolved = command;
-        while (resolved is AliasInfo alias)
-            resolved = alias.ResolvedCommand ?? throw new InvalidOperationException($"Cannot resolve alias '{command.Name}'.");
-        var sets = resolved.ParameterSets.Select(set => new CommandParameterSetDescription(set.Name, set.IsDefault,
-            set.Parameters.OrderByDescending(p => p.IsMandatory).ThenBy(p => p.Position < 0 ? int.MaxValue : p.Position)
-                .ThenBy(p => p.Name, StringComparer.OrdinalIgnoreCase).Select(DescribeParameter).ToArray())).ToArray();
-        return new(command.Name, string.IsNullOrEmpty(command.ModuleName) ? command.Name : command.ModuleName + "\\" + command.Name,
-            sets.Length == 0 ? [new("__AllParameterSets", true, [])] : sets);
-    }
-
-    private static CommandParameterDescription DescribeParameter(CommandParameterInfo parameter)
-    {
-        var type = parameter.ParameterType;
-        var element = type.IsArray ? type.GetElementType()! : type;
-        element = Nullable.GetUnderlyingType(element) ?? element;
-        var validation = parameter.Attributes.OfType<ValidateSetAttribute>().FirstOrDefault();
-        var choices = validation?.ValidValues.ToArray()
-            ?? (element.IsEnum ? Enum.GetNames(element) : type.IsArray && element == typeof(bool) ? ["True", "False"] : []);
-        var kind = !type.IsArray && element == typeof(SwitchParameter) ? CommandParameterKind.Switch
-            : element == typeof(bool) ? CommandParameterKind.Boolean
-            : choices.Length > 0 ? CommandParameterKind.Choice : CommandParameterKind.Text;
-        return new(parameter.Name, type.Name, kind, parameter.IsMandatory,
-            parameter.Position < 0 ? null : parameter.Position, type.IsArray, CommonParameters.Contains(parameter.Name),
-            parameter.Attributes.OfType<AllowEmptyStringAttribute>().Any(),
-            parameter.ValueFromPipeline || parameter.ValueFromPipelineByPropertyName,
-            parameter.Attributes.OfType<ParameterAttribute>().FirstOrDefault(a => !string.IsNullOrEmpty(a.HelpMessage))?.HelpMessage ?? "",
-            parameter.Aliases.ToArray(), choices, validation?.IgnoreCase ?? true);
-    }
-
-    private static readonly HashSet<string> CommonParameters = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "Verbose", "Debug", "ErrorAction", "WarningAction", "InformationAction", "ProgressAction",
-        "ErrorVariable", "WarningVariable", "InformationVariable", "OutVariable", "OutBuffer", "PipelineVariable",
-        "WhatIf", "Confirm"
-    };
+    public CommandFormBuildRequest ToRequest() => new(Description, SelectedSet.Name,
+        values.ToDictionary(entry => entry.Key, entry => new CommandParameterValue
+        {
+            Included = entry.Value.Included, Text = entry.Value.Text,
+            IsExpression = entry.Value.IsExpression, Boolean = entry.Value.Boolean
+        }, StringComparer.OrdinalIgnoreCase));
 }

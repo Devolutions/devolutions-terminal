@@ -24,14 +24,15 @@ public sealed partial class WorkbenchControl
     private ScriptDiagnosticRenderer? portableDiagnosticRenderer;
     private Func<bool>? portableHoverIsCurrent;
     private long portableHoverGeneration;
+    private long portableCopyGeneration;
 
     /// <summary>Call once after the editor/folding setup. Does not alter host console behavior.</summary>
     internal void InitializePortableEditing()
     {
         Dispatcher.UIThread.VerifyAccess();
         if (portableAnalysis is not null) return;
-        portableAnalysis = new(() => displayedFile?.File.Path ?? displayedFile?.File.Name);
-        ScriptEditorControl.AnalysisProvider = portableAnalysis;
+        portableAnalysis = new(this, () => displayedFile?.File.Path ?? displayedFile?.File.Name);
+        RefreshPortableAnalysisProvider();
         ScriptEditorControl.CompletionProvider = new PortableCompletionProvider(this);
         portableDiagnosticRenderer = new(() => ScriptEditorControl.Analysis, () => settings.Theme);
         ScriptEditor.TextArea.TextView.BackgroundRenderers.Add(portableDiagnosticRenderer);
@@ -40,6 +41,13 @@ public sealed partial class WorkbenchControl
         ScriptEditor.PointerHover += OnPortableHover;
         ScriptEditor.PointerHoverStopped += OnPortableHoverStopped;
         ScriptEditorControl.DetachedFromVisualTree += OnPortableEditorDetached;
+    }
+
+    private void RefreshPortableAnalysisProvider()
+    {
+        var provider = displayedSession?.IsInitialized == true ? portableAnalysis : null;
+        if (!ReferenceEquals(ScriptEditorControl.AnalysisProvider, provider))
+            ScriptEditorControl.AnalysisProvider = provider;
     }
 
     /// <summary>First line of ApplyScriptAnalysis: if this returns true, skip the old provider path.</summary>
@@ -55,9 +63,16 @@ public sealed partial class WorkbenchControl
         breakpointMargin.InvalidateVisual();
         folding?.UpdateFoldings(settings.ShowOutlining && colorizer.Analysis is { } parsed
             ? parsed.Folds.Select(fold => new NewFolding(fold.Start, fold.End)) : [], -1);
-        Diagnostics.IsVisible = !result.Diagnostics.IsEmpty;
-        Diagnostics.Text = string.Join("  |  ", result.Diagnostics.Take(3).Select(diagnostic =>
-            $"Line {ScriptEditorControl.Document.GetLineByOffset(diagnostic.Span.Start).LineNumber}: {diagnostic.Message}"));
+        Diagnostics.IsVisible = result.State is EditorAnalysisState.Pending or EditorAnalysisState.Failed or EditorAnalysisState.Unavailable ||
+            !result.Diagnostics.IsEmpty;
+        Diagnostics.Text = result.State switch
+        {
+            EditorAnalysisState.Pending => "Syntax analysis pending…",
+            EditorAnalysisState.Failed => "Syntax analysis failed. PowerShell session state may be unavailable.",
+            EditorAnalysisState.Unavailable => "Syntax analysis unavailable.",
+            _ => string.Join("  |  ", result.Diagnostics.Take(3).Select(diagnostic =>
+                $"Line {ScriptEditorControl.Document.GetLineByOffset(diagnostic.Span.Start).LineNumber}: {diagnostic.Message}"))
+        };
         return true;
     }
 
@@ -83,21 +98,30 @@ public sealed partial class WorkbenchControl
         portableDiagnosticRenderer = null;
     }
 
-    private sealed class PortableAnalysisProvider(Func<string?> path) : IEditorAnalysisProvider
+    private sealed class PortableAnalysisProvider(WorkbenchControl owner, Func<string?> path) : IEditorAnalysisProvider
     {
         public long Version { get; private set; }
         public ScriptAnalysis? Parsed { get; private set; }
 
-        public Task<EditorAnalysisResult> AnalyzeAsync(EditorAnalysisRequest request, CancellationToken cancellationToken)
+        public async Task<EditorAnalysisResult> AnalyzeAsync(EditorAnalysisRequest request, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var parsed = EditorAnalysis.Analyze(request.Text, path());
+            var file = owner.displayedFile;
+            var session = owner.displayedSession;
+            var documentPath = path();
+            var parsed = EditorAnalysis.IsXmlDocument(documentPath)
+                ? EditorAnalysis.AnalyzeXml(request.Text)
+                : await (session?.Engine.AnalyzeAsync(request.Text, documentPath, cancellationToken) ??
+                    throw new InvalidOperationException("PowerShell analysis is unavailable."));
             cancellationToken.ThrowIfCancellationRequested();
+            if (file != owner.displayedFile || session != owner.displayedSession)
+                throw new OperationCanceledException("The workbench document changed.");
             Parsed = parsed;
             Version = request.Version;
-            return Task.FromResult(new EditorAnalysisResult(request.Version, EditorAnalysisState.Available,
+            if (file is not null) { file.Analysis = parsed; file.AnalysisText = request.Text; }
+            return new EditorAnalysisResult(request.Version, EditorAnalysisState.Available,
                 parsed.Diagnostics.Select(diagnostic => new EditorDiagnostic(diagnostic.Code, diagnostic.Message,
-                    EditorDiagnosticSeverity.Error, new(diagnostic.Start, diagnostic.End - diagnostic.Start))).ToImmutableArray()));
+                    EditorDiagnosticSeverity.Error, new(diagnostic.Start, diagnostic.End - diagnostic.Start))).ToImmutableArray());
         }
 
     }
@@ -118,13 +142,20 @@ public sealed partial class WorkbenchControl
     private async void OnPortableTextCopied(object? sender, TextEventArgs args)
     {
         if (windowClosed) return;
+        var generation = ++portableCopyGeneration;
         try
         {
+            var snapshot = CapturePortableCopy();
+            var analysis = snapshot.Analysis ?? (EditorAnalysis.IsXmlDocument(snapshot.Path)
+                ? EditorAnalysis.AnalyzeXml(snapshot.Text)
+                : await (snapshot.Engine?.AnalyzeAsync(snapshot.Text, snapshot.Path) ??
+                    throw new InvalidOperationException("PowerShell analysis is unavailable.")));
+            if (windowClosed || generation != portableCopyGeneration) return;
             var data = new DataTransfer();
             var item = new DataTransferItem();
             item.Set(DataFormat.Text, args.Text);
             data.Add(item);
-            AddPortableCopyHtml(data);
+            AddPortableCopyHtml(data, snapshot, analysis);
             var clipboard = TopLevel.GetTopLevel(ScriptEditor)?.Clipboard ??
                 throw new InvalidOperationException("The script editor has no clipboard.");
             await clipboard.SetDataAsync(data);
@@ -132,7 +163,8 @@ public sealed partial class WorkbenchControl
         catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or NotSupportedException or
             IOException or UnauthorizedAccessException or System.Text.RegularExpressions.RegexMatchTimeoutException)
         {
-            await ReportErrorAsync("Rich editor copy", exception);
+            if (!windowClosed && generation == portableCopyGeneration)
+                await ReportErrorAsync("Rich editor copy", exception);
         }
     }
 
@@ -142,44 +174,54 @@ public sealed partial class WorkbenchControl
         ObjectDisposedException.ThrowIf(windowClosed, this);
         ArgumentNullException.ThrowIfNull(data);
         if (data.Items.Count == 0) return;
+        var snapshot = CapturePortableCopy();
+        AddPortableCopyHtml(data, snapshot, snapshot.Analysis ??
+            throw new InvalidOperationException("Syntax analysis is pending or unavailable. Try rich copy after analysis completes."));
+    }
+
+    private sealed record PortableCopyRow(EditorTextSpan? Span, string Padding);
+    private sealed record PortableCopySnapshot(string Text, PortableCopyRow[] Rows, EditorTheme Theme,
+        bool HighContrast, int TabSize, ScriptAnalysis? Analysis, PowerShellSession? Engine, string? Path);
+
+    private PortableCopySnapshot CapturePortableCopy()
+    {
         var selection = ScriptEditor.TextArea.Selection;
         var text = ScriptEditor.Document.Text;
-        var analysis = EditorAnalysis.Analyze(text, displayedFile?.File.Path ?? displayedFile?.File.Name);
-        var spans = DesktopTheme.HighContrast ? [] : PowerShellColorizer.GetColorSpans(analysis, settings.Theme);
-        string fragment;
+        var rows = new List<PortableCopyRow>();
         if (selection.IsEmpty)
         {
-            if (!ScriptEditor.Options.CutCopyWholeLine) return;
-            var line = ScriptEditor.Document.GetLineByOffset(ScriptEditor.CaretOffset);
-            fragment = ColoredHtml(text, new(line.Offset, line.TotalLength), spans, ScriptEditor.Options.IndentationSize);
-        }
-        else
-        {
-            // Enrich the native payload without replacing rectangular/whole-line clipboard metadata.
-            if (selection is AvaloniaEdit.Editing.RectangleSelection)
+            if (ScriptEditor.Options.CutCopyWholeLine)
             {
-                var rows = selection.GetText().Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
-                var segments = selection.Segments.ToArray();
-                var html = new StringBuilder();
-                for (var index = 0; index < rows.Length; index++)
-                {
-                    if (index > 0) html.Append('\n');
-                    var source = index < segments.Length
-                        ? ScriptEditor.Document.GetText(segments[index].StartOffset, segments[index].Length) : "";
-                    if (index < segments.Length && rows[index].StartsWith(source, StringComparison.Ordinal))
-                    {
-                        html.Append(ColoredHtml(text, new(segments[index].StartOffset, segments[index].Length),
-                            spans, ScriptEditor.Options.IndentationSize));
-                        html.Append(WebUtility.HtmlEncode(rows[index][source.Length..]));
-                    }
-                    else html.Append(WebUtility.HtmlEncode(rows[index]));
-                }
-                fragment = html.ToString();
+                var line = ScriptEditor.Document.GetLineByOffset(ScriptEditor.CaretOffset);
+                rows.Add(new(new(line.Offset, line.TotalLength), ""));
             }
-            else fragment = ColoredHtml(text, new(selection.SurroundingSegment.Offset, selection.SurroundingSegment.Length),
-                spans, ScriptEditor.Options.IndentationSize);
         }
-        var wrapped = WrapCopyHtml(fragment, settings.Theme, DesktopTheme.HighContrast, ScriptEditor.Options.IndentationSize);
+        else if (selection is RectangleSelection)
+        {
+            var selectedRows = selection.GetText().Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+            var segments = selection.Segments.ToArray();
+            for (var index = 0; index < selectedRows.Length; index++)
+            {
+                var source = index < segments.Length
+                    ? ScriptEditor.Document.GetText(segments[index].StartOffset, segments[index].Length) : "";
+                rows.Add(index < segments.Length && selectedRows[index].StartsWith(source, StringComparison.Ordinal)
+                    ? new(new(segments[index].StartOffset, segments[index].Length), selectedRows[index][source.Length..])
+                    : new(null, selectedRows[index]));
+            }
+        }
+        else rows.Add(new(new(selection.SurroundingSegment.Offset, selection.SurroundingSegment.Length), ""));
+        return new(text, rows.ToArray(), settings.Theme, DesktopTheme.HighContrast, ScriptEditor.Options.IndentationSize,
+            displayedFile?.CurrentAnalysis, displayedSession?.Engine, displayedFile?.File.Path ?? displayedFile?.File.Name);
+    }
+
+    private static void AddPortableCopyHtml(DataTransfer data, PortableCopySnapshot snapshot, ScriptAnalysis analysis)
+    {
+        if (snapshot.Rows.Length == 0) return;
+        var spans = snapshot.HighContrast ? [] : PowerShellColorizer.GetColorSpans(analysis, snapshot.Theme);
+        var fragment = string.Join("\n", snapshot.Rows.Select(row =>
+            (row.Span is { } span ? ColoredHtml(snapshot.Text, span, spans, snapshot.TabSize) : "") +
+            WebUtility.HtmlEncode(row.Padding)));
+        var wrapped = WrapCopyHtml(fragment, snapshot.Theme, snapshot.HighContrast, snapshot.TabSize);
         var item = data.Items[0];
         if (OperatingSystem.IsWindows())
             item.Set(DataFormat.CreateBytesPlatformFormat("HTML Format"), CreateWindowsHtmlClipboard(wrapped));
@@ -301,17 +343,17 @@ public sealed partial class WorkbenchControl
             if (!CurrentPause()) return;
             var snapshot = session.DebugSnapshot ?? throw new InvalidOperationException("The debugger variable snapshot is unavailable.");
             portableHoverIsCurrent = () => CurrentPause() && session.DebugSnapshot == snapshot;
-            var value = variable.VariablePath.IsUnqualified
+            var value = variable.VariablePath?.IsUnqualified == true
                 ? snapshot.Variables.FirstOrDefault(value => value.Name.Equals("$" + variable.VariablePath.UserPath, StringComparison.OrdinalIgnoreCase))
                 : null;
-            if (!variable.VariablePath.IsUnqualified)
+            if (variable.VariablePath?.IsUnqualified != true)
                 ShowPortableHover(variable.Text + ": Scoped/provider variables cannot be resolved from the selected frame's variable snapshot.");
             else if (value is null)
                 ShowPortableHover(variable.Text + ": Variable is not available in the selected debugger scope.");
             else ShowPortableHover(value.Error is null ? value.ToString() : value.Name + ": " + value.Error);
         }
         catch (InvalidOperationException) when (!CurrentPause()) { }
-        catch (Exception exception) when (exception is InvalidOperationException or System.Management.Automation.RuntimeException)
+        catch (InvalidOperationException exception)
         {
             if (!CurrentPause()) return;
             ShowPortableHover(variable.Text + ": " + exception.Message);

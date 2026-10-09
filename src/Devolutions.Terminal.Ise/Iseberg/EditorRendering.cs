@@ -5,8 +5,6 @@ using AvaloniaEdit.Document;
 using AvaloniaEdit.Editing;
 using AvaloniaEdit.Rendering;
 using Iseberg.Core;
-using System.Management.Automation;
-using System.Management.Automation.Language;
 using System.Text.RegularExpressions;
 
 namespace Iseberg;
@@ -50,10 +48,10 @@ public sealed class PowerShellColorizer : DocumentColorizingTransformer
             previous = token;
             if (color is SolidColorBrush brush)
                 spans.Add(new(token.Extent.StartOffset, token.Extent.EndOffset, brush.Color));
-            if (token is StringExpandableToken { NestedTokens: { } nested })
+            if (token.NestedTokens is { } nested)
                 foreach (var variable in nested)
                     spans.Add(new(variable.Extent.StartOffset, variable.Extent.EndOffset, Color.Parse(theme.Colors[pane + ".Variable"])));
-            if (token is StringToken && token.Text.Contains('<'))
+            if (token.Kind is TokenKind.StringLiteral or TokenKind.StringExpandable or TokenKind.HereStringLiteral or TokenKind.HereStringExpandable && token.Text.Contains('<'))
                 foreach (Match match in XmlTokens.Matches(token.Text))
                     foreach (var name in new[] { "Comment", "Tag", "Attribute", "Value" })
                     {
@@ -128,6 +126,7 @@ public sealed class ConsoleColorizer(Func<SessionModel?> session, Func<EditorThe
         ApplyPromptStyles(line, current.Console.TranscriptEnd, current.Console.PromptParts);
         if (line.EndOffset <= current.Console.InputStart) return;
         var analysis = current.Console.InputAnalysis;
+        if (analysis is null) return;
         Token? prior = null;
         foreach (var token in analysis.Tokens)
         {
@@ -177,6 +176,7 @@ public sealed class ScriptAdornments(Func<ScriptTab?> file, Func<DebugLocation?>
     private ScriptTab? cachedFile;
     private DebugLocation? cachedLocation;
     private ITextSourceVersion? cachedVersion;
+    private ScriptAnalysis? cachedAnalysis;
     private (int Start, int End)? pausedSpan;
 
     public KnownLayer Layer => KnownLayer.Background;
@@ -184,11 +184,13 @@ public sealed class ScriptAdornments(Func<ScriptTab?> file, Func<DebugLocation?>
     {
         if (file() is not { } current || !textView.VisualLinesValid || DesktopTheme.HighContrast) return;
         var location = debug();
-        if (cachedFile != current || cachedLocation != location || cachedVersion?.CompareAge(current.Document.Version) != 0)
+        if (cachedFile != current || cachedLocation != location || cachedVersion?.CompareAge(current.Document.Version) != 0 ||
+            cachedAnalysis != current.CurrentAnalysis)
         {
             cachedFile = current;
             cachedLocation = location;
             cachedVersion = current.Document.Version;
+            cachedAnalysis = current.CurrentAnalysis;
             pausedSpan = PausedStatementSpan(current, location);
         }
         var breakpoints = current.LineBreakpoints.ToDictionary(spec => spec.Line);
@@ -215,7 +217,7 @@ public sealed class ScriptAdornments(Func<ScriptTab?> file, Func<DebugLocation?>
     public static (int Start, int End)? PausedStatementSpan(ScriptTab current, DebugLocation? location) =>
         location is not null && !current.File.IsDirty && !EditorAnalysis.IsXmlDocument(current.File.Path) &&
         BreakpointVisuals.IsPausedLine(current, location, location.Line)
-            ? EditorAnalysis.StatementAtPosition(current.Document.Text, location.Line, location.Column) : null;
+            ? current.CurrentAnalysis is { } analysis ? EditorAnalysis.StatementAtPosition(analysis, location.Line, location.Column) : null : null;
 }
 
 public sealed class ScriptDiagnosticRenderer(Func<EditorAnalysisResult> analysis, Func<EditorTheme> theme) : IBackgroundRenderer

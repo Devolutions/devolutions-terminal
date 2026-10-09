@@ -1,7 +1,6 @@
 #if POWERSHELL_ISE
 using System.Globalization;
 using System.Text;
-using System.Management.Automation.Language;
 using Avalonia.Media;
 using Avalonia.Threading;
 using Devolutions.Terminal.Connection;
@@ -42,6 +41,8 @@ public sealed class IsebergTerminalConnection : IRestartableTerminalConnection
     private int? _selectionAnchor;
     private char? _pendingHighSurrogate;
     private bool _syntaxHighlighting = true;
+    private bool _submissionPending;
+    private readonly CancellationTokenSource _inputOperations = new();
     private sealed record InputEdit(string Text, int Caret);
 
     public IsebergTerminalConnection(WorkbenchControl workbench, SessionModel session, Action? focusInput = null)
@@ -62,7 +63,7 @@ public sealed class IsebergTerminalConnection : IRestartableTerminalConnection
     public TerminalConnectionState State { get; private set; } = TerminalConnectionState.NotConnected;
     public TerminalProcessMetadata? ProcessMetadata => null;
     public TerminalExitInfo? LastExitInfo { get; private set; }
-    public bool IsInputEnabled => IsRunning && !_inputDisabled &&
+    public bool IsInputEnabled => IsRunning && !_inputDisabled && !_submissionPending && _session.Engine.State != SessionState.Failed &&
         (_input is not null || _acceptsCommands && (!_session.IsConsoleSubmissionPending ||
             _session.Engine.IsDebuggerPaused || _session.Engine.IsNestedPromptActive));
     public bool HasPendingInput => _input is not null;
@@ -153,8 +154,20 @@ public sealed class IsebergTerminalConnection : IRestartableTerminalConnection
         var text = InputText;
         var caret = _caret;
         var revision = _revision;
-        var result = await _session.Engine.CompleteAsync(text, caret, cancellationToken);
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _inputOperations.Token);
+        var result = await _session.Engine.CompleteAsync(text, caret, cancellation.Token);
         return IsInputEnabled && _input is null && revision == _revision ? result : null;
+    }
+
+    public async Task<ScriptAnalysis?> RequestAnalysisAsync(CancellationToken cancellationToken = default)
+    {
+        if (!IsInputEnabled || _input is not null) return null;
+        var revision = _revision;
+        var text = InputText;
+        var cached = _session.Console.InputAnalysis;
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _inputOperations.Token);
+        var result = cached ?? await _session.Engine.AnalyzeAsync(text, cancellationToken: cancellation.Token);
+        return IsInputEnabled && _input is null && revision == _revision && InputText == text ? result : null;
     }
 
     public bool ApplyCompletion(CompletionSet completion, int index, int expectedRevision)
@@ -186,6 +199,7 @@ public sealed class IsebergTerminalConnection : IRestartableTerminalConnection
         Resize(options.Columns, options.Rows);
         _session.Engine.Output += WriteOutput;
         _session.Engine.InputRequested += OnInputRequested;
+        _session.Console.AnalysisChanged += OnAnalysisChanged;
         State = TerminalConnectionState.Connected;
         IsRunning = true;
         Emit(Escape + "[?2004h");
@@ -227,6 +241,7 @@ public sealed class IsebergTerminalConnection : IRestartableTerminalConnection
         if (!IsRunning) return;
         _acceptsCommands = acceptsCommands;
         _inputDisabled = inputDisabled;
+        if (_workbench.IsDisposed) _inputOperations.Cancel();
         if (!IsInputEnabled || _input is not null) return;
         if (!_promptShown)
         {
@@ -467,6 +482,7 @@ public sealed class IsebergTerminalConnection : IRestartableTerminalConnection
 
     private void Submit()
     {
+        if (_submissionPending) return;
         var text = _line.ToString();
         if (_input is { } request)
         {
@@ -477,12 +493,6 @@ public sealed class IsebergTerminalConnection : IRestartableTerminalConnection
             request.Response.TrySetResult(text);
             return;
         }
-        if (EditorAnalysis.Analyze(text).Errors.Any(error => error.IncompleteInput ||
-            error.ErrorId is "MissingEndParenthesisInExpression" or "MissingEndParenthesisInMethodCall"))
-        {
-            Insert("\n");
-            return;
-        }
         if (string.IsNullOrWhiteSpace(text))
         {
             Emit("\r\n");
@@ -491,11 +501,31 @@ public sealed class IsebergTerminalConnection : IRestartableTerminalConnection
             RefreshState(_acceptsCommands, _inputDisabled);
             return;
         }
-        _acceptsCommands = false;
-        HidePrompt();
-        ReplaceLine("");
-        _undo.Clear(); _redo.Clear();
-        Observe(_workbench.SubmitConsoleInputAsync(text));
+        _submissionPending = true;
+        Observe(SubmitAnalyzedAsync(text, _revision));
+    }
+
+    private async Task SubmitAnalyzedAsync(string text, int revision)
+    {
+        try
+        {
+            var analysis = await _session.Engine.AnalyzeAsync(text, cancellationToken: _inputOperations.Token);
+            if (!IsRunning || _disposed || _input is not null || _revision != revision || text != _line.ToString()) return;
+            if (analysis.Errors.Any(error => error.IncompleteInput ||
+                error.ErrorId is "MissingEndParenthesisInExpression" or "MissingEndParenthesisInMethodCall"))
+            {
+                _submissionPending = false;
+                Insert("\n");
+                return;
+            }
+            _acceptsCommands = false;
+            HidePrompt();
+            ReplaceLine("");
+            _undo.Clear(); _redo.Clear();
+            _submissionPending = false;
+            await _workbench.SubmitConsoleInputAsync(text);
+        }
+        finally { _submissionPending = false; InputChanged?.Invoke(this, EventArgs.Empty); }
     }
 
     public async Task CompleteAsync(bool backwards = false)
@@ -510,7 +540,7 @@ public sealed class IsebergTerminalConnection : IRestartableTerminalConnection
         {
             var revision = _revision;
             var caret = _caret;
-            var result = await _session.Engine.CompleteAsync(text, _caret);
+            var result = await _session.Engine.CompleteAsync(text, _caret, _inputOperations.Token);
             if (!IsInputEnabled || _input is not null || revision != _revision || caret != _caret || result.Matches.Count == 0) return;
             _completionOriginal = text;
             _completions = result;
@@ -551,7 +581,8 @@ public sealed class IsebergTerminalConnection : IRestartableTerminalConnection
         if (_input?.Secret == true) return new string('*', StringInfo.ParseCombiningCharacters(value).Length);
         var display = new StringBuilder();
         Token[] tokens = [];
-        if (highlighted && _syntaxHighlighting && _input is null) Parser.ParseInput(value, out tokens, out _);
+        if (highlighted && _syntaxHighlighting && _input is null && _session.Console.InputAnalysis is { } analysis)
+            tokens = analysis.Tokens;
         string? activeColor = null;
         var tokenIndex = 0;
         var selected = false;
@@ -596,10 +627,17 @@ public sealed class IsebergTerminalConnection : IRestartableTerminalConnection
         if (_caret != text.Length) Emit(Escape + "[u" + _prefix + DisplayInput(text[.._caret], highlighted: true));
     }
 
+    private void OnAnalysisChanged()
+    {
+        if (Dispatcher.UIThread.CheckAccess()) Redraw();
+        else Dispatcher.UIThread.Post(Redraw);
+    }
+
     private void Observe(Task task) => _ = ObserveAsync(task);
     private async Task ObserveAsync(Task task)
     {
         try { await task; }
+        catch (OperationCanceledException) when (_inputOperations.IsCancellationRequested) { }
         catch (Exception error)
         {
             if (IsRunning) await _workbench.ReportConsoleErrorAsync(error);
@@ -619,10 +657,12 @@ public sealed class IsebergTerminalConnection : IRestartableTerminalConnection
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (!IsRunning) return Task.CompletedTask;
+        _inputOperations.Cancel();
         IsRunning = false;
         State = TerminalConnectionState.Closed;
         _session.Engine.Output -= WriteOutput;
         _session.Engine.InputRequested -= OnInputRequested;
+        _session.Console.AnalysisChanged -= OnAnalysisChanged;
         _input?.Response.TrySetCanceled();
         _input = null;
         _line.Clear();
@@ -638,6 +678,7 @@ public sealed class IsebergTerminalConnection : IRestartableTerminalConnection
     {
         if (_disposed) return;
         await CloseAsync();
+        _inputOperations.Dispose();
         _disposed = true;
         State = TerminalConnectionState.Disposed;
     }

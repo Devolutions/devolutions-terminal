@@ -34,8 +34,8 @@ CI workflows:
   artifacts (optional cache; not required to develop).
 - `build-terminal.yml` — restore natives from source, test, NativeAOT desktop, Linux
   packages, macOS `.app`/zip, MSIX, the `Devolutions.Terminal.Control`
-  NuGet package, and the browser WASM host. Opt-in managed Iseberg builds are
-  validated separately and are not release package payloads.
+  NuGet package, and the browser WASM host. NativeAOT desktop releases include
+  Iseberg; the explicit terminal-only configuration is also validated.
 
 ## Developer build
 
@@ -47,17 +47,20 @@ dotnet run --project src/Devolutions.Terminal
 ```
 
 Warnings are errors for production projects. Trim and NativeAOT analyzers run
-continuously on compatible projects. The imported PowerShell workbench requires
-dynamic code and is deliberately excluded from those analyzers.
+continuously on compatible projects, including the Iseberg parent UI/client.
+The private `Iseberg.PowerShell` module alone is managed and untrimmed because
+it runs inside the installed PowerShell subprocess.
 
 ## Desktop distribution
 
-Default publishes and release packages are self-contained NativeAOT and exclude
-Iseberg (`EnablePowerShellIse=false`). CI uploads these NativeAOT publishes for
-Windows, Linux and macOS packaging; the separately validated managed Iseberg
-publish is not uploaded as a release payload. The `dt` CLI remains NativeAOT.
-Iseberg requires an explicit `-p:EnablePowerShellIse=true` developer build,
-which is managed and untrimmed and uses separately installed PowerShell.
+Default publishes and release packages are self-contained NativeAOT and include
+Iseberg. Ship the loose `Iseberg.PowerShell` folder with both DT-owned assemblies:
+`Iseberg.PowerShell.dll` and `Iseberg.Contracts.dll`. These are imported by
+separately installed PowerShell; do not ship SMA, PowerShell's runtime/native
+dependency graph, or CoreCLR. macOS staging places this folder in
+`Contents/Resources`, outside the Mach-O-only `Contents/MacOS` directory.
+The `dt` CLI remains NativeAOT. Explicit terminal-only publishes use
+`-p:EnablePowerShellIse=false` and do not include the bridge.
 See [iseberg.md](iseberg.md) for prerequisites, legal notices and guards.
 
 ```powershell

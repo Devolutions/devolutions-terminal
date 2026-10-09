@@ -1,9 +1,9 @@
 # Iseberg workbench profiles
 
 **Iseberg** is an embedded PowerShell ISE-style workbench, not a terminal
-command line or a separate application. **It is disabled in default builds and
-release packages to preserve DT's NativeAOT desktop.** The workflow below requires
-an explicit managed developer build with `-p:EnablePowerShellIse=true`.
+command line or a separate application. **It is enabled in default NativeAOT
+desktop builds and release packages.** The workbench executes PowerShell in an
+owned `pwsh` subprocess through a private managed module shipped with DT.
 In **Settings**, select **Add a new
 profile**, choose **PowerShell ISE (Iseberg)** under **Profile type**, configure
 its name, starting directory and font, then select that
@@ -28,10 +28,10 @@ in DT's existing Settings tab, rather than another preferences window. Nested
 workbench session tabs and remote-session creation are hidden: DT owns tabs.
 
 The editor sits above the terminal in a resizable horizontal split. Editor
-execution and typed console commands share the same in-process PowerShell
-runspace, including variables, completion, debugger and host input. The lower
+execution and typed console commands share the same persistent PowerShell
+runspace in the child process, including variables, completion, debugger and host input. The lower
 pane uses DT's VT renderer, scrollbar, clipboard and terminal interaction
-settings, not Iseberg's original transcript editor or another `pwsh` process.
+settings, not Iseberg's original transcript editor or a separate console runspace.
 Document tabs and workbench chrome use compact desktop UI typography independently
 of code font and zoom. The toolbar wraps in narrow DT windows, long document
 titles truncate with a full-title tooltip, and the status/zoom bar stays compact.
@@ -75,13 +75,32 @@ disabled in the DT host.
 
 ## Installed PowerShell prerequisite
 
-Install **PowerShell 7.6.6 or newer within 7.6.x**, using .NET 10.0 and the
-**same architecture as DT**. Make `pwsh` available on PATH, or set
+Install stable **PowerShell 7.4.x, 7.5.x or 7.6.x** (minimum 7.4.6),
+with its bundled .NET 8, 9 or 10 runtime, respectively. Use the latest servicing
+release in your chosen series. The private module and wire contracts target
+.NET 8 and compile against PowerShell 7.4 APIs; DT itself remains .NET 10/NativeAOT.
+PowerShell 7.4.0 through 7.4.5 cannot load the patched SDK's
+`System.Management.Automation` 7.4.6.500 assembly reference and are rejected up front.
+The child architecture does not need to match DT. Make `pwsh` available on PATH, or set
 `DT_ISEBERG_PSHOME` to its absolute installation directory before starting DT.
-DT checks its version, runtime and architecture, and loads that installed engine
-in-process. It does not start an external Iseberg desktop or use `pwsh` as the
-workbench console process. A short noninteractive `pwsh -NoProfile` probe
-discovers and validates the installation.
+DT checks its version and child-runtime compatibility. A short noninteractive
+`pwsh -NoProfile` probe discovers and validates the installation. DT then starts
+an owned `pwsh -NoLogo -NoProfile` child and imports the absolute path to its
+`Iseberg.PowerShell.dll` binary module. The module creates a custom-host execution
+runspace; it does not replace PowerShell's bootstrap console host.
+
+Parser analysis, completion, execution, host input, debugging and portable
+`$psISE` proxies run in that child. The NativeAOT parent uses typed, source-generated
+JSON over private bidirectional local IPC. Script text is sent as protocol data,
+never interpolated into the startup command. Standard output/error are drained
+separately from IPC. The module and wire contracts are DT-private and shipped in
+lockstep; protocol/build mismatches fail startup instead of guessing compatibility.
+The length-prefixed channel mutually authenticates a fresh challenge and the
+parent's process identity. Frames are limited to 8 MiB, outstanding requests to
+128, and queued outgoing frames to 512. Request overflow is reported explicitly;
+outgoing queue overflow disconnects rather than silently dropping notifications.
+Independent readers keep reverse host/UI callbacks and cancellation available
+while a command, input prompt or debugger stop is waiting.
 
 This prerequisite is lazy: ordinary terminal profiles remain usable without
 compatible installed PowerShell. Opening Iseberg without it produces an explicit
@@ -90,9 +109,9 @@ runtime/native dependency graph, which includes dependencies with separate
 distribution terms. Compile-time SDK references exclude runtime, native and
 content assets; publishing rejects accidental engine payloads.
 
-PowerShell executes with **DT's permissions and is not sandboxed**. Runspace
-isolation is not process/security isolation; scripts can access the filesystem,
-network and process-wide state. There is no unconditional execution-policy
+PowerShell executes with **DT's permissions and is not sandboxed**. Process
+isolation protects DT's runtime boundary, not the user's data; scripts can access
+the filesystem, network and other processes. There is no unconditional execution-policy
 bypass. **Load PowerShell profile scripts** is opt-in and defaults to off.
 The current-host profile is `Devolutions.Terminal.Iseberg_profile.ps1`; normal
 all-host profile scripts also run when enabled. Per-profile elevation, terminal
@@ -170,7 +189,12 @@ Closing a tab/window or quitting DT prompts to stop running commands and
 save/discard dirty documents. Cancel leaves the tab alive. Bulk/application
 closing prepares every workbench before disposing any, so a later cancellation
 does not destroy an earlier approved tab. Forced host cleanup disposes runspaces,
-timers and UI subscriptions. UI errors use DT notifications and tracing.
+timers, owned child processes and UI subscriptions. UI errors use DT notifications and tracing.
+
+If the child exits or IPC fails, DT keeps open documents and reports that the
+session's variables/debugger state were lost. Reopen the tab explicitly to start a
+fresh session. DT does not automatically restart PowerShell or replay an execution
+whose outcome is ambiguous.
 
 DT owns the host window, application theme, fonts, tabs and settings location.
 Standalone global settings and update checks remain disabled. Each workspace
@@ -206,60 +230,140 @@ and original Invoke/InvokeSynchronous contracts remain unsupported.
 
 ## Build and distribution
 
-The default desktop and release packages use **NativeAOT with Iseberg disabled**.
-The full PowerShell parser/runspace/debugger requires dynamic code, so the
-current in-process integration cannot run in NativeAOT. Iseberg remains an
-explicit developer opt-in; its desktop publish is **self-contained, single-file,
-managed and untrimmed**. The `dt` CLI remains NativeAOT in both variants.
+The default desktop and release packages use **NativeAOT with Iseberg enabled**.
+The PowerShell parser/runspace/debugger requires dynamic code only in the
+`Iseberg.PowerShell` module, which is built managed and untrimmed and loaded solely
+by installed PowerShell. The parent workbench, contracts and IPC client remain
+AOT/trim compatible. The `dt` CLI remains NativeAOT.
 
 ```powershell
 dotnet publish src/Devolutions.Terminal -c Release -r win-x64 --self-contained
 dotnet publish src/Devolutions.Terminal -c Release -r win-x64 --self-contained `
-  -p:EnablePowerShellIse=true -o artifacts/iseberg-dev/win-x64
-dotnet run --project src/Devolutions.Terminal -p:EnablePowerShellIse=true
-dotnet test Devolutions.Terminal.slnx -p:EnablePowerShellIse=true
+  -p:EnablePowerShellIse=false -o artifacts/terminal-only/win-x64
+dotnet run --project src/Devolutions.Terminal
+dotnet test Devolutions.Terminal.slnx
 ```
 
-The first command produces the default NativeAOT desktop. It retains saved
-Iseberg profiles but reports the missing feature rather than silently opening
-PowerShell terminals. Its settings editor does not offer new Iseberg profiles.
-The second command produces an opt-in managed developer publish, not a default
-release package payload. Use the opt-in flag consistently for restore, build
-and test commands, and restore with `-p:Configuration=Release` before a Release
+The first command produces the default NativeAOT desktop with the private module
+folder. The second produces an explicit terminal-only NativeAOT desktop. It
+retains saved Iseberg profiles but reports the missing feature rather than silently
+opening PowerShell terminals; its settings editor does not offer new Iseberg profiles.
+Use the exclusion flag consistently for restore, build and test commands,
+and restore with `-p:Configuration=Release` before a Release
 build with `--no-restore`. Ordinary managed builds remain framework-dependent;
 self-contained deployment applies at publish time. Engine/workbench tests are
-excluded when the feature is off.
-CI still builds and tests this opt-in variant separately. Publishing an
-Iseberg-enabled build with trimming or NativeAOT explicitly enabled fails before
-compiling project dependencies.
+excluded when the feature is off. CI builds the feature-enabled native desktop
+and retains a separate terminal-only configuration gate.
 Windows CI runs test projects sequentially (`-m:1`) to avoid concurrent test-host
 startup starving short broker deadlines. It retains TRX results and per-test
 hang diagnostics; the complete suite has a separate, longer time budget for the
 slower hosted Windows runner.
 
 Native libraries/helpers and legal notices remain loose for package signing and
-license checks. macOS packaging defaults to NativeAOT; an explicitly supplied
-managed publish must be self-contained and single-file, not an arbitrary loose
-managed application layout.
+license checks. Ship `Iseberg.PowerShell/Iseberg.PowerShell.dll` and its sibling
+`Iseberg.Contracts.dll` as loose content beside the executable; neither is loaded
+into DT. macOS app staging moves this module folder to `Contents/Resources`, while
+`Contents/MacOS` contains only native code.
 Keep all `THIRD-PARTY-NOTICES*.txt` files in distributions.
 
-The restored default was validated with a fresh `win-x64` Release publish
-without an `EnablePowerShellIse` override. Both desktop and CLI are native PE
-executables without CLR headers; the output contains no Iseberg, PowerShell
-engine or CoreCLR payload, and `dt --help` exits zero. Default App, UI and
-Settings.Editor suites pass 213, 14 and 64 cases respectively. Explicit opt-in
-App/UI runs still pass all 533/664 cases. Platform script syntax and workflow
-YAML were checked on Windows; actual Linux/macOS publishing and packaging
-remain platform-CI validation responsibilities.
+Do not ship the PowerShell engine or CoreCLR dependency graph. Native publication
+must also be exercised by opening an Iseberg tab in the published executable;
+a successful managed build or module import alone does not validate the parent
+AOT boundary. Actual Linux/macOS publishing and packaging require their respective
+platform/release environments.
 
-For engine tests on a machine without the matching installation,
+For engine tests on a machine without a compatible installation,
 `scripts/Install-IsebergTestPowerShell.ps1` downloads a pinned, SHA-256-verified
 portable runtime under `artifacts/test-powershell`. It does not change the system
 installation or PATH. Dot-source it to set `DT_ISEBERG_PSHOME` in the caller;
 GitHub Actions sets that variable for subsequent steps automatically.
+Use `-Version 7.4.6` to check the exact compatibility minimum, `-Version 7.4.20`
+for the serviced 7.4 runtime, `-Version 7.5.11` or the default `7.6.6`.
+CI runs the managed suites against 7.4.6, 7.5.11 and 7.6.6 on Windows,
+Linux and macOS. Old runtimes are isolated compatibility-test fixtures,
+not recommended user installations.
 **Never package this test-runtime directory with DT.**
 
-## Windows PowerShell ISE compatibility and validation
+### Windows NativeAOT subprocess evidence
+
+The feature-enabled `win-x64` Release publish was exercised as an actual native
+desktop, not a managed harness. Both desktop and CLI executables have no CLR
+header. Its loose module folder contains only the two DT-owned assemblies; the
+publish contains no PowerShell engine/CoreCLR payload.
+
+In isolated, test-owned windows, an editor script produced a computed result,
+typed native-console input read and changed its variable, and subsequent editor
+execution observed that change in the same child PID. Child assembly paths proved
+the published bridge/contract DLLs were loaded by PowerShell 7.6.6/.NET 10.0.12.
+Exact-PID parent module enumeration after execution found no SMA, CoreCLR,
+hostfxr or hostpolicy. Closing the window normally also terminated its child.
+
+A final fresh publish also verified completion acceptance, `Read-Host`, GUI
+Stop followed by execution in the same session, child-driven `$psISE` editor and
+line-number changes, and a saved-script breakpoint with Step Over and Continue.
+The final parent had 80 loaded modules with no SMA/CoreCLR matches; the child
+loaded both bridge assemblies from the published module folder. Killing a
+separate test-owned parent during a long-running script caused its exact child
+to exit without a child-kill command; that check observed cleanup within 104 ms,
+not a general shutdown-time guarantee.
+
+A separate owned-child termination check retained the unsaved document exactly,
+displayed explicit session-loss/reopen guidance, and observed no replacement child
+or replay across nine samples over approximately 15 seconds. This is bounded
+runtime evidence, not an unbounded lifetime claim. Linux/macOS execution and signed
+installer certification remain platform-CI/release responsibilities.
+
+The .NET 8 compatibility delivery publish was then exercised through native GUI
+automation on the exact minimum **PowerShell 7.4.6/.NET 8.0.10** and the installed
+**7.6.6/.NET 10.0.12**. Both passed editor/native-console shared state, accepted
+completion, typed `Read-Host`, Stop followed by state-preserving execution,
+`$psISE` reverse editor/option callbacks, and saved-script breakpoint, Step Over
+and Continue (values 0, 10 and 42). Each retained the same child PID throughout,
+loaded the published net8.0 bridge/contracts, and enumerated 80 parent modules
+with no SMA/CoreCLR/hostfxr/hostpolicy. All eight owned processes exited through
+normal UI closing. An earlier compatibility publish also passed these GUI
+workflows on serviced PowerShell 7.4.20/.NET 8.0.31.
+
+### Subprocess regression evidence
+
+Complete affected-project runs passed **1,625 tests, 0 failed, 9 skipped** across the
+affected projects. The skips are existing Unix PTY cases on Windows; no Iseberg
+case was skipped.
+
+| Test project | Passed | Failed | Skipped |
+| --- | ---: | ---: | ---: |
+| Devolutions.Terminal.App.Tests | 587 | 0 | 0 |
+| Devolutions.Terminal.UI.Tests | 665 | 0 | 0 |
+| Devolutions.Terminal.Settings.Tests | 190 | 0 | 0 |
+| Devolutions.Terminal.Settings.Editor.Tests | 64 | 0 | 0 |
+| Devolutions.Terminal.Connection.Tests | 119 | 0 | 9 |
+
+The App suite includes persistent regressions for fragmented/coalesced frames,
+Unicode, invalid/truncated lengths, the exact request/queue limits, correlated
+reverse callbacks, in-flight cancellation, authentication/build/process identity
+mismatches and replay rejection. Process tests cover independent sessions, raw
+stdout/stderr separation, child loss, cancellation and owned-child disposal.
+The complete UI suite exercises the subprocess-backed editing, debugger, host
+input, command forms, snippets, scripting proxies and recovery behaviors.
+The final App suite passed on 7.4.6, 7.4.20, 7.5.11 and installed 7.6.6;
+the final complete UI suite passed on the exact 7.4.6 minimum. A 50-iteration
+transport regression covers cancellation overlapping handler cleanup and
+connection disposal; cancellation/removal is synchronized so a completed
+handler's disposed token source cannot cause unexpected session loss.
+CLI, compatibility and package suites separately passed 34 tests.
+
+The complete Release solution builds with zero warnings/errors, and the default
+Release NativeAOT desktop/CLI publish succeeds. Positive and negative publish
+guard checks accept the two owned bridge assemblies and reject SMA, CoreCLR,
+unexpected bridge dependencies or a missing contract assembly. Actual desktop
+compiler references exclude SMA and the managed module. These checks are
+separate from the published native GUI evidence above.
+
+## Windows PowerShell ISE compatibility and historical validation
+
+The GUI comparison and test totals below describe the earlier **in-process,
+managed** integration. They document the behavioral baseline, not validation of
+the subprocess/NativeAOT implementation.
 
 Microsoft's original Windows PowerShell ISE uses Windows PowerShell 5.1 and the
 `Windows PowerShell ISE Host`; DT's workbench uses installed PowerShell 7.6.6 and
@@ -294,7 +398,7 @@ claim visual-description parity or full UI parity. Actual
 Linux/macOS packaging and installed Windows package certification still require
 their respective platform/release environments.
 
-### Final Windows integration evidence
+### Historical managed Windows integration evidence
 
 The Iseberg-enabled source passed **1,570 tests, 0 failed, 9 skipped** across the complete
 affected projects. The nine skips are the existing Unix PTY cases, which require
@@ -309,8 +413,7 @@ Linux/macOS; no Iseberg case is skipped.
 | Devolutions.Terminal.Connection.Tests | 119 | 0 | 9 |
 
 These are successful fresh Debug `dotnet test` runs with Iseberg enabled, not
-sums of overlapping filtered runs. With the feature now disabled by default,
-repeat them with `-p:EnablePowerShellIse=true`.
+sums of overlapping filtered runs. These totals predate the subprocess migration.
 Each project was run with `-p:SkipNativeRestore=true`,
 `-p:UseArtifactsOutput=true` and the same absolute `ArtifactsPath`, sequentially
 to avoid shared build-output collisions. Exact results are retained locally in
@@ -365,7 +468,9 @@ at revision **`d2e723f4f8ed4e08db28a89f09a783e40aed001c`**:
 
 | Local project | Imported responsibility |
 | --- | --- |
-| Iseberg.Core | PowerShell engine/host, execution, completion, debugger, files and settings models |
+| Iseberg.Core | Parent session client, files and settings models (engine/host extracted into the child module) |
+| Iseberg.Contracts | Private wire DTOs and source-generated JSON shared by parent and child |
+| Iseberg.PowerShell | Managed binary module, custom PowerShell host, parser, execution and debugger |
 | Iseberg.Editor | Engine-independent AvaloniaEdit editor, accessibility, markers and editing commands |
 | Iseberg | Embeddable WorkbenchControl, dialogs, models and scoped resources |
 
@@ -374,8 +479,8 @@ application themes were not adopted. Local adaptations add DT starting
 directories and host profile names, two-phase cancelable closing, DIP font
 sizes, scoped theme presets and completion popup resources, the DT VT console
 adapter, hidden-session action gates, and the
-installed-engine resolver in DT's connections layer. DT remains on Avalonia
-12.1.1; AvaloniaEdit is 12.0.0 and the compile-time PowerShell SDK is 7.6.6.
+installed-engine discovery and subprocess bridge in DT's connections layer. DT remains on Avalonia
+12.1.1; AvaloniaEdit is 12.0.0 and the compile-time PowerShell SDK is 7.4.20.
 
 Iseberg is **MIT**, copyright (c) 2026 Adam Driscoll. Its license is retained in
 [`docs/licenses/iseberg.txt`](licenses/iseberg.txt) and emitted as

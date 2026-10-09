@@ -332,6 +332,10 @@ public sealed partial class WorkbenchControl
     private async Task DisposeCoreAsync(bool waitForInitialization = true)
     {
         windowClosed = true;
+        ScriptEditorControl.AnalysisProvider = null;
+        ScriptEditorControl.CompletionProvider = null;
+        foreach (var session in Workbench.Sessions) session.Console.CancelAnalysis();
+        hostingOptions.Console?.RefreshState(acceptsCommands: false, inputDisabled: true);
         FileTabs.SelectionChanged -= OnFileChanged;
         SessionTabs.SelectionChanged -= OnSessionChanged;
         Workbench.Sessions.CollectionChanged -= workbenchSessionsChanged;
@@ -364,7 +368,7 @@ public sealed partial class WorkbenchControl
         {
             try { await initializationTask; }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or
-                ArgumentException or System.Management.Automation.RuntimeException or System.Text.Json.JsonException or OperationCanceledException or NotSupportedException)
+                ArgumentException or System.Text.Json.JsonException or OperationCanceledException or NotSupportedException)
             { System.Diagnostics.Trace.TraceError("Initialization failed during disposal: {0}", exception); }
         }
         try { await autoSaveTask; }
@@ -403,9 +407,10 @@ public sealed partial class WorkbenchControl
             if (commandErrorHandlers.Remove(session, out var errorHandler)) session.Engine.CommandErrorRequested -= errorHandler;
             DetachDebugger(session);
             DetachSessionUi(session);
+            session.Console.CancelAnalysis();
             try { await session.Engine.DisposeAsync(); }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or
-                System.Management.Automation.RuntimeException or OperationCanceledException)
+                OperationCanceledException)
             {
                 System.Diagnostics.Trace.TraceError("Could not dispose PowerShell session {0}: {1}", session.Name, exception);
                 failures.Add(exception);

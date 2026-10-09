@@ -29,7 +29,8 @@ public sealed class ScriptRecovery(string? directory = null)
             if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
             await using (var stream = new FileStream(temporary, options))
                 await JsonSerializer.SerializeAsync(stream, new RecoveredScript(id, file.Name, file.Path, file.Text,
-                    released ? 0 : ownerProcessId, ownerStartedUtc, file.EncodingChoice, sessionName));
+                    released ? 0 : ownerProcessId, ownerStartedUtc, file.EncodingChoice, sessionName),
+                    IseJsonContext.Default.RecoveredScript);
             File.Move(temporary, path, overwrite: true);
         }
         finally { File.Delete(temporary); }
@@ -41,7 +42,7 @@ public sealed class ScriptRecovery(string? directory = null)
         var scripts = new List<RecoveredScript>();
         foreach (var path in Directory.EnumerateFiles(directory, "*.json").Order())
         {
-            var script = JsonSerializer.Deserialize<RecoveredScript>(await File.ReadAllTextAsync(path))
+            var script = JsonSerializer.Deserialize(await File.ReadAllTextAsync(path), IseJsonContext.Default.RecoveredScript)
                 ?? throw new InvalidDataException($"Empty recovery file: {path}");
             if (script.Id == Guid.Empty || string.IsNullOrWhiteSpace(script.Name) || script.Text is null)
                 throw new InvalidDataException($"Invalid recovery file: {path}");

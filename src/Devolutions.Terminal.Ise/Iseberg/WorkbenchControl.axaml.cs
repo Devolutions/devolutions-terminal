@@ -1,4 +1,3 @@
-using System.Management.Automation;
 using System.Text.Json;
 using Avalonia;
 using Avalonia.Automation;
@@ -62,7 +61,6 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
     private readonly Dictionary<SessionModel, Action<InputRequest>> inputHandlers = [];
     private readonly Dictionary<SessionModel, Action<CommandErrorRequest>> commandErrorHandlers = [];
     private bool completionPending;
-    private IReadOnlySet<CompletionResultType>? automaticCompletionFilter;
     private TextEditor? automaticCompletionEditor;
     private string? completionNotice;
     private GridLength debuggerDockWidth = new(360);
@@ -121,11 +119,13 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
         DataContext = Workbench;
         ScriptEditor.FontFamily = new FontFamily("Consolas, Cascadia Code, DejaVu Sans Mono, Menlo, monospace");
         ScriptEditor.FontSize = 16;
-        ScriptEditorControl.AnalysisProvider = scriptAnalysis;
         ScriptEditorControl.AnalysisChanged += (_, _) => ApplyScriptAnalysis();
         ScriptEditorControl.CompletionProvider = new WorkbenchCompletionProvider(this);
         ScriptEditorControl.ErrorOccurred += async (_, error) => await ReportErrorAsync(error.Operation, error.Exception);
         CommandForm.CommandChanged += RefreshState;
+        CommandForm.BuildCommandAsync = (form, cancellation) =>
+            (displayedSession?.Engine ?? throw new InvalidOperationException("PowerShell is unavailable."))
+                .BuildCommandFormAsync(form, cancellation);
         workbenchSessionsChanged = (_, e) =>
         {
             foreach (var session in showCommandHandlers.Keys.Where(session => !Workbench.Sessions.Contains(session)).ToArray())
@@ -142,7 +142,9 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
             }
             foreach (var session in Workbench.Sessions.Where(session => !showCommandHandlers.ContainsKey(session)).ToArray())
             {
-                session.Engine.ConfigureIseObjectModel(Scripting);
+                _ = ScriptingId(Scripting);
+                session.Engine.ScriptingCallback = (operation, arguments, cancellation) =>
+                    DispatchScriptingAsync(session, operation, arguments, cancellation);
                 AttachDebugger(session);
                 Action<ShowCommandRequest> handler = request =>
                     Dispatcher.UIThread.Post(() => ShowConsoleCommand(session, request));
@@ -227,8 +229,20 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
         completionTimer.Tick += async (_, _) =>
         {
             completionTimer.Stop();
-            if (automaticCompletionEditor is { IsKeyboardFocusWithin: true } editor && automaticCompletionFilter is { } filter)
-                await GuardAsync(() => RequestCompletionAsync(editor, filter));
+            if (automaticCompletionEditor is { IsKeyboardFocusWithin: true } editor && displayedSession is { } session)
+                await GuardAsync(async () =>
+                {
+                    var start = editor == ConsoleEditor ? session.Console.InputStart : 0;
+                    var text = editor.Document.GetText(start, editor.Document.TextLength - start);
+                    var caret = editor.CaretOffset - start;
+                    var version = editor.Document.Version;
+                    var analysis = editor == ScriptEditor ? displayedFile?.CurrentAnalysis : session.Console.InputAnalysis;
+                    analysis ??= await session.Engine.AnalyzeAsync(text, cancellationToken: windowCancellation.Token);
+                    if (windowClosed || session != displayedSession || caret != editor.CaretOffset - start ||
+                        version.CompareAge(editor.Document.Version) != 0) return;
+                    var filter = EditorAnalysis.CompletionFilter(analysis, text, caret);
+                    if (filter is not null) await RequestCompletionAsync(editor, filter);
+                });
         };
         ScriptEditor.TextChanged += (_, _) =>
         {
@@ -266,7 +280,7 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
     {
         try { await StartCoreAsync(); }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or JsonException or
-            InvalidDataException or InvalidOperationException or ArgumentException or RuntimeException or
+            InvalidDataException or InvalidOperationException or ArgumentException or
             OperationCanceledException or NotSupportedException)
         {
             // Keep a published recovery draft and its lease until explicit disposal if storage fails.
@@ -344,7 +358,7 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
         displayedSession is { } session && displayedFile is { } file && FileInCurrentRunspace(session, file)
             ? session.DebugLocation : null;
 
-    private async Task<SessionModel> NewSessionAsync(System.Management.Automation.Runspaces.RunspaceConnectionInfo? connection = null,
+    private async Task<SessionModel> NewSessionAsync(RemoteConnectionInfo? connection = null,
         string? name = null, bool createDocument = true)
     {
         if (hostingOptions.Console is not null && Workbench.Sessions.Count > 0)
@@ -376,6 +390,23 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
             ObjectDisposedException.ThrowIf(windowClosed, this);
             await session.Engine.InitializeAsync();
             ObjectDisposedException.ThrowIf(windowClosed, this);
+            session.IsInitialized = true;
+            session.Console.Analyze = (text, cancellation) => session.Engine.AnalyzeAsync(text, cancellationToken: cancellation);
+            session.Console.AnalysisChanged += () =>
+            {
+                if (!windowClosed && displayedSession == session) ConsoleEditor.TextArea.TextView.Redraw();
+            };
+            session.Console.AnalysisFailed += exception =>
+            {
+                if (!windowClosed && session.Engine.State != SessionState.Failed)
+                    _ = ReportErrorAsync("Console syntax analysis unavailable", exception);
+            };
+            scriptAnalysis.Analyze = (text, cancellation) => session.Engine.AnalyzeAsync(text, cancellationToken: cancellation);
+            if (displayedSession == session)
+            {
+                RefreshPortableAnalysisProvider();
+                AnalyzeScript();
+            }
             if (hostingOptions.StartingDirectory is { } directory)
                 await session.Engine.SetWorkingDirectoryAsync(directory);
             ObjectDisposedException.ThrowIf(windowClosed, this);
@@ -388,11 +419,12 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
             await RestoreDebuggerSettingsAsync(session);
             ObjectDisposedException.ThrowIf(windowClosed, this);
             if (connection is not null) await session.Engine.ConnectAsync(connection);
-            if (connection is null && hostingOptions.EnableCommandsPane) await RefreshCommandsAsync(session);
+            if (session.PendingRunspaceRefresh) await RefreshChangedRunspaceAsync(session);
+            else if (connection is null && hostingOptions.EnableCommandsPane) await RefreshCommandsAsync(session);
         }
-        catch (Exception exception) when (exception is RuntimeException or InvalidOperationException or IOException)
+        catch (Exception exception) when (exception is InvalidOperationException or IOException)
         {
-            if (!managesWindow) throw;
+            if (!managesWindow && session.Engine.State != SessionState.Failed) throw;
             session.Console.Append(new($"Session initialization failed: {exception.Message}\n", OutputKind.Error));
             await ReportErrorAsync("Could not initialize PowerShell", exception);
         }
@@ -436,6 +468,7 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
         if (displayedSession is not null)
             displayedSession.ConsoleCaretOffset = ConsoleEditor.CaretOffset;
         displayedSession = next;
+        RefreshPortableAnalysisProvider();
         RefreshIseMenus();
         WatchExpression.Text = "";
         RenderDebugger();
@@ -484,7 +517,7 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
 
     private async void AnalyzeScript()
     {
-        if (!windowClosed)
+        if (!windowClosed && displayedSession?.IsInitialized == true)
         {
             try { await GuardAsync(async () => await ScriptEditorControl.AnalyzeAsync()); }
             catch (OperationCanceledException) { }
@@ -538,7 +571,7 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
         var canEvaluate = (paused || nested) && displayedSession?.Evaluating != true;
         hostingOptions.Console?.RefreshState(
             startupComplete && (ready || canEvaluate),
-            closingInProgress || closePrepared || windowClosed);
+            closingInProgress || closePrepared || windowClosed || state == SessionState.Failed);
         CallStackList.IsEnabled = paused && canEvaluate;
         ConsoleEditor.IsReadOnly = closingInProgress || !(ready || canEvaluate);
         ScriptEditorControl.IsReadOnly = closingInProgress || paused;
@@ -546,7 +579,7 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
         {
             completionNotice = null;
             if (Completion?.TextArea == ConsoleEditor.TextArea) Completion.Close();
-            displayedSession?.Console.HidePrompt();
+            if (displayedSession?.IsConsoleAnalysisPending != true) displayedSession?.Console.HidePrompt();
         }
         else displayedSession?.FlushOutput();
         StatusText.Text = state switch
@@ -556,6 +589,7 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
             SessionState.Debugging => string.Format(UiText.Get("DebugStatus"), displayedSession?.DebugLocation?.Line),
             SessionState.NestedPrompt => UiText.Get("NestedPromptStatus"),
             SessionState.Disposed => UiText.Get("SessionClosed"),
+            SessionState.Failed => "PowerShell session lost. Documents are preserved; reopen this tab to start a new session.",
             _ => UiText.Get("Starting")
         };
         UpdateMenuState();
@@ -728,7 +762,11 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
                 }
                 break;
             case "CommandHelp": if (CommandList.SelectedItem is CommandDescription selected) await ShowHelpAsync(selected.Name); break;
-            case "Help": await ShowHelpAsync(ScriptEditor.SelectedText.Length > 0 ? ScriptEditor.SelectedText : CommandAtCaret()); break;
+            case "Help":
+                var helpCommand = !IsNativeConsoleActive && ScriptEditor.SelectedText.Length > 0
+                    ? ScriptEditor.SelectedText : await CommandAtCaretAsync();
+                if (helpCommand is not null) await ShowHelpAsync(helpCommand);
+                break;
             case "Profiles": if (session is not null) await LoadProfilesAsync(session); break;
             case "AutoProfiles": settings.LoadProfiles = !settings.LoadProfiles; UpdateMenuState(); await SaveSettingsAsync(); break;
             case "ExecutionPolicy":
@@ -924,6 +962,9 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
         await SaveDebuggerSettingsAsync(session);
         await autoSaveTask;
         foreach (var file in session.Files) RemoveRecovery(file.RecoveryId);
+        session.IsInitialized = false;
+        if (displayedSession == session) RefreshPortableAnalysisProvider();
+        session.Console.CancelAnalysis();
         await session.Engine.DisposeAsync();
         Workbench.Sessions.Remove(session);
         if (Workbench.SelectedSession == session) Workbench.SelectedSession = Workbench.Sessions.LastOrDefault();
@@ -1008,20 +1049,35 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
                 return;
             }
             var text = session.Input;
-            if (EditorAnalysis.Analyze(text).Errors.Any(error => error.IncompleteInput))
-            {
-                ConsoleEditor.TextArea.PerformTextInput(Environment.NewLine);
-                return;
-            }
-            if (string.IsNullOrWhiteSpace(text)) return;
-            session.Input = "";
-            session.Console.HidePrompt();
-            Completion?.Close();
-            completionTimer.Stop();
+            if (session.IsConsoleSubmissionPending || session.IsConsoleAnalysisPending) return;
+            var revision = session.Console.InputRevision;
+            session.IsConsoleAnalysisPending = true;
+            RefreshState();
             await GuardAsync(async () =>
             {
-                await ExecuteConsoleTextAsync(session, text);
-                FocusConsoleInput();
+                try
+                {
+                    var parsed = await session.Engine.AnalyzeAsync(text, cancellationToken: windowCancellation.Token);
+                    if (windowClosed || session != displayedSession || text != session.Input ||
+                        revision != session.Console.InputRevision) return;
+                    if (parsed.Errors.Any(error => error.IncompleteInput ||
+                        error.ErrorId is "MissingEndParenthesisInExpression" or "MissingEndParenthesisInMethodCall"))
+                    {
+                        session.Input += Environment.NewLine;
+                        FocusConsoleInput();
+                        return;
+                    }
+                    if (string.IsNullOrWhiteSpace(text)) return;
+                    session.Input = "";
+                    session.Console.HidePrompt();
+                    Completion?.Close();
+                    completionTimer.Stop();
+                    // ExecuteConsoleTextAsync owns the execution pending flag from this point.
+                    session.IsConsoleAnalysisPending = false;
+                    await ExecuteConsoleTextAsync(session, text);
+                    FocusConsoleInput();
+                }
+                finally { session.IsConsoleAnalysisPending = false; RefreshState(); }
             });
         }
         else if (e.Key is Key.Up or Key.Down && e.KeyModifiers == KeyModifiers.None && !session.Input.Contains('\n') &&
@@ -1344,11 +1400,9 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
             !(editor == ScriptEditor ? settings.ScriptIntelliSense : settings.ConsoleIntelliSense)) return;
         var start = editor == ConsoleEditor ? displayedSession?.Console.InputStart ?? editor.Document.TextLength : 0;
         if (editor.CaretOffset < start) return;
-        var filter = EditorAnalysis.CompletionFilter(editor.Document.GetText(start, editor.Document.TextLength - start), editor.CaretOffset - start);
-        if (filter is null) return;
+        if (!"$-:. [\\/".Contains(entered, StringComparison.Ordinal)) return;
         Completion?.Close();
         automaticCompletionEditor = editor;
-        automaticCompletionFilter = filter;
         completionTimer.Start();
     }
 
@@ -1584,7 +1638,7 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
                 CommandForm.ShowCommand(form);
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
-        catch (Exception exception) when (exception is InvalidOperationException or RuntimeException)
+        catch (InvalidOperationException exception)
         {
             if (!cancellation.IsCancellationRequested && displayedSession == session && ReferenceEquals(CommandList.SelectedItem, command))
             {
@@ -1615,16 +1669,18 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
         if (displayedSession is not { } session) return;
         var editor = editTarget as TextEditor ?? ScriptEditor;
         var native = IsNativeConsoleActive ? hostingOptions.Console : null;
-        var name = native is not null ? EditorAnalysis.CommandNameAtCaret(native.InputText, native.CaretOffset)
-            : editor.SelectedText.Length > 0
-            ? EditorAnalysis.CommandNameAtCaret(editor.SelectedText, 0) ?? editor.SelectedText.Trim()
-            : EditorAnalysis.CommandNameAtCaret(editor.Text, editor.CaretOffset);
+        var text = native?.InputText ?? (editor.SelectedText.Length > 0 ? editor.SelectedText : editor.Text);
+        var caret = native?.CaretOffset ?? (editor.SelectedText.Length > 0 ? 0 : editor.CaretOffset);
+        var parsed = await session.Engine.AnalyzeAsync(text, cancellationToken: windowCancellation.Token);
+        var name = EditorAnalysis.CommandNameAtCaret(parsed, caret) ??
+            (editor.SelectedText.Length > 0 ? editor.SelectedText.Trim() : null);
         if (string.IsNullOrWhiteSpace(name))
             name = await Dialogs.AskAsync(HostWindow, ActualThemeVariant, UiText.Get("ShowCommand").Replace("_", "").TrimEnd('.'), UiText.Get("CommandName"));
         if (string.IsNullOrWhiteSpace(name)) return;
         var description = await session.Engine.GetCommandFormAsync(name);
         var window = new ShowCommandWindow(new Core.CommandForm(description), displayedFile is not null && !ScriptEditor.IsReadOnly,
-            owner => ShowHelpAsync(description.Name, owner));
+            owner => ShowHelpAsync(description.Name, owner),
+            buildCommand: (form, cancellation) => session.Engine.BuildCommandFormAsync(form, cancellation));
         var result = await ShowDialogAsync<ShowCommandResult?>(window);
         if (result is null) return;
         if (result.Run)
@@ -1668,7 +1724,7 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
                         if (!await Launcher.LaunchUriAsync(uri))
                             throw new InvalidOperationException("The system could not open the online help URL.");
                     }
-                }, request.PassThru)
+                }, request.PassThru, (form, cancellation) => session.Engine.BuildCommandFormAsync(form, cancellation))
             {
                 Width = request.Width, Height = request.Height
             };
@@ -1678,7 +1734,7 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
                 InsertCommandText(result.Script);
             request.Response.TrySetResult(result is { Run: true } ? result.Script : null);
         }
-        catch (Exception exception) when (exception is InvalidOperationException or IOException or NotSupportedException or RuntimeException)
+        catch (Exception exception) when (exception is InvalidOperationException or IOException or NotSupportedException)
         {
             System.Diagnostics.Trace.TraceError("Console Show-Command failed: {0}", exception);
             request.Response.TrySetException(exception);
@@ -1689,11 +1745,27 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
         _ = request.Response.Task.ContinueWith(_ => Dispatcher.UIThread.Post(window.Close),
             CancellationToken.None, TaskContinuationOptions.None, TaskScheduler.Default);
 
-    private string CommandAtCaret()
+    private async Task<string?> CommandAtCaretAsync()
     {
+        if (displayedSession is not { } session) return null;
         if (IsNativeConsoleActive && hostingOptions.Console is { } native)
-            return EditorAnalysis.CommandNameAtCaret(native.InputText, native.CaretOffset) ?? "Get-Help";
-        return EditorAnalysis.CommandNameAtCaret(ScriptEditor.Text, ScriptEditor.CaretOffset) ?? "Get-Help";
+        {
+            var text = native.InputText;
+            var caret = native.CaretOffset;
+            var parsed = session.Console.InputAnalysis ?? await session.Engine.AnalyzeAsync(text);
+            if (windowClosed || session != displayedSession || native.InputText != text || native.CaretOffset != caret)
+                return null;
+            return EditorAnalysis.CommandNameAtCaret(parsed, caret) ?? "Get-Help";
+        }
+        var file = displayedFile;
+        var source = ScriptEditor.Document.Text;
+        var offset = ScriptEditor.CaretOffset;
+        var path = file?.File.Path ?? file?.File.Name;
+        var analysis = file?.CurrentAnalysis ?? (EditorAnalysis.IsXmlDocument(path)
+            ? EditorAnalysis.AnalyzeXml(source) : await session.Engine.AnalyzeAsync(source, path));
+        if (windowClosed || session != displayedSession || file != displayedFile ||
+            ScriptEditor.Document.Text != source || ScriptEditor.CaretOffset != offset) return null;
+        return EditorAnalysis.CommandNameAtCaret(analysis, offset) ?? "Get-Help";
     }
 
     private async Task ShowHelpAsync(string command, Window? owner = null)
@@ -1731,7 +1803,9 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
         var editor = editTarget == ConsoleEditor ? ConsoleEditor : ScriptEditor;
         var start = editor == ConsoleEditor ? displayedSession?.Console.InputStart ?? editor.Document.TextLength : 0;
         if (editor.CaretOffset < start) return;
-        var pair = EditorAnalysis.MatchingBrace(editor.Document.GetText(start, editor.Document.TextLength - start), editor.CaretOffset - start);
+        var analysis = editor == ScriptEditor ? displayedFile?.CurrentAnalysis : displayedSession?.Console.InputAnalysis;
+        if (analysis is null) { StatusText.Text = "Syntax analysis is pending or unavailable."; return; }
+        var pair = EditorAnalysis.MatchingBrace(analysis, editor.CaretOffset - start);
         if (pair is not { } braces) { StatusText.Text = UiText.Get("NoMatchingBrace"); return; }
         var relativeCaret = editor.CaretOffset - start;
         var atOpen = relativeCaret == braces.Open || relativeCaret != braces.Close && relativeCaret - 1 == braces.Open;
@@ -1870,7 +1944,8 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
             ApplySettings();
             PopulateRecentMenu();
         }, hostOwnsTheme: hostingOptions.ThemeProvider is not null, hostThemes: hostingOptions.ThemeChoices,
-            fontSizesInDips: hostingOptions.FontSizesInDips)
+            fontSizesInDips: hostingOptions.FontSizesInDips,
+            analyze: displayedSession is { } session ? (text, cancellation) => session.Engine.AnalyzeAsync(text, cancellationToken: cancellation) : null)
         {
             RequestedThemeVariant = ActualThemeVariant,
         };
@@ -1965,7 +2040,7 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
     internal async Task GuardAsync(Func<Task> action)
     {
         try { await action(); }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException or ArgumentException or RuntimeException or JsonException or NotSupportedException or System.Text.DecoderFallbackException or System.Xml.XmlException or AggregateException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException or ArgumentException or JsonException or NotSupportedException or System.Text.DecoderFallbackException or System.Xml.XmlException or AggregateException)
         {
             await ReportErrorAsync("Operation failed", exception);
         }

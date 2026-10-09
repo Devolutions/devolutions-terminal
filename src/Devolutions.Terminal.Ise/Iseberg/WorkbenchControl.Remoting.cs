@@ -1,4 +1,3 @@
-using System.Management.Automation.Runspaces;
 using Avalonia.Threading;
 using Iseberg.Core;
 
@@ -8,7 +7,7 @@ public sealed partial class WorkbenchControl
 {
     private async Task NewRemoteSessionAsync()
     {
-        var connection = await ShowDialogAsync<RunspaceConnectionInfo?>(new RemoteConnectionWindow());
+        var connection = await ShowDialogAsync<RemoteConnectionInfo?>(new RemoteConnectionWindow());
         if (connection is not null) await NewSessionAsync(connection);
     }
 
@@ -87,13 +86,23 @@ public sealed partial class WorkbenchControl
     private async Task RefreshChangedRunspaceAsync(SessionModel session)
     {
         if (windowClosed || !session.PendingRunspaceRefresh || !Workbench.Sessions.Contains(session) ||
-            session.Engine.State != SessionState.Ready) return;
+            !session.IsInitialized || session.Engine.State != SessionState.Ready || session.Engine.IsExecuting ||
+            session.RefreshingRunspace) return;
+        session.RefreshingRunspace = true;
         session.PendingRunspaceRefresh = false;
-        await GuardAsync(async () =>
+        try
         {
-            await RefreshCommandsAsync(session);
-            if (windowClosed || !Workbench.Sessions.Contains(session)) return;
-            await RefreshDebuggerAsync(session, reconcile: true);
-        });
+            await GuardAsync(async () =>
+            {
+                await RefreshCommandsAsync(session);
+                if (windowClosed || !Workbench.Sessions.Contains(session)) return;
+                await RefreshDebuggerAsync(session, reconcile: true);
+            });
+        }
+        finally
+        {
+            session.RefreshingRunspace = false;
+            if (session.PendingRunspaceRefresh) await RefreshChangedRunspaceAsync(session);
+        }
     }
 }

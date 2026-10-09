@@ -31,7 +31,7 @@ public sealed class ThemeFile
             !document.RootElement.TryGetProperty("Theme", out var content) || content.ValueKind != JsonValueKind.Object ||
             !content.TryGetProperty("Name", out _) || !content.TryGetProperty("Colors", out _))
             throw new InvalidDataException("The theme file must include a named theme and its colors.");
-        var theme = JsonSerializer.Deserialize<ThemeFile>(json)
+        var theme = JsonSerializer.Deserialize(json, IseJsonContext.Default.ThemeFile)
             ?? throw new InvalidDataException("The theme file is empty.");
         theme.Validate();
         return theme;
@@ -43,7 +43,7 @@ public sealed class ThemeFile
         var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            await File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
+            await File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(this, IseJsonContext.Default.ThemeFile));
             File.Move(temporary, path, overwrite: true);
         }
         finally { File.Delete(temporary); }

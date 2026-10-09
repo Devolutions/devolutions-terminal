@@ -14,10 +14,14 @@ public sealed partial class CommandFormView : UserControl
     public CommandFormResult? Result { get; private set; }
     public event Action? CommandChanged;
     public bool Compact { get; init; }
+    public Func<CommandForm, CancellationToken, Task<CommandFormResult>>? BuildCommandAsync { get; set; }
+    private CancellationTokenSource? validationCancellation;
+    private long validationRevision;
 
     public CommandFormView()
     {
         InitializeComponent();
+        DetachedFromVisualTree += (_, _) => validationCancellation?.Cancel();
         ParameterSetTabs.ItemTemplate = new FuncDataTemplate<CommandParameterSetDescription>((set, _) =>
             new TextBlock { Text = set?.Name == "__AllParameterSets" ? UiText.Get("DefaultParameterSet") : set?.Name });
         ParameterSetTabs.SelectionChanged += (_, _) =>
@@ -39,6 +43,8 @@ public sealed partial class CommandFormView : UserControl
 
     public void ShowMessage(string message)
     {
+        ++validationRevision;
+        validationCancellation?.Cancel();
         Form = null;
         Result = null;
         CommandTitle.Text = message;
@@ -268,7 +274,50 @@ public sealed partial class CommandFormView : UserControl
 
     private void UpdateCommand()
     {
+        var revision = ++validationRevision;
+        validationCancellation?.Cancel();
+        validationCancellation?.Dispose();
+        validationCancellation = null;
         Result = Form?.Build();
+        RenderCommand();
+        if (Form is { } form && BuildCommandAsync is { } build)
+        {
+            Result = null;
+            CommandValidation.Text = "Validating PowerShell expressions…";
+            CommandValidation.IsVisible = !Compact;
+            ToolTip.SetTip(this, CommandValidation.Text);
+            CommandChanged?.Invoke();
+            validationCancellation = new();
+            _ = ValidateCommandAsync(form, build, revision, validationCancellation.Token);
+        }
+    }
+
+    private async Task ValidateCommandAsync(CommandForm form, Func<CommandForm, CancellationToken, Task<CommandFormResult>> build,
+        long revision, CancellationToken cancellation)
+    {
+        try
+        {
+            await Task.Delay(100, cancellation);
+            var result = await build(form, cancellation);
+            cancellation.ThrowIfCancellationRequested();
+            if (revision != validationRevision || Form != form) return;
+            Result = result;
+            RenderCommand();
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+        catch (Exception exception) when (exception is InvalidOperationException or IOException or NotSupportedException)
+        {
+            if (revision != validationRevision || cancellation.IsCancellationRequested) return;
+            Result = null;
+            CommandValidation.Text = "Command validation unavailable: " + exception.Message;
+            CommandValidation.IsVisible = !Compact;
+            ToolTip.SetTip(this, CommandValidation.Text);
+            CommandChanged?.Invoke();
+        }
+    }
+
+    private void RenderCommand()
+    {
         CommandPreview.Text = Result?.Script ?? "";
         CommandValidation.Text = Result is null ? "" : string.Join("\n", new[]
         {

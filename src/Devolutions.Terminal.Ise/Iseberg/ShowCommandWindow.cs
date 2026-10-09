@@ -13,7 +13,8 @@ public sealed record ShowCommandResult(string Script, bool Run);
 
 public sealed class ShowCommandWindow : Window
 {
-    public ShowCommandWindow(CommandForm form, bool canInsert, Func<Window, Task>? showHelp = null, bool passThru = false)
+    public ShowCommandWindow(CommandForm form, bool canInsert, Func<Window, Task>? showHelp = null, bool passThru = false,
+        Func<CommandForm, CancellationToken, Task<CommandFormResult>>? buildCommand = null)
     {
         ClassicDialog.Apply(this);
         Title = form.Description.Name;
@@ -21,7 +22,7 @@ public sealed class ShowCommandWindow : Window
         Height = 410 * DesktopTheme.TextScale;
         MinWidth = 300;
         MinHeight = 300;
-        var view = new CommandFormView { Name = "ShowCommandForm", Compact = true };
+        var view = new CommandFormView { Name = "ShowCommandForm", Compact = true, BuildCommandAsync = buildCommand };
         var error = new TextBlock { TextWrapping = TextWrapping.Wrap, IsVisible = false };
         var run = new Button { Name = "ShowCommandRun", Content = UiText.Get(passThru ? "OK" : "RunButton"), IsDefault = true };
         var insert = new MenuItem { Name = "ShowCommandInsert", Header = UiText.Get("Insert") };
@@ -59,7 +60,7 @@ public sealed class ShowCommandWindow : Window
         {
             if (showHelp is null) return;
             try { await showHelp(this); }
-            catch (Exception exception) when (exception is InvalidOperationException or IOException or System.Management.Automation.RuntimeException or NotSupportedException)
+            catch (Exception exception) when (exception is InvalidOperationException or IOException or NotSupportedException)
             {
                 System.Diagnostics.Trace.TraceError("Command help failed: {0}", exception);
                 error.Text = exception.Message;

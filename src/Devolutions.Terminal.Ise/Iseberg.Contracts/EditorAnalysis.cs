@@ -1,69 +1,22 @@
-using System.Management.Automation.Language;
-using System.Management.Automation;
 using System.Xml;
 
 namespace Iseberg.Core;
 
-public sealed record ScriptDiagnostic(string Code, string Message, int Start, int End);
-public sealed record XmlTokenSpan(int Start, int End, string Kind);
-
-public sealed record ScriptAnalysis(Token[] Tokens, ParseError[] Errors, IReadOnlyList<(int Start, int End)> Folds)
-{
-    public bool IsXml { get; init; }
-    public IReadOnlyList<XmlTokenSpan> XmlTokens { get; init; } = [];
-    public IReadOnlyList<ScriptDiagnostic> Diagnostics { get; init; } = Errors.Select(error =>
-        new ScriptDiagnostic(error.ErrorId, error.Message, error.Extent.StartOffset, error.Extent.EndOffset)).ToArray();
-}
-
 public static class EditorAnalysis
 {
-    public static string? CommandNameAtCaret(string text, int caret)
+    public static string? CommandNameAtCaret(ScriptAnalysis analysis, int caret)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(caret);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(caret, text.Length);
-        var ast = Parser.ParseInput(text, out _, out _);
-        return ast.FindAll(node => node is CommandAst && node.Extent.StartOffset <= caret &&
-                node.Extent.EndOffset >= caret, searchNestedScriptBlocks: true)
-            .OfType<CommandAst>().OrderBy(command => command.Extent.EndOffset - command.Extent.StartOffset)
-            .FirstOrDefault()?.GetCommandName();
+        return analysis.Commands.Where(command => command.Start <= caret && command.End >= caret)
+            .OrderBy(command => command.End - command.Start).FirstOrDefault()?.Name;
     }
 
-    public static (int Open, int Close)? MatchingBrace(string text, int caret)
+    public static (int Open, int Close)? MatchingBrace(ScriptAnalysis analysis, int caret)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(caret);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(caret, text.Length);
-        var stack = new Stack<(TokenKind Kind, int Offset)>();
-        var pairs = new List<(int Open, int Close)>();
-        Parser.ParseInput(text, out var tokens, out _);
-        foreach (var token in Flatten(tokens))
-        {
-            var kind = token.Kind switch
-            {
-                TokenKind.AtCurly => TokenKind.LCurly,
-                TokenKind.AtParen or TokenKind.DollarParen => TokenKind.LParen,
-                _ => token.Kind
-            };
-            if (kind is TokenKind.LCurly or TokenKind.LParen or TokenKind.LBracket)
-                stack.Push((kind, token.Extent.EndOffset - 1));
-            else if (kind is TokenKind.RCurly or TokenKind.RParen or TokenKind.RBracket)
-            {
-                var expected = kind switch
-                {
-                    TokenKind.RCurly => TokenKind.LCurly,
-                    TokenKind.RParen => TokenKind.LParen,
-                    _ => TokenKind.LBracket
-                };
-                if (stack.TryPeek(out var open) && open.Kind == expected)
-                {
-                    stack.Pop();
-                    pairs.Add((open.Offset, token.Extent.StartOffset));
-                }
-                else stack.Clear();
-            }
-        }
         foreach (var offset in new[] { caret, caret - 1 })
-            foreach (var pair in pairs)
-                if (pair.Open == offset || pair.Close == offset) return pair;
+            foreach (var pair in analysis.BracePairs)
+                if (pair.Open == offset || pair.Close == offset) return (pair.Open, pair.Close);
         return null;
     }
 
@@ -71,7 +24,7 @@ public static class EditorAnalysis
     {
         foreach (var token in tokens)
         {
-            if (token is StringExpandableToken { NestedTokens: { } nested })
+            if (token.NestedTokens is { } nested)
             {
                 foreach (var child in Flatten(nested)) yield return child;
             }
@@ -79,10 +32,10 @@ public static class EditorAnalysis
         }
     }
 
-    public static IReadOnlySet<CompletionResultType>? CompletionFilter(string text, int caret)
+    public static IReadOnlySet<CompletionResultType>? CompletionFilter(ScriptAnalysis analysis, string text, int caret)
     {
         if (caret < 1 || caret > text.Length) return null;
-        Parser.ParseInput(text, out var tokens, out _);
+        var tokens = analysis.Tokens;
         var current = TokenAtCaret(tokens, caret);
         var inString = current?.Kind is TokenKind.StringLiteral or TokenKind.StringExpandable or TokenKind.HereStringLiteral or TokenKind.HereStringExpandable;
         if (current?.Kind == TokenKind.Comment) return null;
@@ -114,7 +67,7 @@ public static class EditorAnalysis
     private static Token? TokenAtCaret(IEnumerable<Token> tokens, int caret)
     {
         var token = tokens.FirstOrDefault(t => t.Extent.StartOffset < caret && t.Extent.EndOffset >= caret);
-        if (token is StringExpandableToken { NestedTokens: { } nested })
+        if (token?.NestedTokens is { } nested)
             return TokenAtCaret(nested, caret) ?? token;
         return token;
     }
@@ -123,91 +76,26 @@ public static class EditorAnalysis
         Path.GetExtension(path)?.Equals(".xml", StringComparison.OrdinalIgnoreCase) == true ||
         Path.GetExtension(path)?.Equals(".ps1xml", StringComparison.OrdinalIgnoreCase) == true;
 
-    public static VariableToken? VariableAtOffset(IEnumerable<Token> tokens, int offset)
+    public static Token? VariableAtOffset(IEnumerable<Token> tokens, int offset)
     {
         foreach (var token in tokens)
         {
             if (offset < token.Extent.StartOffset || offset >= token.Extent.EndOffset) continue;
-            if (token is VariableToken variable) return variable;
-            if (token is StringExpandableToken { NestedTokens: { } nested })
+            if (token.VariablePath is not null) return token;
+            if (token.NestedTokens is { } nested)
                 return VariableAtOffset(nested, offset);
         }
         return null;
     }
 
-    public static (int Start, int End)? StatementAtPosition(string text, int line, int column)
+    public static (int Start, int End)? StatementAtPosition(ScriptAnalysis analysis, int line, int column)
     {
         if (line < 1 || column < 1) return null;
-        var offset = OffsetAtPosition(text, line, column, out var valid);
-        if (!valid || offset >= text.Length) return null;
-        var ast = Parser.ParseInput(text, out _, out _);
-        // A pipeline is the executable statement, rather than its individual command or variable.
-        var statement = ast.FindAll(node => node is StatementAst && node is not StatementBlockAst &&
-                node.Extent.StartOffset == offset, searchNestedScriptBlocks: true)
-            .OrderBy(node => node.Extent.EndOffset - node.Extent.StartOffset).FirstOrDefault();
-        return statement is null ? null : (statement.Extent.StartOffset, statement.Extent.EndOffset);
+        var statement = analysis.Statements.Where(extent => extent.StartLineNumber == line && extent.StartColumnNumber == column)
+            .OrderBy(extent => extent.EndOffset - extent.StartOffset).FirstOrDefault();
+        return statement is null ? null : (statement.StartOffset, statement.EndOffset);
     }
 
-    public static ScriptAnalysis Analyze(string text) => Analyze(text, null);
-
-    public static ScriptAnalysis Analyze(string text, string? documentPath)
-    {
-        ArgumentNullException.ThrowIfNull(text);
-        if (IsXmlDocument(documentPath)) return AnalyzeXml(text);
-        Parser.ParseInput(text, out var tokens, out var errors);
-        var stack = new Stack<Token>();
-        var regions = new Stack<Token>();
-        var regionFolds = new List<(int Start, int End)>();
-        var folds = new List<(int Start, int End)>();
-        foreach (var token in Flatten(tokens))
-        {
-            if (token.Kind is TokenKind.LCurly or TokenKind.AtCurly)
-                stack.Push(token);
-            else if (token.Kind == TokenKind.RCurly && stack.TryPop(out var open) &&
-                     token.Extent.EndLineNumber > open.Extent.StartLineNumber)
-                folds.Add((open.Extent.StartOffset, token.Extent.EndOffset));
-        }
-        foreach (var token in tokens)
-        {
-            if (token.Kind == TokenKind.Comment && !token.Text.StartsWith("<#", StringComparison.Ordinal) &&
-                IsLineDirective(text, token))
-            {
-                if (IsDirective(token.Text, "#region")) regions.Push(token);
-                else if (IsDirective(token.Text, "#endregion") && regions.TryPop(out var region) &&
-                    token.Extent.StartLineNumber > region.Extent.StartLineNumber)
-                    regionFolds.Add((region.Extent.StartOffset, token.Extent.EndOffset));
-            }
-            if (token.Extent.EndLineNumber <= token.Extent.StartLineNumber) continue;
-            var closed = token.Kind switch
-            {
-                TokenKind.Comment => token.Text.StartsWith("<#", StringComparison.Ordinal) &&
-                    token.Text.EndsWith("#>", StringComparison.Ordinal),
-                TokenKind.HereStringLiteral => token.Text.EndsWith("'@", StringComparison.Ordinal),
-                TokenKind.HereStringExpandable => token.Text.EndsWith("\"@", StringComparison.Ordinal),
-                TokenKind.StringLiteral => token.Text.EndsWith("'", StringComparison.Ordinal),
-                TokenKind.StringExpandable => token.Text.EndsWith("\"", StringComparison.Ordinal),
-                _ => false
-            };
-            if (closed && !errors.Any(error => error.IncompleteInput &&
-                error.Extent.StartOffset >= token.Extent.StartOffset && error.Extent.StartOffset < token.Extent.EndOffset))
-                folds.Add((token.Extent.StartOffset, token.Extent.EndOffset));
-        }
-        // Unclosed outer regions must not hide even otherwise matched nested directives.
-        var unmatchedRegion = regions.Count == 0 ? int.MaxValue : regions.Min(region => region.Extent.StartOffset);
-        folds.AddRange(regionFolds.Where(fold => fold.Start < unmatchedRegion));
-        return new(tokens, errors, folds.Distinct().OrderBy(f => f.Start).ThenByDescending(f => f.End).ToArray());
-    }
-
-    private static bool IsDirective(string text, string directive) =>
-        text.StartsWith(directive, StringComparison.OrdinalIgnoreCase) &&
-        (text.Length == directive.Length || char.IsWhiteSpace(text[directive.Length]));
-
-    private static bool IsLineDirective(string text, Token token)
-    {
-        for (var index = token.Extent.StartOffset - 1; index >= 0 && text[index] is not ('\r' or '\n'); index--)
-            if (!char.IsWhiteSpace(text[index])) return false;
-        return true;
-    }
 
     private static int OffsetAtPosition(string text, int line, int column, out bool valid)
     {
@@ -228,7 +116,7 @@ public static class EditorAnalysis
         return valid ? start + column - 1 : text.Length;
     }
 
-    private static ScriptAnalysis AnalyzeXml(string text)
+    public static ScriptAnalysis AnalyzeXml(string text)
     {
         var diagnostics = new List<ScriptDiagnostic>();
         try
@@ -323,7 +211,7 @@ public static class EditorAnalysis
             }
             offset = Math.Max(start + 1, cursor);
         }
-        return new([], [], folds.OrderBy(fold => fold.Start).ToArray())
+        return new([], [], folds.OrderBy(fold => fold.Start).Select(fold => new ScriptSpan(fold.Start, fold.End)).ToArray())
         {
             IsXml = true,
             XmlTokens = spans,

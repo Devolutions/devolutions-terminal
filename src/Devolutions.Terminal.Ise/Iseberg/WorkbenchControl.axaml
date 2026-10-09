@@ -2,8 +2,9 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:edit="clr-namespace:AvaloniaEdit;assembly=AvaloniaEdit"
         xmlns:local="using:Iseberg"
+        xmlns:core="using:Iseberg.Core"
         xmlns:editor="using:Iseberg.Editor"
-        x:Class="Iseberg.WorkbenchControl">
+        x:Class="Iseberg.WorkbenchControl" x:DataType="local:WorkbenchModel">
   <Grid RowDefinitions="Auto,Auto,Auto,*,Auto">
     <Menu x:Name="WorkbenchMenu" Grid.Row="0">
       <MenuItem Header="_File">
@@ -123,7 +124,7 @@
     </Border>
     <TabStrip Grid.Row="2" x:Name="SessionTabs" IsVisible="{Binding ShowSessionTabs}" ItemsSource="{Binding Sessions}" SelectedItem="{Binding SelectedSession}" SelectionChanged="OnSessionChanged" Background="{DynamicResource ControlBrush}">
       <TabStrip.ItemTemplate>
-        <DataTemplate>
+        <DataTemplate x:DataType="local:SessionModel">
           <StackPanel Orientation="Horizontal" Spacing="8">
             <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center" />
             <Button Classes="close" Click="OnCloseSession" ToolTip.Tip="{local:Ui ClosePowerShellTab}" AutomationProperties.Name="{local:Ui ClosePowerShellTab}"><local:ToolbarIcon Kind="Close" Width="10" Height="10" /></Button>
@@ -137,7 +138,7 @@
           <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1" Background="{DynamicResource ControlBrush}">
             <TabStrip x:Name="FileTabs" ItemsSource="{Binding SelectedSession.Files}" SelectedItem="{Binding SelectedSession.SelectedFile, Mode=OneWay}" SelectionChanged="OnFileChanged">
               <TabStrip.ItemTemplate>
-                <DataTemplate>
+                <DataTemplate x:DataType="local:ScriptTab">
                   <StackPanel Orientation="Horizontal" Spacing="8">
                     <TextBlock Text="{Binding File.Title}" VerticalAlignment="Center" MaxWidth="240"
                                TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding File.Title}" />
@@ -220,7 +221,7 @@
           <TextBox Grid.Row="2" x:Name="CommandSearch" PlaceholderText="{local:Ui Name}" TextChanged="OnCommandSearchChanged" Margin="0,0,0,7" AutomationProperties.Name="Command search" />
           <ListBox Grid.Row="3" x:Name="CommandList" Background="{DynamicResource WindowBrush}" BorderThickness="1" BorderBrush="{DynamicResource BorderBrush}" SelectionChanged="OnCommandSelected" DoubleTapped="OnInsertCommand" AutomationProperties.Name="{local:Ui CommandsTitle}">
             <ListBox.ItemTemplate>
-              <DataTemplate>
+              <DataTemplate x:DataType="core:CommandDescription">
                 <TextBlock Text="{Binding Name}" FontSize="12" Foreground="{DynamicResource WindowTextBrush}" />
               </DataTemplate>
             </ListBox.ItemTemplate>

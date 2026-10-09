@@ -63,7 +63,7 @@ public sealed class WorkbenchStateStore(string? path = null)
     public async Task<WorkbenchState?> LoadAsync()
     {
         if (!File.Exists(Path)) return null;
-        var state = JsonSerializer.Deserialize<WorkbenchState>(await File.ReadAllTextAsync(Path))
+        var state = JsonSerializer.Deserialize(await File.ReadAllTextAsync(Path), IseJsonContext.Default.WorkbenchState)
             ?? throw new InvalidDataException("The saved workbench configuration is empty.");
         state.Validate();
         return state.OwnerIsRunning() ? null : state;
@@ -79,7 +79,7 @@ public sealed class WorkbenchStateStore(string? path = null)
             var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write, Share = FileShare.None };
             if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
             await using (var stream = new FileStream(temporary, options))
-                await JsonSerializer.SerializeAsync(stream, state, new JsonSerializerOptions { WriteIndented = true });
+                await JsonSerializer.SerializeAsync(stream, state, IseJsonContext.Default.WorkbenchState);
             File.Move(temporary, Path, overwrite: true);
         }
         finally { File.Delete(temporary); }

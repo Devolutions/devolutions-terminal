@@ -1,5 +1,4 @@
 using System.Collections.Immutable;
-using System.Management.Automation;
 using Iseberg.Core;
 using SessionState = Iseberg.Core.SessionState;
 
@@ -7,17 +6,20 @@ namespace Iseberg;
 
 internal sealed class WorkbenchAnalysisProvider : IEditorAnalysisProvider
 {
+    public Func<string, CancellationToken, Task<ScriptAnalysis>>? Analyze { get; set; }
     public long Version { get; private set; }
     public ScriptAnalysis? Parsed { get; private set; }
 
-    public Task<EditorAnalysisResult> AnalyzeAsync(EditorAnalysisRequest request, CancellationToken cancellationToken)
+    public async Task<EditorAnalysisResult> AnalyzeAsync(EditorAnalysisRequest request, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        Parsed = EditorAnalysis.Analyze(request.Text);
+        var parsed = await (Analyze ?? throw new InvalidOperationException("PowerShell analysis is unavailable."))(request.Text, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        Parsed = parsed;
         Version = request.Version;
-        return Task.FromResult(new EditorAnalysisResult(request.Version, EditorAnalysisState.Available,
+        return new EditorAnalysisResult(request.Version, EditorAnalysisState.Available,
             Parsed.Errors.Select(error => new EditorDiagnostic(error.ErrorId, error.Message, EditorDiagnosticSeverity.Error,
-                new(error.Extent.StartOffset, error.Extent.EndOffset - error.Extent.StartOffset))).ToImmutableArray()));
+                new(error.Extent.StartOffset, error.Extent.EndOffset - error.Extent.StartOffset))).ToImmutableArray());
     }
 }
 

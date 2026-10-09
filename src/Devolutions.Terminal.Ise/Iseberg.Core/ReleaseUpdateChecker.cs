@@ -7,7 +7,7 @@ namespace Iseberg.Core;
 
 public sealed record ReleaseUpdate(string Version, Uri ReleaseUri, Uri DownloadUri, bool HasPackage);
 
-public sealed class ReleaseUpdateChecker(HttpClient client)
+public sealed partial class ReleaseUpdateChecker(HttpClient client)
 {
     public const string RepositoryUrl = "https://github.com/adamdriscoll/iseberg";
     public static Uri LatestReleaseApi { get; } = new("https://api.github.com/repos/adamdriscoll/iseberg/releases/latest");
@@ -22,7 +22,7 @@ public sealed class ReleaseUpdateChecker(HttpClient client)
         using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
         if (response.StatusCode == HttpStatusCode.NotFound) return null;
         response.EnsureSuccessStatusCode();
-        var release = await response.Content.ReadFromJsonAsync<GitHubRelease>(cancellationToken).ConfigureAwait(false)
+        var release = await response.Content.ReadFromJsonAsync(ReleaseJsonContext.Default.GitHubRelease, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidDataException("GitHub returned an empty release.");
         if (release.Draft || release.Prerelease) return null;
         if (release.Assets is null || release.Assets.Any(asset => asset is null))
@@ -67,4 +67,7 @@ public sealed class ReleaseUpdateChecker(HttpClient client)
         [JsonPropertyName("name")] public string Name { get; init; } = "";
         [JsonPropertyName("state")] public string State { get; init; } = "";
     }
+
+    [JsonSerializable(typeof(GitHubRelease))]
+    private partial class ReleaseJsonContext : JsonSerializerContext;
 }
