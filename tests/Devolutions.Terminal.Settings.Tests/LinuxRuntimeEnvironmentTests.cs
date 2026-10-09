@@ -3,6 +3,7 @@ using Xunit;
 
 namespace Devolutions.Terminal.Settings.Tests;
 
+[Collection("Process environment")]
 public sealed class LinuxRuntimeEnvironmentTests
 {
     [Fact]

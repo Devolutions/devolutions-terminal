@@ -3,6 +3,7 @@ using Xunit;
 
 namespace Devolutions.Terminal.Settings.Tests;
 
+[Collection("Process environment")]
 public sealed class SettingsLocationTests
 {
     [Fact]
@@ -39,3 +40,6 @@ public sealed class SettingsLocationTests
         }
     }
 }
+
+[CollectionDefinition("Process environment", DisableParallelization = true)]
+public sealed class ProcessEnvironmentCollection;

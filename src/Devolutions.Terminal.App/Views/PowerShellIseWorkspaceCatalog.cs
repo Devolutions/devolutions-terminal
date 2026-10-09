@@ -15,8 +15,7 @@ public static partial class PowerShellIseWorkspaceCatalog
         var path = Path.Combine(workspaceDirectory, "profile.json");
         if (File.Exists(path))
         {
-            var ownerProfile = JsonSerializer.Deserialize(await File.ReadAllTextAsync(path), IseJsonContext.Default.String)
-                ?? throw new InvalidDataException($"Empty ISE profile identity: {path}");
+            var ownerProfile = await ReadProfileAsync(path);
             if (!string.Equals(ownerProfile, profileId, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("This ISE workspace belongs to a different profile.");
             return;
@@ -41,6 +40,15 @@ public static partial class PowerShellIseWorkspaceCatalog
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
 
+    private static async Task<string> ReadProfileAsync(string path)
+    {
+        // Readers must not block concurrent no-overwrite publication on Windows.
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read,
+            FileShare.Read | FileShare.Delete, 4096, FileOptions.Asynchronous);
+        return await JsonSerializer.DeserializeAsync(stream, IseJsonContext.Default.String)
+            ?? throw new InvalidDataException($"Empty ISE profile identity: {path}");
+    }
+
     [LibraryImport("libc", EntryPoint = "link", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
     private static partial int LinkUnix(string source, string destination);
 
@@ -59,8 +67,7 @@ public static partial class PowerShellIseWorkspaceCatalog
             if (!Guid.TryParseExact(Path.GetFileName(directory), "N", out var id)) continue;
             var marker = Path.Combine(directory, "profile.json");
             if (!File.Exists(marker)) continue;
-            var ownerProfile = JsonSerializer.Deserialize(await File.ReadAllTextAsync(marker), IseJsonContext.Default.String)
-                ?? throw new InvalidDataException($"Empty ISE profile identity: {marker}");
+            var ownerProfile = await ReadProfileAsync(marker);
             if (!string.Equals(ownerProfile, profileId, StringComparison.OrdinalIgnoreCase)) continue;
             var settings = Path.Combine(directory, "settings.json");
             var state = await new WorkbenchStateStore(settings + ".workbench.json").LoadAsync();
