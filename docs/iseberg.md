@@ -264,13 +264,18 @@ Use the exclusion flag consistently for restore, build and test commands,
 and restore with `-p:Configuration=Release` before a Release
 build with `--no-restore`. Ordinary managed builds remain framework-dependent;
 self-contained deployment applies at publish time. Engine/workbench tests are
-excluded when the feature is off. CI builds the feature-enabled native desktop
-and retains a separate terminal-only configuration gate.
-Windows CI runs test projects sequentially (`-m:1`) to avoid concurrent test-host
+excluded when the feature is off.
+CI publishes the feature-enabled NativeAOT desktop and verifies its package
+and module signatures. The separate `test-iseberg.yml` workflow tests Iseberg
+on Windows, Linux, and macOS using the pinned PowerShell 7.6.6 runtime. It runs
+the App, UI, Settings, and Settings.Editor test projects, not the entire
+solution, and checks terminal-only Windows x64/ARM64 NativeAOT publishes.
+Source/dependency changes, a weekly schedule, and
+manual dispatch trigger it; the extended suite does not gate release publication.
+Iseberg CI runs test projects sequentially (`-m:1`) to avoid concurrent test-host
 startup starving short broker deadlines. It retains TRX results and per-test
-hang diagnostics with a five-minute hang guard; the complete suite has a separate
-120-minute budget because isolated `pwsh` startup is slower on hosted Windows
-runners. This does not change individual test assertions or hang deadlines.
+hang diagnostics and a 120-minute test-step budget for the slower hosted Windows
+runner. A failed App test project stops the step before starting the UI suite.
 
 Native libraries/helpers and legal notices remain loose for package signing and
 license checks. Ship only `Devolutions.Iseberg.PowerShell.dll` as loose
@@ -296,8 +301,9 @@ installation or PATH. Dot-source it to set `DT_ISEBERG_PSHOME` in the caller;
 GitHub Actions sets that variable for subsequent steps automatically.
 Use `-Version 7.4.6` to check the exact compatibility minimum, `-Version 7.4.20`
 for the serviced 7.4 runtime, `-Version 7.5.11` or the default `7.6.6`.
-CI runs the managed suites against 7.4.6, 7.5.11 and 7.6.6 on Windows,
-Linux and macOS. Old runtimes are isolated compatibility-test fixtures,
+CI uses the pinned 7.6.6 runtime on Windows, Linux and macOS; older supported
+versions can be exercised locally with the installer options above.
+Old runtimes are isolated compatibility-test fixtures,
 not recommended user installations.
 **Never package this test-runtime directory with DT.**
 

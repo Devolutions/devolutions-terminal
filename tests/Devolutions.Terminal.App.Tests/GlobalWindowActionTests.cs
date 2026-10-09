@@ -332,7 +332,8 @@ public sealed class GlobalWindowActionTests
                 _callbacks[chord] = activated;
                 if (InvokeDuringRegistration)
                 {
-                    RegistrationCallbackCompleted = Task.Run(activated)
+                    RegistrationCallbackCompleted = Task.Factory.StartNew(
+                            activated, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default)
                         .Wait(TimeSpan.FromSeconds(2));
                 }
                 return new(

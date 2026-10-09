@@ -35,7 +35,16 @@ CI workflows:
 - `build-terminal.yml` — restore natives from source, test, NativeAOT desktop, Linux
   packages, macOS `.app`/zip, MSIX, the `Devolutions.Terminal.Control`
   NuGet package, and the browser WASM host. NativeAOT desktop releases include
-  Iseberg; the explicit terminal-only configuration is also validated.
+  Iseberg. The main workflow's managed tests use the
+  terminal-only configuration (`EnablePowerShellIse=false`). Publishing and
+  packaging run in parallel with tests; final release publication still requires
+  all platform tests, native runtime gates, and package/signature checks to pass.
+  Linux package reproducibility rebuilds run in ordinary CI, not tag/manual releases.
+- `test-iseberg.yml` — Iseberg-enabled App/UI/Settings/Settings.Editor tests on
+  Windows, Linux, and macOS with one pinned PowerShell runtime, plus terminal-only
+  Windows x64/ARM64 NativeAOT publish checks. Runs on source/dependency changes,
+  weekly, or manually. The extended engine/workbench suite runs independently
+  rather than gating release publication.
 
 ## Developer build
 
