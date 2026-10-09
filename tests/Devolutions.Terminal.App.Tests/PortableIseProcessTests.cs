@@ -4,7 +4,7 @@ using Xunit;
 
 namespace Devolutions.Terminal.App.Tests;
 
-public sealed class PortableIseProcessTests
+public sealed class PortableIseProcessTests(ITestOutputHelper testOutput)
 {
     [Fact]
     public async Task SingleAssemblyModuleAuthenticatesAndExecutesWithoutContractsDll()
@@ -17,10 +17,12 @@ public sealed class PortableIseProcessTests
             var distributedModule = PowerShellProcessDiscovery.ModulePath;
             Assert.Equal(Path.Combine(AppContext.BaseDirectory, "Devolutions.Iseberg.PowerShell.dll"), distributedModule);
             File.Copy(distributedModule, module);
+            testOutput.WriteLine($"Copied module attributes: {File.GetAttributes(module)}");
             Assert.Equal(new[] { module }, Directory.GetFiles(directory));
             await using var session = new PowerShellSession { ModulePath = module };
             await session.InitializeAsync();
             var childId = Assert.IsType<int>(session.ChildProcessId);
+            using var child = Process.GetProcessById(childId);
             var output = new List<OutputEntry>();
             session.Output += output.Add;
             await session.ExecuteAsync("""
@@ -43,10 +45,30 @@ public sealed class PortableIseProcessTests
             Assert.Equal(childId, session.ChildProcessId);
             Assert.Equal(SessionState.Ready, session.State);
             AssertParentHasNoPowerShellEngine();
+            await session.DisposeAsync();
+            await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.True(child.HasExited);
+            Assert.Equal(SessionState.Disposed, session.State);
         }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            var cleanup = Stopwatch.StartNew();
+            while (true)
+            {
+                try
+                {
+                    Directory.Delete(directory, recursive: true);
+                    break;
+                }
+                catch (Exception exception) when (OperatingSystem.IsWindows() &&
+                    cleanup.Elapsed < TimeSpan.FromSeconds(5) &&
+                    exception is IOException or UnauthorizedAccessException &&
+                    (exception.HResult & 0xFFFF) is 5 or 32 or 33)
+                {
+                    testOutput.WriteLine($"Waiting for Windows to release the copied module: {exception.Message}");
+                    await Task.Delay(100);
+                }
+            }
         }
     }
 

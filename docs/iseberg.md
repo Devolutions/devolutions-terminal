@@ -372,10 +372,13 @@ CLI, compatibility and package suites separately passed 34 tests.
 `SingleAssemblyModuleAuthenticatesAndExecutesWithoutContractsDll` copies only
 the module into an isolated directory, completes the authenticated handshake,
 executes with persistent state and parses incomplete input. It verifies that
-the child contracts belong to `Iseberg.PowerShell`, with no separate contracts
+the child contracts belong to `Devolutions.Iseberg.PowerShell`, with no separate contracts
 assembly referenced or loaded, and that the parent remains SMA-free. This
 regression passes within all four complete App runs above; the single-DLL
 minimum-runtime UI run passes all 665 cases.
+It also verifies session disposal and actual child exit before deleting the
+private module copy. Windows cleanup logs and retries access/lock errors for at
+most five seconds; persistent cleanup failures still fail the test.
 
 Automatic profile regressions cover Windows/Linux/macOS discovery, one stable
 generated identity even with multiple PowerShell installations, absence when
