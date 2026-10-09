@@ -101,6 +101,9 @@ parent's process identity. Frames are limited to 8 MiB, outstanding requests to
 outgoing queue overflow disconnects rather than silently dropping notifications.
 Independent readers keep reverse host/UI callbacks and cancellation available
 while a command, input prompt or debugger stop is waiting.
+Terminal-size updates are acknowledged before subsequent execution, so host
+RawUI dimensions reflect the latest resize. Background command-catalog refreshes
+wait for running commands to finish rather than reporting a busy-session error.
 
 This prerequisite is lazy: ordinary terminal profiles remain usable without
 compatible installed PowerShell. Opening Iseberg without it produces an explicit

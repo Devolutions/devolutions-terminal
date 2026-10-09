@@ -325,7 +325,7 @@ public sealed partial class ManagedPowerShellSession : IAsyncDisposable
                 command.Properties["Name"].Value.ToString()!, command.Properties["ModuleName"].Value?.ToString() ?? "",
                 command.Properties["CommandType"].Value.ToString()!, command.Properties["Definition"].Value?.ToString() ?? ""))
                 .OrderBy(command => command.Name, StringComparer.OrdinalIgnoreCase).DistinctBy(command => command.Name).ToArray();
-        }, cancellationToken);
+        }, cancellationToken, waitForGate: true);
 
     internal static IReadOnlyList<CommandDescription> DescribeCommands(IEnumerable<CommandInfo> commands) =>
         commands.OrderBy(command => command.Name, StringComparer.OrdinalIgnoreCase)

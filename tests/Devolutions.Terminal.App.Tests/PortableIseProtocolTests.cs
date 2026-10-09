@@ -286,7 +286,7 @@ public sealed class PortableIseProtocolTests
 
     private static async Task<(NamedPipeServerStream Server, NamedPipeClientStream Client)> ConnectAsync()
     {
-        var name = "dt-ise-protocol-test-" + Guid.NewGuid().ToString("N");
+        var name = "dt-p-" + Guid.NewGuid().ToString("N");
         var server = new NamedPipeServerStream(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
             PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
         var client = new NamedPipeClientStream(".", name, PipeDirection.InOut, PipeOptions.Asynchronous);

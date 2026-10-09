@@ -89,7 +89,7 @@ public sealed class PortableIseHandshakeTests
         {
             var module = Path.Combine(AppContext.BaseDirectory, "Iseberg.PowerShell", "Iseberg.PowerShell.dll");
             Assert.True(File.Exists(module), $"The distributed bridge module is missing: {module}");
-            var pipeName = "dt-ise-hello-test-" + Guid.NewGuid().ToString("N");
+            var pipeName = "dt-h-" + Guid.NewGuid().ToString("N");
             var pipe = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
                 PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
             var key = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));

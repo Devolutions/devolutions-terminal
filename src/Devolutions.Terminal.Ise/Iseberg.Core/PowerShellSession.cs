@@ -20,6 +20,7 @@ public sealed class PowerShellSession : IAsyncDisposable
     private Task? errorDrain;
     private Task? exitObservation;
     private Task? disposal;
+    private Task terminalSizeUpdate = Task.CompletedTask;
     private volatile SessionStatus status = new(SessionState.Starting, "PS> ", "", Guid.Empty, Guid.Empty,
         false, false, null, false, false, "[Nested 0]: PS> ");
     private int initializing;
@@ -134,7 +135,18 @@ public sealed class PowerShellSession : IAsyncDisposable
         this.columns = columns;
         this.rows = rows;
         if (connection is not null && State is not (SessionState.Failed or SessionState.Disposed))
-            Observe(SendAsync("terminalSize", new TerminalSizeRequest(columns, rows)));
+        {
+            Task update;
+            lock (sync)
+                update = terminalSizeUpdate = UpdateTerminalSizeAsync(terminalSizeUpdate, columns, rows);
+            Observe(update);
+        }
+    }
+
+    private async Task UpdateTerminalSizeAsync(Task previous, int columns, int rows)
+    {
+        await previous.ConfigureAwait(false);
+        await SendAsync("terminalSize", new TerminalSizeRequest(columns, rows)).ConfigureAwait(false);
     }
 
     public Task SetWorkingDirectoryAsync(string path)
@@ -295,7 +307,13 @@ public sealed class PowerShellSession : IAsyncDisposable
     private async Task SendExecutionAsync<T>(string operation, T value, CancellationToken cancellationToken = default)
     {
         Interlocked.Increment(ref executionRequests);
-        try { await SendAsync(operation, value, cancellationToken).ConfigureAwait(false); }
+        try
+        {
+            Task resize;
+            lock (sync) resize = terminalSizeUpdate;
+            await resize.WaitAsync(cancellationToken).ConfigureAwait(false);
+            await SendAsync(operation, value, cancellationToken).ConfigureAwait(false);
+        }
         finally
         {
             // A Ready/runspace event can precede the correlated execution reply.
