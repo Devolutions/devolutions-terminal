@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk" TreatAsLocalProperty="PublishAot;PublishTrimmed;SelfContained;IsAotCompatible;EnableTrimAnalyzer;EnableSingleFileAnalyzer">
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>Devolutions.Iseberg.PowerShell</AssemblyName>
     <IsAotCompatible>false</IsAotCompatible>
     <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
     <PublishAot>false</PublishAot>

@@ -4,11 +4,13 @@ param(
     [ValidateScript({ Test-Path -LiteralPath $_ -PathType Container })]
     [string] $PayloadDirectory,
 
-    # Exact certificate subject for our app executables only. Third-party binaries
+    # Exact certificate subject for DT's executables and module. Third-party binaries
     # may legitimately have another signer; all binaries must still be trusted.
     [ValidateNotNullOrEmpty()]
     [ValidateScript({ -not [string]::IsNullOrWhiteSpace($_) -and $_ -notmatch '[\r\n]' })]
-    [string] $ExpectedPublisher
+    [string] $ExpectedPublisher,
+
+    [switch] $RequireIsebergModule
 )
 
 Set-StrictMode -Version Latest
@@ -22,10 +24,17 @@ if (-not $IsWindows) {
 
 $payloadPath = (Get-Item -LiteralPath $PayloadDirectory).FullName
 $appExecutableNames = @("Devolutions.Terminal.exe", "dt.exe")
+$appBinaryNames = $appExecutableNames + "Devolutions.Iseberg.PowerShell.dll"
 foreach ($name in $appExecutableNames) {
     $appPath = Join-Path $payloadPath $name
     if (-not (Test-Path -LiteralPath $appPath -PathType Leaf)) {
         throw "Required Windows app executable '$appPath' was not found."
+    }
+}
+if ($RequireIsebergModule) {
+    $modulePath = Join-Path $payloadPath "Devolutions.Iseberg.PowerShell.dll"
+    if (-not (Test-Path -LiteralPath $modulePath -PathType Leaf)) {
+        throw "Required Iseberg module '$modulePath' was not found."
     }
 }
 
@@ -34,7 +43,7 @@ Get-Command winapp -ErrorAction Stop | Out-Null
 # Include nested host layouts, not just the executables at the payload root.
 $binaries = @(Get-ChildItem -LiteralPath $payloadPath -Recurse -File -Force |
     Where-Object Extension -in @(".exe", ".dll") |
-    Sort-Object @{ Expression = { $_.Name -notin $appExecutableNames } }, FullName)
+    Sort-Object @{ Expression = { $_.Name -notin $appBinaryNames } }, FullName)
 
 foreach ($binary in $binaries) {
     $signature = Get-AuthenticodeSignature -LiteralPath $binary.FullName
@@ -44,7 +53,7 @@ foreach ($binary in $binaries) {
     if ($null -eq $signature.TimeStamperCertificate) {
         throw "Windows payload signature validation failed for '$($binary.FullName)': timestamp certificate is missing."
     }
-    if ($PSBoundParameters.ContainsKey("ExpectedPublisher") -and $binary.Name -in $appExecutableNames -and
+    if ($PSBoundParameters.ContainsKey("ExpectedPublisher") -and $binary.Name -in $appBinaryNames -and
         $signature.SignerCertificate.Subject -cne $ExpectedPublisher) {
         throw "Windows app signer for '$($binary.FullName)' is '$($signature.SignerCertificate.Subject)'; expected exact publisher '$ExpectedPublisher'."
     }

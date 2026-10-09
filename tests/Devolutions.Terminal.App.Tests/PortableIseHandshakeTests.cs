@@ -87,7 +87,7 @@ public sealed class PortableIseHandshakeTests
 
         public static async Task<BridgeChild> StartAsync()
         {
-            var module = Path.Combine(AppContext.BaseDirectory, "Iseberg.PowerShell", "Iseberg.PowerShell.dll");
+            var module = PowerShellProcessDiscovery.ModulePath;
             Assert.True(File.Exists(module), $"The distributed bridge module is missing: {module}");
             var pipeName = "dt-h-" + Guid.NewGuid().ToString("N");
             var pipe = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,

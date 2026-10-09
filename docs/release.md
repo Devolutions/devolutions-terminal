@@ -54,15 +54,21 @@ it runs inside the installed PowerShell subprocess.
 ## Desktop distribution
 
 Default publishes and release packages are self-contained NativeAOT and include
-Iseberg. Ship the loose `Iseberg.PowerShell` folder containing only
-`Iseberg.PowerShell.dll`. Its shared contract sources are compiled into the module
+Iseberg. Ship the loose `Devolutions.Iseberg.PowerShell.dll` beside
+`dt.exe` and `Devolutions.Terminal.exe`. Its shared contract sources are compiled into the module
 and separately into the NativeAOT parent; do not ship `Iseberg.Contracts.dll`.
 The module is imported by separately installed PowerShell; do not ship SMA,
-PowerShell's runtime/native dependency graph, or CoreCLR. macOS staging places this folder in
+PowerShell's runtime/native dependency graph, or CoreCLR. macOS staging places this DLL in
 `Contents/Resources`, outside the Mach-O-only `Contents/MacOS` directory.
 The `dt` CLI remains NativeAOT. Explicit terminal-only publishes use
 `-p:EnablePowerShellIse=false` and do not include the bridge.
 See [iseberg.md](iseberg.md) for prerequisites, legal notices and guards.
+
+Windows release CI Authenticode-signs the module with the other unpacked app
+binaries before building the MSI and NuGet packages. Verification requires the
+module, a trusted timestamped signature and the same exact DT publisher as the
+executables. Ordinary PR builds and local publishes remain unsigned, like the
+other app binaries.
 
 ```powershell
 dotnet publish src/Devolutions.Terminal -c Release -r win-x64 --self-contained `
@@ -75,6 +81,7 @@ Each publish directory contains:
 
 - `Devolutions.Terminal.exe` — GUI host and broker primary
 - `dt.exe` — command-line/broker client (Windows GUI subsystem; attaches to a parent console)
+- `Devolutions.Iseberg.PowerShell.dll` — managed binary module loaded only by child `pwsh`
 - Avalonia/Skia native dependencies
 - bundled Noto Color Emoji fallback and its SIL OFL notice
 

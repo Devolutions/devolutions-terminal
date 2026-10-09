@@ -1340,8 +1340,8 @@ jobs:
         env:
           EXPECTED_PUBLISHER: ${{ steps.signing-mode.outputs.publisher }}
         run: |
-          ./src/Devolutions.Terminal.Package/Scripts/Test-WindowsPayloadSignatures.ps1 -PayloadDirectory artifacts/msi/layout/win-x64 -ExpectedPublisher $env:EXPECTED_PUBLISHER
-          ./src/Devolutions.Terminal.Package/Scripts/Test-WindowsPayloadSignatures.ps1 -PayloadDirectory artifacts/msi/layout/win-arm64 -ExpectedPublisher $env:EXPECTED_PUBLISHER
+          ./src/Devolutions.Terminal.Package/Scripts/Test-WindowsPayloadSignatures.ps1 -PayloadDirectory artifacts/msi/layout/win-x64 -RequireIsebergModule -ExpectedPublisher $env:EXPECTED_PUBLISHER
+          ./src/Devolutions.Terminal.Package/Scripts/Test-WindowsPayloadSignatures.ps1 -PayloadDirectory artifacts/msi/layout/win-arm64 -RequireIsebergModule -ExpectedPublisher $env:EXPECTED_PUBLISHER
 
       - name: Upload Windows x64 NuGet payload
         uses: actions/upload-artifact@v4

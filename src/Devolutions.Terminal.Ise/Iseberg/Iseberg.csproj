@@ -27,8 +27,8 @@
     <ItemGroup>
       <_IsebergModuleContent Include="@(_IsebergModuleAssembly)" />
       <ContentWithTargetPath Include="@(_IsebergModuleContent)"
-               Link="Iseberg.PowerShell\%(Filename)%(Extension)"
-               TargetPath="Iseberg.PowerShell\%(Filename)%(Extension)"
+               Link="%(Filename)%(Extension)"
+               TargetPath="%(Filename)%(Extension)"
                CopyToOutputDirectory="PreserveNewest"
                CopyToPublishDirectory="PreserveNewest"
                ExcludeFromSingleFile="true" />

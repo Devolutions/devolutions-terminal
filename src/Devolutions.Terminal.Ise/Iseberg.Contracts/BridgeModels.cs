@@ -13,7 +13,7 @@ public static class IseBridgeProtocol
     public const int MaximumQueuedFrames = 512;
     public const int MaximumOutputCharacters = 16 * 1024;
     public const string AuthenticationEnvironment = "DT_ISEBERG_BRIDGE_AUTH";
-    public const string ModuleDirectory = "Iseberg.PowerShell";
+    public const string ModuleFileName = "Devolutions.Iseberg.PowerShell.dll";
     public static string BuildIdentity => IseBridgeBuild.Identity;
     public static string AuthenticationProof(string key, string challenge, string role) =>
         Convert.ToHexString(HMACSHA256.HashData(Convert.FromHexString(key), Encoding.UTF8.GetBytes(role + ":" + challenge)));

@@ -12,10 +12,10 @@ public static class PowerShellProcessDiscovery
     {
         get
         {
-            var besideExecutable = Path.Combine(AppContext.BaseDirectory, IseBridgeProtocol.ModuleDirectory, "Iseberg.PowerShell.dll");
+            var besideExecutable = Path.Combine(AppContext.BaseDirectory, IseBridgeProtocol.ModuleFileName);
             if (File.Exists(besideExecutable) || !OperatingSystem.IsMacOS()) return besideExecutable;
             return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "Resources",
-                IseBridgeProtocol.ModuleDirectory, "Iseberg.PowerShell.dll"));
+                IseBridgeProtocol.ModuleFileName));
         }
     }
 

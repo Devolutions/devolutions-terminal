@@ -56,7 +56,7 @@ pwsh scripts/Test-MacOsRuntime.ps1 artifacts/packages
 `Build-MacOsPackage.ps1` publishes the NativeAOT desktop with Iseberg enabled
 unless `MACOS_PUBLISH_DIR` supplies an existing publish,
 stages `Devolutions Terminal.app` with `macos/Info.plist`, moves the managed
-bridge into `Contents/Resources/Iseberg.PowerShell`, generates
+bridge DLL into `Contents/Resources/Devolutions.Iseberg.PowerShell.dll`, generates
 `DevolutionsTerminal.icns` from the original WT Distro vector artwork in
 `macos/DevolutionsTerminal.svg`. Its librsvg-rendered 1024px transparent master,
 `macos/DevolutionsTerminal.png`, is committed so packaging does not depend on

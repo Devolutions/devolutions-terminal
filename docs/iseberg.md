@@ -94,7 +94,7 @@ The child architecture does not need to match DT. Make `pwsh` available on PATH,
 DT checks its version and child-runtime compatibility. A short noninteractive
 `pwsh -NoProfile` probe discovers and validates the installation. DT then starts
 an owned `pwsh -NoLogo -NoProfile` child and imports the absolute path to its
-`Iseberg.PowerShell.dll` binary module. The module creates a custom-host execution
+`Devolutions.Iseberg.PowerShell.dll` binary module. The module creates a custom-host execution
 runspace; it does not replace PowerShell's bootstrap console host.
 
 Parser analysis, completion, execution, host input, debugging and portable
@@ -257,7 +257,7 @@ dotnet test Devolutions.Terminal.slnx
 ```
 
 The first command produces the default NativeAOT desktop with the private module
-folder. The second produces an explicit terminal-only NativeAOT desktop. It
+DLL beside the executables. The second produces an explicit terminal-only NativeAOT desktop. It
 retains saved Iseberg profiles but reports the missing feature rather than silently
 opening PowerShell terminals; its settings editor does not offer new Iseberg profiles.
 Use the exclusion flag consistently for restore, build and test commands,
@@ -273,13 +273,13 @@ hang diagnostics with a five-minute hang guard; the complete suite has a separat
 runners. This does not change individual test assertions or hang deadlines.
 
 Native libraries/helpers and legal notices remain loose for package signing and
-license checks. Ship only `Iseberg.PowerShell/Iseberg.PowerShell.dll` as loose
-content beside the executable; it is not loaded into DT. Shared contract sources
+license checks. Ship only `Devolutions.Iseberg.PowerShell.dll` as loose
+content directly beside `dt.exe` and the desktop executable; it is not loaded into DT. Shared contract sources
 and source-generated JSON are compiled into this module and separately into
 the SMA-free `Iseberg.Contracts` project referenced by the NativeAOT parent.
 The shared build-identity target fingerprints the same inputs in both builds.
 `Iseberg.Contracts.dll` is a parent build artifact, not a distribution payload.
-macOS app staging moves this module folder to `Contents/Resources`, while
+macOS app staging moves this DLL to `Contents/Resources`, while
 `Contents/MacOS` contains only native code.
 Keep all `THIRD-PARTY-NOTICES*.txt` files in distributions.
 
@@ -389,7 +389,11 @@ Release NativeAOT desktop/CLI publish succeeds. Positive and negative publish
 guard checks accept the single owned module and reject SMA, CoreCLR,
 unexpected bridge dependencies (including a separate contracts DLL) or a missing
 module. MSI component generation preserves the single module at
-`<INSTALLLOCATION>/Iseberg.PowerShell/Iseberg.PowerShell.dll`. Actual desktop
+`<INSTALLLOCATION>/Devolutions.Iseberg.PowerShell.dll`, directly beside `dt.exe`
+and `Devolutions.Terminal.exe`. Windows release CI signs this managed module
+with the unpacked app binaries before MSI/NuGet packaging; its signature guard
+requires a trusted timestamped signature and the exact DT publisher. PR builds
+and local publishes remain unsigned, like the executables. Actual desktop
 compiler references exclude SMA and the managed module. These checks are
 separate from the published native GUI evidence above.
 

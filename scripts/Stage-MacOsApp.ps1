@@ -84,16 +84,14 @@ $resources = Join-Path $contents 'Resources'
 New-Item -ItemType Directory -Force -Path $macosDir, $resources | Out-Null
 
 Invoke-Native -FilePath cp -ArgumentList '-a', "$publishDir/.", "$macosDir/"
-$bridgeDirectory = Join-Path $macosDir 'Iseberg.PowerShell'
-if (Test-Path -LiteralPath $bridgeDirectory -PathType Container) {
-    if (-not (Test-Path -LiteralPath (Join-Path $bridgeDirectory 'Iseberg.PowerShell.dll') -PathType Leaf)) {
-        throw 'Iseberg bridge payload is missing Iseberg.PowerShell.dll.'
+$bridgeModule = Join-Path $macosDir 'Devolutions.Iseberg.PowerShell.dll'
+foreach ($legacyPayload in @('Iseberg.PowerShell', 'Iseberg.PowerShell.dll', 'Iseberg.Contracts.dll')) {
+    if (Test-Path -LiteralPath (Join-Path $macosDir $legacyPayload)) {
+        throw "Unexpected legacy Iseberg bridge payload: $legacyPayload."
     }
-    if (@(Get-ChildItem -LiteralPath $bridgeDirectory -Force |
-            Where-Object { $_.Name -ne 'Iseberg.PowerShell.dll' -or $_.PSIsContainer }).Count -ne 0) {
-        throw 'Iseberg bridge payload must contain only Iseberg.PowerShell.dll.'
-    }
-    Move-Item -LiteralPath $bridgeDirectory -Destination $resources
+}
+if (Test-Path -LiteralPath $bridgeModule -PathType Leaf) {
+    Move-Item -LiteralPath $bridgeModule -Destination $resources
 }
 Get-ChildItem -LiteralPath $macosDir -Recurse -Filter '*.pdb' | Remove-Item -Force
 Get-ChildItem -LiteralPath $macosDir -Recurse -Filter '*.dbg' | Remove-Item -Force

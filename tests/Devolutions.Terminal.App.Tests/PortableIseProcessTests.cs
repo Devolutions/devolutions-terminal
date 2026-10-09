@@ -13,8 +13,10 @@ public sealed class PortableIseProcessTests
         Directory.CreateDirectory(directory);
         try
         {
-            var module = Path.Combine(directory, "Iseberg.PowerShell.dll");
-            File.Copy(PowerShellProcessDiscovery.ModulePath, module);
+            var module = Path.Combine(directory, "Devolutions.Iseberg.PowerShell.dll");
+            var distributedModule = PowerShellProcessDiscovery.ModulePath;
+            Assert.Equal(Path.Combine(AppContext.BaseDirectory, "Devolutions.Iseberg.PowerShell.dll"), distributedModule);
+            File.Copy(distributedModule, module);
             Assert.Equal(new[] { module }, Directory.GetFiles(directory));
             await using var session = new PowerShellSession { ModulePath = module };
             await session.InitializeAsync();
@@ -29,7 +31,7 @@ public sealed class PortableIseProcessTests
                     Where-Object { $_.GetName().Name -eq 'Iseberg.Contracts' }).Count)
                 $global:dtSingleModuleValue = 42
                 """);
-            Assert.Equal(new[] { "DT-CONTRACT-OWNER:Iseberg.PowerShell", "DT-CONTRACT-REFERENCE:0", "DT-CONTRACT-LOADED:0" },
+            Assert.Equal(new[] { "DT-CONTRACT-OWNER:Devolutions.Iseberg.PowerShell", "DT-CONTRACT-REFERENCE:0", "DT-CONTRACT-LOADED:0" },
                 output.Where(entry => entry.Kind == OutputKind.Output).Select(entry => entry.Text.TrimEnd('\r', '\n')).ToArray());
             Assert.DoesNotContain(output, entry => entry.Kind == OutputKind.Error);
             output.Clear();
