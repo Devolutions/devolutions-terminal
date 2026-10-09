@@ -15,6 +15,7 @@ on:
       - "NuGet.Config"
       - "global.json"
       - "scripts/Install-IsebergTestPowerShell.ps1"
+      - "scripts/Test-IsebergCore.ps1"
   pull_request:
     paths:
       - ".github/workflows/test-iseberg.yml"
@@ -27,6 +28,7 @@ on:
       - "NuGet.Config"
       - "global.json"
       - "scripts/Install-IsebergTestPowerShell.ps1"
+      - "scripts/Test-IsebergCore.ps1"
   schedule:
     - cron: "0 6 * * 1"
   workflow_dispatch:
@@ -70,24 +72,10 @@ jobs:
         shell: pwsh
         run: ./scripts/Install-IsebergTestPowerShell.ps1
 
-      - name: Test engine, workbench, and settings
-        timeout-minutes: 120
+      - name: Test Iseberg core
+        timeout-minutes: 20
         shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $PSNativeCommandUseErrorActionPreference = $true
-          foreach ($project in @(
-            'Devolutions.Terminal.App.Tests',
-            'Devolutions.Terminal.UI.Tests',
-            'Devolutions.Terminal.Settings.Tests',
-            'Devolutions.Terminal.Settings.Editor.Tests'
-          )) {
-            dotnet test "tests/$project/$project.csproj" -c Release -m:1 `
-              -p:EnablePowerShellIse=true `
-              --logger "console;verbosity=normal" --logger trx `
-              --results-directory "artifacts/test-results/$project" `
-              --blame-hang --blame-hang-timeout 5min --blame-hang-dump-type none
-          }
+        run: ./scripts/Test-IsebergCore.ps1
 
       - name: Upload test diagnostics
         if: always()

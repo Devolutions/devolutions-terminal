@@ -268,14 +268,30 @@ excluded when the feature is off.
 CI publishes the feature-enabled NativeAOT desktop and verifies its package
 and module signatures. The separate `test-iseberg.yml` workflow tests Iseberg
 on Windows, Linux, and macOS using the pinned PowerShell 7.6.6 runtime. It runs
-the App, UI, Settings, and Settings.Editor test projects, not the entire
-solution, and checks terminal-only Windows x64/ARM64 NativeAOT publishes.
+`scripts/Test-IsebergCore.ps1` to select a fast core from the App, UI, Settings,
+and Settings.Editor projects, and checks terminal-only Windows x64/ARM64
+NativeAOT publishes. The core retains 220 of the 1,104 Iseberg cases in the
+original Windows run (80% fewer): inexpensive editor, installation, handshake,
+protocol, and child-process checks plus representative native-console execution,
+input, cancellation, recovery, profile, and settings-editor workflows. Exhaustive
+hosted workbench, theme, and native-input permutations are outside the CI core;
+the terminal-only workflow already covers unrelated terminal tests.
 Source/dependency changes, a weekly schedule, and
-manual dispatch trigger it; the extended suite does not gate release publication.
+manual dispatch trigger it; the core suite does not gate release publication.
 Iseberg CI runs test projects sequentially (`-m:1`) to avoid concurrent test-host
 startup starving short broker deadlines. It retains TRX results and per-test
-hang diagnostics and a 120-minute test-step budget for the slower hosted Windows
+hang diagnostics and a 20-minute test-step budget for the slower hosted Windows
 runner. A failed App test project stops the step before starting the UI suite.
+
+Run the same core locally after installing the test runtime:
+
+```powershell
+. ./scripts/Install-IsebergTestPowerShell.ps1
+./scripts/Test-IsebergCore.ps1
+```
+
+The full regression suite remains available through the unfiltered solution test
+command above; no regression tests have been deleted.
 
 Native libraries/helpers and legal notices remain loose for package signing and
 license checks. Ship only `Devolutions.Iseberg.PowerShell.dll` as loose
