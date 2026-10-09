@@ -1,4 +1,3 @@
-using System.Management.Automation;
 using Avalonia;
 using Avalonia.Automation;
 using Avalonia.Controls;
@@ -20,7 +19,7 @@ public sealed class BreakpointWindow : Window
     private readonly CheckBox enabled = new() { Name = "BreakpointEnabled", Content = UiText.Get("BreakpointEnabled") };
     private readonly TextBlock error = new() { TextWrapping = TextWrapping.Wrap };
 
-    public BreakpointWindow(BreakpointSpec spec)
+    public BreakpointWindow(BreakpointSpec spec, Func<BreakpointSpec, CancellationToken, Task>? validate = null)
     {
         Title = UiText.Get("BreakpointsTitle");
         Width = 570;
@@ -47,18 +46,26 @@ public sealed class BreakpointWindow : Window
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Spacing = 8 };
         var ok = new Button { Name = "BreakpointOK", Content = UiText.Get("OK"), IsDefault = true };
         var cancel = new Button { Content = UiText.Get("Cancel"), IsCancel = true };
-        ok.Click += (_, _) =>
+        var cancellation = new CancellationTokenSource();
+        var cancellationToken = cancellation.Token;
+        Closed += (_, _) => { cancellation.Cancel(); cancellation.Dispose(); };
+        ok.Click += async (_, _) =>
         {
             try
             {
+                ok.IsEnabled = false;
                 var value = ReadSpec();
                 value.Validate();
+                if (validate is not null) await validate(value, cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
                 Close(value);
             }
-            catch (Exception exception) when (exception is ArgumentException or RuntimeException)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+            catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or IOException)
             {
                 error.Text = exception.Message;
             }
+            finally { ok.IsEnabled = true; }
         };
         cancel.Click += (_, _) => Close(null);
         buttons.Children.Add(ok);

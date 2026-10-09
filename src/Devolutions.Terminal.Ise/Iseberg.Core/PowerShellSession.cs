@@ -1,580 +1,485 @@
-using System.Management.Automation;
-using System.Management.Automation.Runspaces;
+using System.Diagnostics;
+using System.IO.Pipes;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 
 namespace Iseberg.Core;
 
-/// <summary>Owns a persistent PowerShell runspace with serialized execution, completion, and debugging.</summary>
-public sealed partial class PowerShellSession : IAsyncDisposable
+/// <summary>Owns one installed pwsh subprocess. The desktop never loads the PowerShell engine.</summary>
+public sealed class PowerShellSession : IAsyncDisposable
 {
-    private readonly SemaphoreSlim gate = new(1, 1);
+    private readonly string? snippetDirectory;
     private readonly object sync = new();
-    private readonly AutoResetEvent debuggerWake = new(false);
-    private readonly Runspace localRunspace;
-    private readonly WorkbenchHost host;
-    private Runspace runspace => pushedRunspace ?? localRunspace;
-    private PowerShell? active;
-    private InputRequest? pendingInput;
-    private ShowCommandRequest? pendingShowCommand;
-    private CommandErrorRequest? pendingCommandError;
-    private DebuggerResumeAction resumeAction;
-    private bool disposed;
-    private Task? disposalTask;
-    private bool stopRequested;
-    private object? iseObjectModel;
+    private readonly CancellationTokenSource lifetime = new();
+    private readonly StringBuilder diagnostics = new();
+    private BridgeConnection? connection;
+    private NamedPipeServerStream? pipe;
+    private Process? child;
+    private Task? outputDrain;
+    private Task? errorDrain;
+    private Task? exitObservation;
+    private Task? disposal;
+    private Task terminalSizeUpdate = Task.CompletedTask;
+    private volatile SessionStatus status = new(SessionState.Starting, "PS> ", "", Guid.Empty, Guid.Empty,
+        false, false, null, false, false, "[Nested 0]: PS> ");
+    private int initializing;
+    private int executionRequests;
+    private int failed;
+    private volatile bool authenticated;
+    private bool initialized;
+    private volatile bool closing;
+    private int columns = 120;
+    private int rows = 40;
     public IseSnippetService Snippets { get; }
-
-    /// <summary>Formatted stream entries, including script errors; callbacks may occur on pipeline threads.</summary>
+    public Func<string, JsonElement, CancellationToken, Task<JsonElement>>? ScriptingCallback { get; set; }
+    public string? ExecutablePath { get; init; }
+    public string ModulePath { get; init; } = PowerShellProcessDiscovery.ModulePath;
+    public int? ChildProcessId => child?.Id;
     public event Action<OutputEntry>? Output;
-    /// <summary>Execution-state transitions; marshal callbacks before updating a UI.</summary>
     public event Action<SessionState>? StateChanged;
-    /// <summary>Interactive input requiring a host response; do not block or re-enter the engine in the handler.</summary>
     public event Action<InputRequest>? InputRequested;
     public event Action<ShowCommandRequest>? ShowCommandRequested;
     public event Action<CommandErrorRequest>? CommandErrorRequested;
     public event Action<ProgressUpdate>? ProgressChanged;
     public event Action<DebugLocation?>? DebuggerStopped;
     public event Action? ConsoleCleared;
-    public SessionState State { get; private set; } = SessionState.Starting;
-    public string Prompt { get; private set; } = "PS> ";
-    public string Version => PSVersionInfo.PSVersion.ToString();
-    public Guid LocalRunspaceId => localRunspace.InstanceId;
-    public void SetTerminalSize(int columns, int rows) => host.SetTerminalSize(columns, rows);
+    public event Action? RunspaceChanged;
+    public SessionState State => status.State;
+    /// <summary>True until an execution or connection request completes, including its final state events.</summary>
+    public bool IsExecuting => Volatile.Read(ref executionRequests) != 0;
+    public string Prompt => status.Prompt;
+    public string Version => status.Version;
+    public Guid LocalRunspaceId => status.LocalRunspaceId;
+    public Guid RunspaceId => status.RunspaceId;
+    public bool IsRunspacePushed => status.IsRunspacePushed;
+    public bool IsRemote => status.IsRemote;
+    public string? RemoteComputerName => status.RemoteComputerName;
+    public string DebugPrompt => IsRemote ? $"[{RemoteComputerName}]: [DBG]: PS> " : "[DBG]: PS> ";
+    public bool IsDebuggerPaused => State == SessionState.Debugging && status.IsDebuggerPaused;
+    public bool IsNestedPromptActive => State == SessionState.NestedPrompt && status.IsNestedPromptActive;
+    public string NestedPrompt => status.NestedPrompt;
 
-    /// <summary>Creates an unopened local runspace with optional custom snippet storage.</summary>
     public PowerShellSession(string? snippetDirectory = null)
     {
-        Snippets = new(snippetDirectory);
-        host = new WorkbenchHost(entry => Output?.Invoke(entry), ReadInput,
-            update => ProgressChanged?.Invoke(update), () => ConsoleCleared?.Invoke(), ReadShowCommand,
-            () => runspace, () => IsRunspacePushed, remote => PushRunspace(remote, false), PopRunspace,
-            EnterNestedPrompt, ExitNestedPrompt, ReadCommandError, Snippets);
-        var initialState = InitialSessionState.CreateDefault2();
-        // The default Unix function clears a terminal instead of this graphical host.
-        initialState.Commands.Remove("Clear-Host", typeof(SessionStateFunctionEntry));
-        initialState.Commands.Add(new SessionStateFunctionEntry("Clear-Host", """
-            $rawUI = $Host.UI.RawUI
-            $rawUI.SetBufferContents(
-                [System.Management.Automation.Host.Rectangle]::new(-1, -1, -1, -1),
-                [System.Management.Automation.Host.BufferCell]::new(
-                    ' ',
-                    $rawUI.ForegroundColor,
-                    $rawUI.BackgroundColor,
-                    [System.Management.Automation.Host.BufferCellType]::Complete))
-            """));
-        initialState.Commands.Remove("clear", typeof(SessionStateAliasEntry));
-        initialState.Commands.Add(new SessionStateAliasEntry("clear", "Clear-Host"));
-        // These binary cmdlets must be available even when Restricted prevents loading module type data.
-        initialState.Commands.Add(new SessionStateCmdletEntry("Set-ExecutionPolicy", typeof(Microsoft.PowerShell.Commands.SetExecutionPolicyCommand), null));
-        initialState.Commands.Add(new SessionStateCmdletEntry("Get-ExecutionPolicy", typeof(Microsoft.PowerShell.Commands.GetExecutionPolicyCommand), null));
-        initialState.Commands.Add(new SessionStateCmdletEntry("Show-IsebergCommand", typeof(ShowCommandCommand), null));
-        initialState.Commands.Add(new SessionStateCmdletEntry("Start-IsebergTerminal", typeof(StartTerminalCommand), null));
-        initialState.Commands.Add(new SessionStateCmdletEntry("New-IseSnippet", typeof(NewIseSnippetCommand), null));
-        initialState.Commands.Add(new SessionStateCmdletEntry("Get-IseSnippet", typeof(GetIseSnippetCommand), null));
-        initialState.Commands.Add(new SessionStateCmdletEntry("Import-IseSnippet", typeof(ImportIseSnippetCommand), null));
-        // A function keeps precedence when Utility is auto-imported by commands such as Get-Help.
-        initialState.Commands.Remove("Show-Command", typeof(SessionStateFunctionEntry));
-        initialState.Commands.Add(new SessionStateFunctionEntry("Show-Command", """
-            [CmdletBinding()]
-            param(
-                [Parameter(Position=0)] [ValidateNotNullOrEmpty()] [string] $Name,
-                [switch] $PassThru,
-                [switch] $NoCommonParameter,
-                [switch] $ErrorPopup,
-                [ValidateRange(300, [int]::MaxValue)] [int] $Width = 360,
-                [ValidateRange(300, [int]::MaxValue)] [int] $Height = 410
-            )
-            Show-IsebergCommand @PSBoundParameters
-            """));
-        localRunspace = RunspaceFactory.CreateRunspace(host, initialState);
-        runspace.ThreadOptions = PSThreadOptions.ReuseThread;
-        if (OperatingSystem.IsWindows())
-            runspace.ApartmentState = ApartmentState.STA;
+        this.snippetDirectory = snippetDirectory;
+        Snippets = new(snippetDirectory) { LoadFromSessionAsync = LoadSnippetsAsync };
     }
 
-    public void ConfigureIseObjectModel(object model)
-    {
-        ArgumentNullException.ThrowIfNull(model);
-        if (!gate.Wait(0)) throw new InvalidOperationException("Configure the ISE object model before executing commands.");
-        try
-        {
-            ObjectDisposedException.ThrowIf(disposed, this);
-            if (State is not (SessionState.Starting or SessionState.Ready))
-                throw new InvalidOperationException("Configure the ISE object model before executing commands.");
-            iseObjectModel = model;
-            if (localRunspace.RunspaceStateInfo.State == RunspaceState.Opened)
-                localRunspace.SessionStateProxy.SetVariable("psISE", model);
-        }
-        finally { gate.Release(); }
-    }
-
-    /// <summary>Opens the local runspace and prepares its host. Profiles are not loaded automatically.</summary>
     public async Task InitializeAsync()
     {
-        await gate.WaitAsync();
+        if (Interlocked.Exchange(ref initializing, 1) != 0)
+            throw new InvalidOperationException("This PowerShell tab has already been initialized.");
+        ObjectDisposedException.ThrowIf(closing, this);
         try
         {
-            ObjectDisposedException.ThrowIf(disposed, this);
-            if (State != SessionState.Starting || runspace.RunspaceStateInfo.State != RunspaceState.BeforeOpen)
-                throw new InvalidOperationException("This PowerShell tab has already been initialized.");
-            await Task.Run(() =>
+            if (!Path.IsPathFullyQualified(ModulePath) || !File.Exists(ModulePath))
+                throw new FileNotFoundException("The DT-owned Iseberg PowerShell bridge module is missing.", ModulePath);
+            var executable = ExecutablePath ?? PowerShellProcessDiscovery.FindExecutable();
+            var endpoint = "dt-iseberg-" + Guid.NewGuid().ToString("N");
+            var authentication = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+            var challenge = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+            pipe = new(endpoint, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
+                PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+            var start = new ProcessStartInfo(executable)
             {
-                runspace.Open();
-                runspace.Debugger.SetDebugMode(DebugModes.LocalScript);
-                runspace.Debugger.DebuggerStop += OnDebuggerStop;
-                var config = OperatingSystem.IsWindows()
-                    ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "PowerShell")
-                    : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config", "powershell");
-                var profile = PSObject.AsPSObject(Path.Combine(config, "Devolutions.Terminal.Iseberg_profile.ps1"));
-                profile.Properties.Add(new PSNoteProperty("CurrentUserCurrentHost", profile.BaseObject));
-                profile.Properties.Add(new PSNoteProperty("CurrentUserAllHosts", Path.Combine(config, "profile.ps1")));
-                var engineHome = Path.GetDirectoryName(typeof(PSObject).Assembly.Location)!;
-                profile.Properties.Add(new PSNoteProperty("AllUsersCurrentHost", Path.Combine(engineHome, "Devolutions.Terminal.Iseberg_profile.ps1")));
-                profile.Properties.Add(new PSNoteProperty("AllUsersAllHosts", Path.Combine(engineHome, "profile.ps1")));
-                runspace.SessionStateProxy.SetVariable("PROFILE", profile);
-                if (iseObjectModel is not null) runspace.SessionStateProxy.SetVariable("psISE", iseObjectModel);
-                RefreshPrompt();
-            });
-            SetState(SessionState.Ready);
+                UseShellExecute = false, CreateNoWindow = true,
+                RedirectStandardOutput = true, RedirectStandardError = true
+            };
+            using var parent = Process.GetCurrentProcess();
+            var bootstrap = "Import-Module -Name '" + ModulePath.Replace("'", "''") +
+                "' -ErrorAction Stop; Start-IsebergBridge -PipeName '" + endpoint +
+                "' -ParentProcessId " + Environment.ProcessId +
+                " -ParentStartTimeUtcTicks " + parent.StartTime.ToUniversalTime().Ticks;
+            foreach (var argument in new[] { "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", bootstrap })
+                start.ArgumentList.Add(argument);
+            start.Environment[IseBridgeProtocol.AuthenticationEnvironment] = authentication;
+            child = Process.Start(start) ?? throw new InvalidOperationException("The PowerShell bridge did not start.");
+            outputDrain = DrainAsync(child.StandardOutput);
+            errorDrain = DrainAsync(child.StandardError);
+            exitObservation = ObserveExitAsync(child);
+            await pipe.WaitForConnectionAsync(lifetime.Token).WaitAsync(TimeSpan.FromSeconds(30), lifetime.Token).ConfigureAwait(false);
+            connection = new(pipe) { Request = HandleRequestAsync, Event = HandleEvent };
+            connection.Disconnected += OnDisconnected;
+            connection.Start();
+            var hello = await CallAsync<BridgeHello, BridgeHelloResult>("hello",
+                new(IseBridgeProtocol.Version, IseBridgeProtocol.BuildIdentity,
+                    IseBridgeProtocol.AuthenticationProof(authentication, challenge, "parent"), challenge,
+                    Environment.ProcessId, parent.StartTime.ToUniversalTime().Ticks))
+                .WaitAsync(TimeSpan.FromSeconds(15), lifetime.Token).ConfigureAwait(false);
+            if (hello.Protocol != IseBridgeProtocol.Version || hello.Build != IseBridgeProtocol.BuildIdentity ||
+                hello.ProcessId != child.Id ||
+                !CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(hello.AuthenticationProof),
+                    Encoding.UTF8.GetBytes(IseBridgeProtocol.AuthenticationProof(authentication, challenge, "child"))) ||
+                !System.Version.TryParse(hello.PowerShellVersion, out var version) ||
+                !PowerShellProcessDiscovery.IsSupportedVersion(version))
+                throw new InvalidOperationException($"Iseberg requires the matching DT bridge build and PowerShell {PowerShellCompatibility.SupportedVersions}.");
+            authenticated = true;
+            await SendAsync("initialize", new SessionInitialize(snippetDirectory, ScriptingCallback is not null)).ConfigureAwait(false);
+            Task resize;
+            lock (sync)
+            {
+                initialized = true;
+                resize = terminalSizeUpdate = UpdateTerminalSizeAsync(terminalSizeUpdate, columns, rows);
+            }
+            await resize.ConfigureAwait(false);
         }
-        finally { gate.Release(); }
+        catch (Exception exception)
+        {
+            LoseSession(exception);
+            await TerminateChildAsync().ConfigureAwait(false);
+            throw;
+        }
     }
 
-    public async Task SetWorkingDirectoryAsync(string path)
+    public void SetTerminalSize(int columns, int rows)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(columns, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(rows, 1);
+        Task update;
+        lock (sync)
+        {
+            this.columns = columns;
+            this.rows = rows;
+            if (!initialized || State is SessionState.Failed or SessionState.Disposed) return;
+            update = terminalSizeUpdate = UpdateTerminalSizeAsync(terminalSizeUpdate, columns, rows);
+        }
+        Observe(update);
+    }
+
+    private async Task UpdateTerminalSizeAsync(Task previous, int columns, int rows)
+    {
+        await previous.ConfigureAwait(false);
+        await SendAsync("terminalSize", new TerminalSizeRequest(columns, rows)).ConfigureAwait(false);
+    }
+
+    public Task SetWorkingDirectoryAsync(string path)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         if (!Path.IsPathFullyQualified(path)) throw new ArgumentException("An absolute directory is required.", nameof(path));
-        await gate.WaitAsync();
-        try
-        {
-            EnsureReady();
-            await Task.Run(() =>
-            {
-                localRunspace.SessionStateProxy.Path.SetLocation(path);
-                RefreshPrompt();
-            });
-        }
-        finally { gate.Release(); }
+        return SendAsync("workingDirectory", new TextRequest(path));
     }
-
-    /// <summary>Executes text or a named script in the persistent session. Script errors are delivered through Output.</summary>
-    public Task ExecuteAsync(string script, string? filePath = null) => ExecuteAsync(script, filePath, null);
-
-    public Task ExecuteMenuActionAsync(ScriptBlock action)
-    {
-        ArgumentNullException.ThrowIfNull(action);
-        if (IsRunspacePushed) throw new PSNotSupportedException("ISE Add-ons menu actions require their original local runspace. Exit the remote session first.");
-        return ExecuteAsync("ISE Add-ons menu action", null, action);
-    }
-
-    private async Task ExecuteAsync(string script, string? filePath, ScriptBlock? action)
-    {
-        if (!await gate.WaitAsync(0))
-            throw new InvalidOperationException("This PowerShell tab is busy.");
-        var started = false;
-        try
-        {
-            EnsureReady();
-            lock (sync) stopRequested = false;
-            started = true;
-            SetState(SessionState.Running);
-            Output?.Invoke(new(Prompt + (filePath ?? script) + Environment.NewLine, OutputKind.Command, Prompt.Length));
-            await Task.Run(() =>
-            {
-                if (IsRunspacePushed && filePath is null && IsExitSessionCommand(script))
-                {
-                    PopRunspace();
-                    RefreshPrompt();
-                    return;
-                }
-                using var shell = CreateShell();
-                try
-                {
-                    if (action is not null)
-                        // Keep the original block, including module/session state and GetNewClosure().
-                        shell.AddScript(". $args[0]", useLocalScope: false).AddArgument(action);
-                    else if (filePath is null)
-                        shell.AddScript(script, useLocalScope: false);
-                    else
-                        shell.AddScript(". '" + filePath.Replace("'", "''") + "'", useLocalScope: false);
-                    shell.AddCommand("Out-Default");
-                    using var output = new PSDataCollection<PSObject>();
-                    IAsyncResult invocation;
-                    lock (sync)
-                    {
-                        if (stopRequested) throw new PipelineStoppedException();
-                        invocation = shell.BeginInvoke<PSObject, PSObject>(null, output);
-                        active = shell;
-                    }
-                    shell.EndInvoke(invocation);
-                }
-                catch (PipelineStoppedException)
-                {
-                    Output?.Invoke(new("Execution stopped." + Environment.NewLine, OutputKind.Warning));
-                }
-                catch (RuntimeException exception)
-                {
-                    Output?.Invoke(new(exception.ErrorRecord.ToString() + Environment.NewLine, OutputKind.Error));
-                }
-                finally
-                {
-                    lock (sync) active = null;
-                    DebuggerStopped?.Invoke(null);
-                    RefreshPrompt();
-                }
-            });
-        }
-        finally
-        {
-            if (started && !disposed) SetState(SessionState.Ready);
-            gate.Release();
-        }
-    }
-
-    /// <summary>Requests cancellation of execution, debugger evaluation, and pending interactive host requests.</summary>
-    public Task StopAsync()
-    {
-        lock (sync)
-        {
-            stopRequested = true;
-            pendingInput?.Response.TrySetCanceled();
-            pendingShowCommand?.Response.TrySetCanceled();
-            pendingCommandError?.Response.TrySetCanceled();
-            foreach (var frame in nestedFrames) frame.Exit = true;
-            resumeAction = DebuggerResumeAction.Stop;
-            resumeRequested = true;
-            debuggerWake.Set();
-            connectingRunspace?.CloseAsync();
-            if (runspace.RunspaceStateInfo.State == RunspaceState.Opened)
-                runspace.Debugger?.StopProcessCommand();
-            if (active is { } shell)
-                return shell.StopAsync(null, null);
-        }
-        return Task.CompletedTask;
-    }
-
+    public Task ExecuteAsync(string script, string? filePath = null) =>
+        SendExecutionAsync("execute", new ExecuteRequest(script, filePath));
+    public Task ExecuteMenuActionAsync(string callbackHandle) =>
+        SendExecutionAsync("menuAction", new TextRequest(callbackHandle));
+    public Task StopAsync() => connection is null || State is SessionState.Failed or SessionState.Disposed
+        ? Task.CompletedTask : SendAsync("stop", true);
     public void Resume(DebuggerResumeAction action)
     {
-        lock (sync)
-        {
-            if (State != SessionState.Debugging)
-                throw new InvalidOperationException("The debugger is not paused.");
-            resumeAction = action;
-            resumeRequested = true;
-            debuggerWake.Set();
-        }
+        if (!IsDebuggerPaused) throw new InvalidOperationException("The debugger is not paused.");
+        status = status with { IsDebuggerPaused = false };
+        Observe(SendAsync("resume", new ResumeRequest(action)));
     }
-
+    public void BreakAll()
+    {
+        if (State != SessionState.Running) throw new InvalidOperationException("A script must be running to break execution.");
+        Observe(SendAsync("breakAll", true));
+    }
+    public Task PauseForBreakpointEditAsync(CancellationToken cancellationToken = default) =>
+        SendAsync("pauseForBreakpointEdit", true, cancellationToken);
+    public Task EvaluateAsync(string script) => SendAsync("evaluate", new TextRequest(script));
+    public Task EvaluateNestedAsync(string script) => SendAsync("evaluateNested", new TextRequest(script));
+    public Task<CompletionSet> CompleteAsync(string text, int cursor, CancellationToken cancellationToken = default) =>
+        CallAsync<CompleteRequest, CompletionSet>("complete", new(text, cursor), cancellationToken);
+    public Task<ScriptAnalysis> AnalyzeAsync(string text, string? documentPath = null, CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(closing || State == SessionState.Disposed, this);
+        ArgumentNullException.ThrowIfNull(text);
+        cancellationToken.ThrowIfCancellationRequested();
+        return EditorAnalysis.IsXmlDocument(documentPath) ? Task.FromResult(EditorAnalysis.AnalyzeXml(text))
+            : CallAsync<AnalyzeRequest, ScriptAnalysis>("analyze", new(text, documentPath), cancellationToken);
+    }
+    public async Task<IReadOnlyList<CommandDescription>> GetCommandsAsync(CancellationToken cancellationToken = default) =>
+        await CallAsync<bool, CommandDescription[]>("commands", true, cancellationToken).ConfigureAwait(false);
+    public Task<string> GetHelpAsync(string name) => CallAsync<TextRequest, string>("help", new(name));
+    public Task<CommandHelpDocument> GetHelpDocumentAsync(string name) =>
+        CallAsync<TextRequest, CommandHelpDocument>("helpDocument", new(name));
+    public Task<CommandFormDescription> GetCommandFormAsync(string name, string? module = null,
+        CancellationToken cancellationToken = default) =>
+        CallAsync<CommandFormRequest, CommandFormDescription>("commandForm", new(name, module), cancellationToken);
+    public async Task<Uri?> GetHelpUriAsync(string name)
+    {
+        var value = await CallAsync<TextRequest, HostResponse>("helpUri", new(name)).ConfigureAwait(false);
+        return value.Text is null ? null : new Uri(value.Text, UriKind.Absolute);
+    }
+    public Task<CommandFormResult> BuildCommandFormAsync(CommandForm form, CancellationToken cancellationToken = default) =>
+        CallAsync<CommandFormBuildRequest, CommandFormResult>("buildCommandForm", form.ToRequest(), cancellationToken);
+    public Task ValidateBreakpointAsync(BreakpointSpec spec, CancellationToken cancellationToken = default) =>
+        SendAsync("validateBreakpoint", spec, cancellationToken);
+    public Task<DebugSnapshot> InspectAsync(IEnumerable<string> watches, int frameIndex = 0) =>
+        CallAsync<InspectRequest, DebugSnapshot>("inspect", new(watches.ToArray(), frameIndex));
+    public Task<DebugChildren> GetValueChildrenAsync(long reference, int offset = 0, int count = 100) =>
+        CallAsync<ValueChildrenRequest, DebugChildren>("valueChildren", new(reference, offset, count));
+    public async Task<IReadOnlyList<DebugBreakpoint>> GetBreakpointsAsync() =>
+        await CallAsync<bool, DebugBreakpoint[]>("breakpoints", true).ConfigureAwait(false);
+    public Task<DebugBreakpoint> AddBreakpointAsync(BreakpointSpec spec) =>
+        CallAsync<BreakpointSpec, DebugBreakpoint>("addBreakpoint", spec);
+    public Task<DebugBreakpoint> UpdateBreakpointAsync(int id, BreakpointSpec spec) =>
+        CallAsync<BreakpointUpdateRequest, DebugBreakpoint>("updateBreakpoint", new(id, spec));
+    public Task SetBreakpointEnabledAsync(int id, bool enabled) =>
+        SendAsync("enableBreakpoint", new BreakpointIdRequest(id, enabled));
+    public Task RemoveBreakpointAsync(int id) => SendAsync("removeBreakpoint", new BreakpointIdRequest(id));
+    public Task RemoveAllBreakpointsAsync() => SendAsync("removeAllBreakpoints", true);
+    public Task SetLineBreakpointsAsync(string path, IEnumerable<BreakpointSpec> specs) =>
+        SendAsync("lineBreakpoints", new LineBreakpointsRequest(path, specs.ToArray()));
     public Task SetBreakpointsAsync(string path, IEnumerable<int> lines) =>
         SetLineBreakpointsAsync(path, lines.Select(line => new BreakpointSpec(BreakpointKind.Line, path, Line: line)));
-
-    /// <summary>Completes text at a zero-based cursor offset in the current runspace or paused debugger context.</summary>
-    public Task<CompletionSet> CompleteAsync(string text, int cursor, CancellationToken cancellationToken = default) =>
-        State == SessionState.NestedPrompt ? NestedQueryAsync(shell =>
-        {
-            var result = CommandCompletion.CompleteInput(text, cursor, null, shell);
-            return new CompletionSet(result.ReplacementIndex, result.ReplacementLength, result.CompletionMatches.ToArray());
-        }, cancellationToken) : State == SessionState.Debugging ? CompletePausedAsync(text, cursor, cancellationToken) : QueryAsync(shell =>
-        {
-            var result = CommandCompletion.CompleteInput(text, cursor, null, shell);
-            return new CompletionSet(result.ReplacementIndex, result.ReplacementLength, result.CompletionMatches.ToArray());
-        }, cancellationToken);
-
-    public Task<IReadOnlyList<CommandDescription>> GetCommandsAsync(CancellationToken cancellationToken = default) =>
-        QueryAsync<IReadOnlyList<CommandDescription>>(shell =>
-        {
-            shell.AddCommand("Get-Command");
-            if (IsRemote)
-                shell.AddCommand("Microsoft.PowerShell.Utility\\Select-Object")
-                    .AddParameter("Property", new[] { "Name", "ModuleName", "CommandType", "Definition" });
-            var commands = shell.Invoke();
-            ThrowQueryErrors(shell);
-            return commands.Select(command => new CommandDescription(
-                command.Properties["Name"].Value.ToString()!, command.Properties["ModuleName"].Value?.ToString() ?? "",
-                command.Properties["CommandType"].Value.ToString()!, command.Properties["Definition"].Value?.ToString() ?? ""))
-                .OrderBy(command => command.Name, StringComparer.OrdinalIgnoreCase).DistinctBy(command => command.Name).ToArray();
-        }, cancellationToken);
-
-    internal static IReadOnlyList<CommandDescription> DescribeCommands(IEnumerable<CommandInfo> commands) =>
-        commands.OrderBy(command => command.Name, StringComparer.OrdinalIgnoreCase)
-            .Select(command => new CommandDescription(command.Name, command.ModuleName,
-                command.CommandType.ToString(), command.Definition))
-            .DistinctBy(command => command.Name).ToArray();
-
-    public Task<string> GetHelpAsync(string name) => QueryAsync(shell =>
+    public Task ConnectAsync(RemoteConnectionInfo remote, CancellationToken cancellationToken = default) =>
+        SendExecutionAsync("connect", remote, cancellationToken);
+    public Task ExitRemoteSessionAsync() => SendExecutionAsync("exitRemoteSession", true);
+    public Task<ScriptFile> OpenRemoteFileAsync(string path) => OpenRemoteFileAsync(path, null);
+    public async Task<ScriptFile> OpenRemoteFileAsync(string path, ScriptEncoding? choice)
     {
-        var output = shell.AddCommand("Get-Help").AddParameter("Name", name).AddParameter("Full")
-            .AddCommand("Out-String").AddParameter("Width", 100).Invoke<string>();
-        ThrowQueryErrors(shell);
-        return string.Join(Environment.NewLine, output);
-    });
-
-    public Task<CommandHelpDocument> GetHelpDocumentAsync(string name) => QueryAsync(shell =>
-    {
-        var help = shell.AddCommand("Get-Help").AddParameter("Name", name).AddParameter("Full").Invoke();
-        ThrowQueryErrors(shell);
-        return CommandHelpDocument.FromHelp(name, help);
-    });
-
-    public Task<CommandFormDescription> GetCommandFormAsync(string name, string? module = null,
-        CancellationToken cancellationToken = default) => QueryAsync(shell =>
-    {
-        if (IsRemote) return GetRemoteCommandForm(shell, name, module);
-        shell.AddCommand("Get-Command").AddParameter("Name", WildcardPattern.Escape(name));
-        if (!string.IsNullOrEmpty(module)) shell.AddParameter("Module", module);
-        var commands = shell.Invoke<CommandInfo>();
-        ThrowQueryErrors(shell);
-        var command = commands.FirstOrDefault(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase))
-            ?? throw new InvalidOperationException($"Command '{name}' was not found in this PowerShell tab.");
-        return CommandForm.Describe(command);
-    }, cancellationToken, waitForGate: true);
-
-    public Task<Uri?> GetHelpUriAsync(string name) => QueryAsync(shell =>
-    {
-        var help = shell.AddCommand("Get-Help").AddParameter("Name", name).Invoke();
-        ThrowQueryErrors(shell);
-        return FindHelpUri(help);
-    });
-
-    internal static Uri? FindHelpUri(IEnumerable<PSObject> help)
-    {
-        foreach (var entry in help)
-        {
-            if (entry.Properties["RelatedLinks"]?.Value is not PSObject links) continue;
-            if (links.Properties["navigationLink"]?.Value is not System.Collections.IEnumerable navigation) continue;
-            foreach (var link in navigation)
-            {
-                var value = PSObject.AsPSObject(link).Properties["uri"]?.Value?.ToString();
-                if (Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "https" or "http") return uri;
-            }
-        }
-        return null;
+        var file = await CallAsync<RemoteOpenRequest, RemoteFileData>("openRemoteFile", new(path, choice)).ConfigureAwait(false);
+        return ScriptFile.FromRemoteBytes(file.Path, file.Bytes, file.RunspaceId, file.ComputerName, choice);
     }
-
-    private async Task<T> QueryAsync<T>(Func<PowerShell, T> query, CancellationToken cancellationToken = default,
-        bool waitForGate = false)
+    public Task SaveRemoteFileAsync(ScriptFile file, string? path = null) =>
+        SaveRemoteFileCoreAsync(file, path, file.SavedVersion, true);
+    public Task SaveRemoteFileAsync(ScriptFile file, string? path, string? expectedVersion) =>
+        SaveRemoteFileCoreAsync(file, path, expectedVersion, false);
+    private async Task SaveRemoteFileCoreAsync(ScriptFile file, string? path, string? expectedVersion, bool useSavedVersion)
     {
-        if (waitForGate) await gate.WaitAsync(cancellationToken);
-        else if (!await gate.WaitAsync(0))
-            throw new InvalidOperationException("Wait for the running command to finish.");
+        if (file.IsRemote && (!IsRemote || file.RemoteRunspaceId != RunspaceId))
+            throw new InvalidOperationException("This document belongs to another remote connection. Reconnect and reopen it before saving or running it.");
+        if (!file.IsRemote && (!IsRemote || file.Path is not null))
+            throw new InvalidOperationException("Only remote documents or untitled scripts can be saved to the remote session.");
+        ArgumentException.ThrowIfNullOrWhiteSpace(path ?? file.Path);
+        var snapshot = file.Text;
+        var encoding = file.EncodingChoice;
+        var bytes = ScriptFile.Encode(snapshot, encoding);
+        var result = await CallAsync<RemoteSaveRequest, RemoteSaveResult>("saveRemoteFile",
+            new(path ?? file.Path!, bytes, expectedVersion, file.IsRemote ? file.Path : null, useSavedVersion, RunspaceId)).ConfigureAwait(false);
+        file.MarkRemoteSaved(result.Path, snapshot, encoding, ScriptFile.GetVersion(bytes), result.RunspaceId, result.ComputerName);
+    }
+    public Task<bool> RemoteFileExistsAsync(string path) => CallAsync<TextRequest, bool>("remoteFileExists", new(path));
+    public Task<string?> GetRemoteFileVersionAsync(string path) => ReadRemoteFileVersionAsync(path);
+    public async Task<string?> ReadRemoteFileVersionAsync(string path) =>
+        (await CallAsync<TextRequest, HostResponse>("remoteFileVersion", new(path)).ConfigureAwait(false)).Text;
+    public async Task<bool> HasRemoteFileChangesAsync(ScriptFile file)
+    {
+        if (!IsRemote || file.RemoteRunspaceId != RunspaceId)
+            throw new InvalidOperationException("This document belongs to another remote connection.");
+        return !ScriptFile.VersionsMatch(file.SavedVersion, await ReadRemoteFileVersionAsync(file.Path!).ConfigureAwait(false));
+    }
+    public Task NotifyScriptingAsync(string objectId, string propertyName) =>
+        SendAsync("scriptingNotification", new ScriptNotification(objectId, propertyName));
+    public Task<SnippetLoadResult> LoadSnippetsAsync() => CallAsync<bool, SnippetLoadResult>("snippets", true);
+    public Task CreateSnippetAsync(string title, string description, string text, string author, int caretOffset, bool force) =>
+        SendAsync("createSnippet", new SnippetCreateRequest(title, description, text, author, caretOffset, force));
+    public Task ImportSnippetAsync(string path, bool recurse) => SendAsync("importSnippet", new SnippetImportRequest(path, recurse));
+
+    private async Task<TResponse> CallAsync<TRequest, TResponse>(string operation, TRequest payload,
+        CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(State == SessionState.Disposed || closing && operation != "dispose", this);
+        if (State == SessionState.Failed)
+            throw new InvalidOperationException("This PowerShell session is unavailable. Documents remain open; reopen the tab to create a new session.");
+        var bridge = connection ?? throw new InvalidOperationException("Initialize this PowerShell tab first.");
         try
         {
-            EnsureReady();
-            return await Task.Run(() =>
-            {
-                using var shell = CreateShell();
-                using var registration = cancellationToken.Register(() => shell.Stop());
-                cancellationToken.ThrowIfCancellationRequested();
-                var debugger = shell.Runspace.Debugger;
-                var debugMode = debugger.DebugMode;
-                debugger.SetDebugMode(DebugModes.None);
-                try
+            return BridgeJson.Read<TResponse>(await bridge.CallAsync(operation, BridgeJson.Element(payload), cancellationToken).ConfigureAwait(false));
+        }
+        catch (BridgeRemoteException exception) when (exception.Fault.Code == "FileConflict")
+        {
+            throw new FileConflictException(exception.Fault.FilePath!, exception.Fault.ExpectedVersion, exception.Fault.ActualVersion);
+        }
+        catch (BridgeRemoteException exception) when (exception.Fault.Code is "PSNotSupportedException" or "NotSupportedException")
+        {
+            throw new NotSupportedException(exception.Message);
+        }
+        catch (BridgeRemoteException exception) when (exception.Fault.Code is "ArgumentException" or "ArgumentNullException" or "ArgumentOutOfRangeException")
+        {
+            throw new ArgumentException(exception.Message);
+        }
+        catch (BridgeRemoteException exception) when (exception.Fault.Code == "ParseException")
+        {
+            throw new ArgumentException(exception.Message);
+        }
+        catch (BridgeRemoteException exception) when (exception.Fault.Code == "ObjectDisposedException")
+        {
+            throw new ObjectDisposedException(nameof(PowerShellSession), exception.Message);
+        }
+        catch (BridgeRemoteException exception) when (exception.Fault.Code == "InvalidOperationException")
+        {
+            throw new InvalidOperationException(exception.Message);
+        }
+    }
+    private async Task SendAsync<T>(string operation, T value, CancellationToken cancellationToken = default) =>
+        _ = await CallAsync<T, bool>(operation, value, cancellationToken).ConfigureAwait(false);
+
+    private async Task SendExecutionAsync<T>(string operation, T value, CancellationToken cancellationToken = default)
+    {
+        Interlocked.Increment(ref executionRequests);
+        try
+        {
+            Task resize;
+            lock (sync) resize = terminalSizeUpdate;
+            await resize.WaitAsync(cancellationToken).ConfigureAwait(false);
+            await SendAsync(operation, value, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            // A Ready/runspace event can precede the correlated execution reply.
+            if (Interlocked.Decrement(ref executionRequests) == 0 && !closing && State == SessionState.Ready)
+                StateChanged?.Invoke(SessionState.Ready);
+        }
+    }
+
+    private void HandleEvent(string operation, JsonElement payload)
+    {
+        if (closing || Volatile.Read(ref failed) != 0) return;
+        if (!authenticated) throw new InvalidDataException("The private PowerShell bridge sent events before authenticating.");
+        switch (operation)
+        {
+            case "status":
+                status = BridgeJson.Read<SessionStatus>(payload);
+                StateChanged?.Invoke(status.State);
+                break;
+            case "output": Output?.Invoke(BridgeJson.Read<OutputEntry>(payload)); break;
+            case "progress": ProgressChanged?.Invoke(BridgeJson.Read<ProgressUpdate>(payload)); break;
+            case "debugger": DebuggerStopped?.Invoke(payload.ValueKind == JsonValueKind.Null ? null : BridgeJson.Read<DebugLocation>(payload)); break;
+            case "clear": ConsoleCleared?.Invoke(); break;
+            case "runspace":
+                status = BridgeJson.Read<SessionStatus>(payload);
+                RunspaceChanged?.Invoke();
+                break;
+            default: throw new InvalidDataException("Unknown private PowerShell event.");
+        }
+    }
+    private async Task<JsonElement> HandleRequestAsync(string operation, JsonElement payload, CancellationToken cancellationToken)
+    {
+        if (!authenticated) throw new InvalidOperationException("The private PowerShell bridge has not authenticated.");
+        switch (operation)
+        {
+            case "input":
+                var data = BridgeJson.Read<HostInput>(payload);
+                var input = new InputRequest(data.Caption, data.Message, data.Secret)
+                { Choices = data.Choices, DefaultChoices = data.DefaultChoices, MultipleChoice = data.MultipleChoice };
+                using (cancellationToken.Register(() => input.Response.TrySetCanceled(cancellationToken)))
                 {
-                    var result = query(shell);
-                    cancellationToken.ThrowIfCancellationRequested();
-                    return result;
+                    if (InputRequested is null) throw new InvalidOperationException("No input handler is attached to this host.");
+                    InputRequested.Invoke(input);
+                    return BridgeJson.Element(new HostResponse(await input.Response.Task.ConfigureAwait(false)));
                 }
-                catch (PipelineStoppedException) when (cancellationToken.IsCancellationRequested)
+            case "showCommand":
+                var show = BridgeJson.Read<HostShowCommand>(payload);
+                var request = new ShowCommandRequest
+                { Command = show.Command, Commands = show.Commands, HelpText = show.HelpText, HelpDocument = show.HelpDocument,
+                    HelpUri = show.HelpUri, PassThru = show.PassThru, Width = show.Width, Height = show.Height };
+                using (cancellationToken.Register(() => request.Response.TrySetCanceled(cancellationToken)))
                 {
-                    throw new OperationCanceledException(cancellationToken);
+                    if (ShowCommandRequested is null) throw new InvalidOperationException("No Show-Command handler is attached to this host.");
+                    ShowCommandRequested.Invoke(request);
+                    return BridgeJson.Element(new HostResponse(await request.Response.Task.ConfigureAwait(false)));
                 }
-                finally { debugger.SetDebugMode(debugMode); }
-            });
+            case "commandError":
+                var error = new CommandErrorRequest(BridgeJson.Read<TextRequest>(payload).Text);
+                using (cancellationToken.Register(() => error.Response.TrySetCanceled(cancellationToken)))
+                {
+                    if (CommandErrorRequested is null) throw new InvalidOperationException("No command error popup handler is attached to this host.");
+                    CommandErrorRequested.Invoke(error);
+                    await error.Response.Task.ConfigureAwait(false);
+                    return BridgeJson.Empty;
+                }
+            default:
+                if ((operation != "ise" && !operation.StartsWith("ise.", StringComparison.Ordinal)) || ScriptingCallback is null)
+                    throw new InvalidOperationException($"Unsupported parent scripting operation '{operation}'.");
+                return await ScriptingCallback(operation, payload, cancellationToken).ConfigureAwait(false);
         }
-        finally { gate.Release(); }
     }
 
-    private PowerShell CreateShell()
+    private async Task DrainAsync(StreamReader reader)
     {
-        var shell = PowerShell.Create();
-        shell.Runspace = runspace;
-        shell.Streams.Error.DataAdded += (_, e) => Output?.Invoke(new(shell.Streams.Error[e.Index].ToString() + Environment.NewLine, OutputKind.Error));
-        return shell;
-    }
-
-    private static void ThrowQueryErrors(PowerShell shell)
-    {
-        if (shell.HadErrors)
-            throw new InvalidOperationException(string.Join(Environment.NewLine, shell.Streams.Error.Select(e => e.ToString())));
-    }
-
-    private void EnsureReady()
-    {
-        ObjectDisposedException.ThrowIf(disposed, this);
-        if (State != SessionState.Ready)
-            throw new InvalidOperationException("The PowerShell tab is not ready.");
-    }
-
-    private string ReadInput(InputRequest request)
-    {
-        lock (sync)
-        {
-            if (stopRequested) throw new PipelineStoppedException();
-            pendingInput = request;
-        }
         try
         {
-            if (InputRequested is null)
-                throw new PSNotSupportedException("No input handler is attached to this host.");
-            InputRequested.Invoke(request);
-            return request.Response.Task.GetAwaiter().GetResult();
-        }
-        catch (OperationCanceledException) { throw new PipelineStoppedException(); }
-        finally { lock (sync) pendingInput = null; }
-    }
-
-    private string? ReadShowCommand(ShowCommandRequest request)
-    {
-        lock (sync)
-        {
-            if (stopRequested) throw new PipelineStoppedException();
-            pendingShowCommand = request;
-        }
-        try
-        {
-            if (ShowCommandRequested is null)
-                throw new PSNotSupportedException("No Show-Command handler is attached to this host.");
-            ShowCommandRequested.Invoke(request);
-            return request.Response.Task.GetAwaiter().GetResult();
-        }
-        catch (OperationCanceledException) { throw new PipelineStoppedException(); }
-        finally { lock (sync) pendingShowCommand = null; }
-    }
-
-    private void OnDebuggerStop(object? sender, DebuggerStopEventArgs e)
-    {
-        var previousState = State;
-        lock (sync)
-        {
-            resumeRequested = stopRequested;
-            resumeAction = stopRequested ? DebuggerResumeAction.Stop : DebuggerResumeAction.Continue;
-            SetState(SessionState.Debugging);
-        }
-
-        var invocation = e.InvocationInfo;
-        DebuggerStopped?.Invoke(new(invocation?.ScriptName, invocation?.ScriptLineNumber ?? 0,
-            invocation?.OffsetInLine ?? 0, invocation?.PositionMessage ?? "Execution paused without a script location."));
-        try
-        {
-            while (true)
+            var buffer = new char[4096];
+            int read;
+            while ((read = await reader.ReadAsync(buffer, lifetime.Token).ConfigureAwait(false)) != 0)
             {
-                DebugWork? work;
+                // Raw stdout/stderr is diagnostics, never a second script-output transport.
                 lock (sync)
                 {
-                    if (resumeRequested) break;
-                    work = debugWork.Count > 0 ? debugWork.Dequeue() : null;
+                    if (diagnostics.Length + read > 16384) diagnostics.Remove(0, Math.Min(diagnostics.Length, read));
+                    diagnostics.Append(buffer, 0, read);
                 }
-                if (work is null) debuggerWake.WaitOne();
-                else work.Execute();
             }
         }
-        finally
-        {
-            lock (sync)
-            {
-                e.ResumeAction = resumeAction;
-                debugValues.Clear();
-                while (debugWork.TryDequeue(out var work))
-                    work.Fail(new InvalidOperationException("The debugger has resumed."));
-            }
-        }
-        SetState(previousState);
+        catch (Exception exception) when (exception is IOException or OperationCanceledException or ObjectDisposedException) { }
+    }
+    private async Task ObserveExitAsync(Process process)
+    {
+        await process.WaitForExitAsync().ConfigureAwait(false);
+        if (!closing) LoseSession(new IOException($"PowerShell child exited ({process.ExitCode}). {StartupDiagnostics()}"));
+    }
+    private string StartupDiagnostics() { lock (sync) return diagnostics.ToString().Trim(); }
+    private void OnDisconnected(Exception exception)
+    {
+        if (!closing) LoseSession(exception);
+    }
+    private void LoseSession(Exception exception)
+    {
+        if (closing || Interlocked.Exchange(ref failed, 1) != 0) return;
+        status = status with { State = SessionState.Failed, IsDebuggerPaused = false, IsNestedPromptActive = false };
+        lifetime.Cancel();
+        pipe?.Dispose();
         DebuggerStopped?.Invoke(null);
+        StateChanged?.Invoke(SessionState.Failed);
+        Output?.Invoke(new("PowerShell session state was lost: " + exception.Message +
+            Environment.NewLine + "Editor documents are preserved. Reopen this tab to start a new session; commands are not replayed." +
+            Environment.NewLine, OutputKind.Error));
+        _ = TerminateChildAsync();
     }
-
-    private void ReadCommandError(string message)
+    private async void Observe(Task task)
     {
-        var request = new CommandErrorRequest(message);
-        lock (sync)
+        try { await task.ConfigureAwait(false); }
+        catch (Exception exception)
         {
-            if (stopRequested) throw new PipelineStoppedException();
-            pendingCommandError = request;
+            if (!closing && State != SessionState.Failed)
+                Output?.Invoke(new(exception.Message + Environment.NewLine, OutputKind.Error));
         }
+    }
+    private async Task TerminateChildAsync()
+    {
+        var process = child;
+        if (process is null) return;
         try
         {
-            if (CommandErrorRequested is null)
-                throw new PSNotSupportedException("No command error popup handler is attached to this host." + Environment.NewLine + message);
-            CommandErrorRequested.Invoke(request);
-            request.Response.Task.GetAwaiter().GetResult();
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync().ConfigureAwait(false);
         }
-        catch (OperationCanceledException) { throw new PipelineStoppedException(); }
-        finally { lock (sync) pendingCommandError = null; }
+        catch (Exception exception) when (exception is InvalidOperationException or System.ComponentModel.Win32Exception) { }
     }
-
-    private void RefreshPrompt()
-    {
-        using var shell = PowerShell.Create();
-        shell.Runspace = runspace;
-        shell.AddScript("prompt", useLocalScope: true);
-        var debugger = shell.Runspace.Debugger;
-        var debugMode = debugger.DebugMode;
-        debugger.SetDebugMode(DebugModes.None);
-        try
-        {
-            IAsyncResult invocation;
-            lock (sync)
-            {
-                if (stopRequested)
-                {
-                    Prompt = IsRemote ? $"[{RemoteComputerName}]: PS> " : "PS> ";
-                    return;
-                }
-                invocation = shell.BeginInvoke();
-                active = shell;
-            }
-            var values = shell.EndInvoke(invocation);
-            if (shell.HadErrors)
-            {
-                Output?.Invoke(new("The prompt function failed: " + string.Join("; ", shell.Streams.Error) + Environment.NewLine, OutputKind.Error));
-                Prompt = "PS> ";
-            }
-            else
-                Prompt = string.Concat(values.Select(v => v.ToString()));
-        }
-        catch (PipelineStoppedException)
-        {
-            Prompt = "PS> ";
-            Output?.Invoke(new("Prompt evaluation stopped." + Environment.NewLine, OutputKind.Warning));
-        }
-        catch (RuntimeException exception)
-        {
-            Prompt = "PS> ";
-            Output?.Invoke(new("The prompt function failed: " + exception.Message + Environment.NewLine, OutputKind.Error));
-        }
-        finally
-        {
-            lock (sync) active = null;
-            debugger.SetDebugMode(debugMode);
-        }
-        if (IsRemote) Prompt = $"[{RemoteComputerName}]: " + Prompt;
-    }
-
-    private void SetState(SessionState state)
-    {
-        State = state;
-        StateChanged?.Invoke(state);
-    }
-
-    /// <summary>Stops execution and releases the runspace. Repeated and concurrent calls await the same disposal.</summary>
     public ValueTask DisposeAsync()
     {
-        lock (sync) return new ValueTask(disposalTask ??= DisposeCoreAsync());
+        lock (sync) return new(disposal ??= DisposeCoreAsync());
     }
-
     private async Task DisposeCoreAsync()
     {
-        await StopAsync();
-        await gate.WaitAsync();
+        closing = true;
         try
         {
-            if (disposed) return;
-            disposed = true;
-            if (pushedRunspace is not null) PopRunspace();
-            if (localRunspace.Debugger is { } debugger) debugger.DebuggerStop -= OnDebuggerStop;
-            await Task.Run(localRunspace.Dispose);
-            iseObjectModel = null;
-            debuggerWake.Dispose();
-            SetState(SessionState.Disposed);
+            if (connection is not null && State != SessionState.Failed)
+            {
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                try { await SendAsync("dispose", true, deadline.Token).ConfigureAwait(false); }
+                catch (Exception exception) when (exception is IOException or InvalidOperationException or OperationCanceledException) { }
+            }
         }
-        finally { gate.Release(); }
+        finally
+        {
+            lifetime.Cancel();
+            if (connection is not null) await connection.DisposeAsync().ConfigureAwait(false);
+            pipe?.Dispose();
+            await TerminateChildAsync().ConfigureAwait(false);
+            if (outputDrain is not null) await outputDrain.ConfigureAwait(false);
+            if (errorDrain is not null) await errorDrain.ConfigureAwait(false);
+            if (exitObservation is not null) await exitObservation.ConfigureAwait(false);
+            child?.Dispose();
+            lifetime.Dispose();
+            ScriptingCallback = null;
+            status = status with { State = SessionState.Disposed, IsDebuggerPaused = false, IsNestedPromptActive = false };
+            StateChanged?.Invoke(SessionState.Disposed);
+        }
     }
 }

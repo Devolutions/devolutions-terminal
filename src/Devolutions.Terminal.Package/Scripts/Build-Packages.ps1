@@ -139,7 +139,6 @@ try {
                 "-c", $Configuration,
                 "-r", $runtimeIdentifier,
                 "--self-contained",
-                "-p:EnablePowerShellIse=false",
                 "-p:VersionPrefix=$Version",
                 "-o", $layout
             )

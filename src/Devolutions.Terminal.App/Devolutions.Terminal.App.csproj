@@ -7,8 +7,6 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(EnablePowerShellIse)' == 'true'">
     <DefineConstants>$(DefineConstants);POWERSHELL_ISE</DefineConstants>
-    <IsAotCompatible>false</IsAotCompatible>
-    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
   </PropertyGroup>
   <ItemGroup Condition="'$(EnablePowerShellIse)' != 'true'">
     <Compile Remove="Connections\PowerShellInstallation.cs" />

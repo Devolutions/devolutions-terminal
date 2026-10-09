@@ -13,8 +13,19 @@ using Xunit;
 
 namespace Devolutions.Terminal.UI.Tests;
 
-public sealed class PortableIseEditorTests : IClassFixture<PortableIseEditorRuntimeFixture>
+public sealed class PortableIseEditorTests(PortableIseEditorRuntimeFixture runtime) : IClassFixture<PortableIseEditorRuntimeFixture>
 {
+    private Task<ScriptAnalysis> AnalyzeAsync(string text, string? path = null) =>
+        runtime.Analysis.AnalyzeAsync(text, path, CancellationToken.None);
+
+    private static void SetScriptAnalysis(ScriptTab script, ScriptAnalysis analysis)
+    {
+        var text = script.Document.Text;
+        var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        typeof(ScriptTab).GetProperty("Analysis", flags)!.SetValue(script, analysis);
+        typeof(ScriptTab).GetProperty("AnalysisText", flags)!.SetValue(script, text);
+    }
+
     [Theory]
     [InlineData(0, 0, 0)]
     [InlineData(3, 4, 7)]
@@ -326,10 +337,10 @@ public sealed class PortableIseEditorTests : IClassFixture<PortableIseEditorRunt
     [InlineData("Light Console, Light Editor", "#FF4500", "#A9A9A9", "#800080", "#006400", "#8B0000")]
     [InlineData("Monochrome Green", "#00BF00", "#007F00", "#009F00", "#007F00", "#00DF00")]
     [InlineData("Presentation", "#FF4500", "#A9A9A9", "#800080", "#006400", "#8B0000")]
-    public void OriginalBuiltInThemesRenderScriptColorSpans(string name, string variable, string op,
+    public async Task OriginalBuiltInThemesRenderScriptColorSpans(string name, string variable, string op,
         string number, string comment, string literal)
     {
-        var spans = PowerShellColorizer.GetColorSpans(EditorAnalysis.Analyze("$x = 42 #ok\n'hi'"),
+        var spans = PowerShellColorizer.GetColorSpans(await AnalyzeAsync("$x = 42 #ok\n'hi'"),
             EditorThemePresets.Original(name));
         Assert.Equal(new SyntaxColorSpan[]
         {
@@ -339,7 +350,7 @@ public sealed class PortableIseEditorTests : IClassFixture<PortableIseEditorRunt
     }
 
     [Fact]
-    public void XmlColorSpansUseXmlPaletteAndQuotedValueExtent()
+    public async Task XmlColorSpansUseXmlPaletteAndQuotedValueExtent()
     {
         var theme = new EditorTheme();
         theme.Colors["Xml.Tag"] = "#112233";
@@ -349,11 +360,11 @@ public sealed class PortableIseEditorTests : IClassFixture<PortableIseEditorRunt
         {
             new(1, 2, Color.Parse("#112233")), new(3, 4, Color.Parse("#445566")),
             new(5, 8, Color.Parse("#778899"))
-        }, PowerShellColorizer.GetColorSpans(EditorAnalysis.Analyze("<r a='v'/>", "a.xml"), theme));
+        }, PowerShellColorizer.GetColorSpans(await AnalyzeAsync("<r a='v'/>", "a.xml"), theme));
     }
 
     [Fact]
-    public void ExpandableStringColorOverlaysPutVariableAfterItsContainingString()
+    public async Task ExpandableStringColorOverlaysPutVariableAfterItsContainingString()
     {
         var theme = new EditorTheme();
         theme.Colors["Script.String"] = "#112233";
@@ -361,7 +372,7 @@ public sealed class PortableIseEditorTests : IClassFixture<PortableIseEditorRunt
         Assert.Equal(new SyntaxColorSpan[]
         {
             new(0, 9, Color.Parse("#112233")), new(3, 8, Color.Parse("#445566"))
-        }, PowerShellColorizer.GetColorSpans(EditorAnalysis.Analyze("\"x $name\""), theme));
+        }, PowerShellColorizer.GetColorSpans(await AnalyzeAsync("\"x $name\""), theme));
     }
 
     [Theory]
@@ -371,10 +382,13 @@ public sealed class PortableIseEditorTests : IClassFixture<PortableIseEditorRunt
     [InlineData(1, 7, -1, -1)]
     [InlineData(1, 15, -1, -1)]
     [InlineData(2, 1, -1, -1)]
-    public void PausedStatementExtentDoesNotHighlightSameLineAdjacentText(int line, int column, int start, int end)
+    public async Task PausedStatementExtentDoesNotHighlightSameLineAdjacentText(int line, int column, int start, int end)
     {
         var path = Path.Combine(Path.GetTempPath(), "DtOwnedPaused.ps1");
-        var model = new ScriptTab(ScriptFile.FromBytes(path, Encoding.UTF8.GetBytes("$x = 1; $y = 2")));
+        const string text = "$x = 1; $y = 2";
+        var analysis = await AnalyzeAsync(text, path);
+        var model = new ScriptTab(ScriptFile.FromBytes(path, Encoding.UTF8.GetBytes(text)));
+        SetScriptAnalysis(model, analysis);
         var result = ScriptAdornments.PausedStatementSpan(model, new(path, line, column, "paused"));
         if (start < 0) Assert.Null(result);
         else Assert.Equal((start, end), result);
@@ -464,13 +478,13 @@ public sealed class PortableIseEditorTests : IClassFixture<PortableIseEditorRunt
     }
 
     [AvaloniaFact]
-    public void RichCopyClipsTokenColorToSelectedScriptTextNotConsolePalette()
+    public async Task RichCopyClipsTokenColorToSelectedScriptTextNotConsolePalette()
     {
         var text = "before $x after";
         var theme = new EditorTheme();
         theme.Colors["Script.Variable"] = "#33AA55";
         theme.Colors["Console.Variable"] = "#AA3355";
-        var html = WorkbenchControl.CreateRichCopyHtml(text, EditorAnalysis.Analyze(text), new(7, 2), theme);
+        var html = WorkbenchControl.CreateRichCopyHtml(text, await AnalyzeAsync(text), new(7, 2), theme);
 
         var root = XElement.Parse(html, LoadOptions.PreserveWhitespace);
         var colored = Assert.Single(root.Elements("span"));
@@ -579,10 +593,10 @@ public sealed class PortableIseEditorTests : IClassFixture<PortableIseEditorRunt
     [InlineData("[Obsolete()]param()", "Attribute", 1, 9)]
     [InlineData("Write-Output @args", "Variable", 13, 18)]
     [InlineData("1 + 2", "Operator", 2, 3)]
-    public void TokenCategoryColorsAndOffsetsHonorTheRequestedScriptOrConsolePane(
+    public async Task TokenCategoryColorsAndOffsetsHonorTheRequestedScriptOrConsolePane(
         string text, string category, int start, int end)
     {
-        var analysis = EditorAnalysis.Analyze(text);
+        var analysis = await AnalyzeAsync(text);
         Assert.Empty(analysis.Errors);
         var theme = new EditorTheme();
         theme.Colors["Script." + category] = "#13579B";
@@ -694,7 +708,7 @@ public sealed class PortableIseEditorTests : IClassFixture<PortableIseEditorRunt
     [AvaloniaTheory]
     [InlineData(1, 5, "name;", "name", ";")]
     [InlineData(0, 3, "$na", "$na", "")]
-    public void RichCopyClipsPartialVariableTokensWithoutColoringAdjacentOrdinaryText(
+    public async Task RichCopyClipsPartialVariableTokensWithoutColoringAdjacentOrdinaryText(
         int start, int length, string selected, string coloredText, string trailing)
     {
         const string text = "$name;";
@@ -702,7 +716,7 @@ public sealed class PortableIseEditorTests : IClassFixture<PortableIseEditorRunt
         theme.Colors["Script.Variable"] = "#33AA55";
         theme.Colors["Script.Foreground"] = "#112233";
         theme.Colors["Script.Background"] = "#445566";
-        var html = WorkbenchControl.CreateRichCopyHtml(text, EditorAnalysis.Analyze(text), new(start, length), theme);
+        var html = WorkbenchControl.CreateRichCopyHtml(text, await AnalyzeAsync(text), new(start, length), theme);
 
         var root = XElement.Parse(html, LoadOptions.PreserveWhitespace);
         var colored = Assert.Single(root.Elements("span"));
@@ -717,14 +731,14 @@ public sealed class PortableIseEditorTests : IClassFixture<PortableIseEditorRunt
     [AvaloniaTheory]
     [InlineData(false)]
     [InlineData(true)]
-    public void RenderedTokenSegmentsUseCurrentPaletteAndHighContrastSuppressesOverlays(bool highContrast)
+    public async Task RenderedTokenSegmentsUseCurrentPaletteAndHighContrastSuppressesOverlays(bool highContrast)
     {
         var previous = DesktopTheme.HighContrast;
         using var editor = new PowerShellEditorControl(new TextDocument("$old = 42")) { EnableSyntaxHighlighting = false };
         var theme = new EditorTheme();
         theme.Colors["Script.Variable"] = "#13579B";
         theme.Colors["Script.Number"] = "#2468AC";
-        var colorizer = new PowerShellColorizer { Theme = theme, Analysis = EditorAnalysis.Analyze("$old = 42") };
+        var colorizer = new PowerShellColorizer { Theme = theme, Analysis = await AnalyzeAsync("$old = 42") };
         editor.TextEditor.TextArea.TextView.LineTransformers.Add(colorizer);
         var owner = new Window { Content = editor, Width = 650, Height = 350 };
         try
@@ -736,7 +750,7 @@ public sealed class PortableIseEditorTests : IClassFixture<PortableIseEditorRunt
             editor.Document.Text = "$new = 17";
             theme.Colors["Script.Variable"] = "#A1B2C3";
             colorizer.Theme = theme;
-            colorizer.Analysis = EditorAnalysis.Analyze("$new = 17");
+            colorizer.Analysis = await AnalyzeAsync("$new = 17");
             DesktopTheme.Refresh(highContrast: highContrast);
             editor.TextEditor.TextArea.TextView.Redraw();
             if (highContrast)
@@ -785,7 +799,7 @@ public sealed class PortableIseEditorTests : IClassFixture<PortableIseEditorRunt
         var previous = DesktopTheme.HighContrast;
         var workbench = new WorkbenchControl(new WorkbenchOptions
         {
-            CreateInitialSession = false,
+            CreateInitialSession = true,
             Preferences = new UserSettings { AutoSaveMinutes = 0, CheckForUpdates = false, LoadProfiles = false }
         });
         var owner = new Window { Content = workbench, Width = 900, Height = 700 };
@@ -793,6 +807,7 @@ public sealed class PortableIseEditorTests : IClassFixture<PortableIseEditorRunt
         {
             DesktopTheme.Refresh(highContrast: highContrast);
             owner.Show();
+            await workbench.InitializeAsync().WaitAsync(TimeSpan.FromSeconds(60));
             var editor = workbench.ScriptEditorView;
             editor.Document.Text = "Write-Output ok\n$x = )\nWrite-Output end";
             var analysis = await editor.AnalyzeAsync();
@@ -886,11 +901,13 @@ public sealed class PortableIseEditorTests : IClassFixture<PortableIseEditorRunt
     [AvaloniaTheory]
     [InlineData("$x = 1; $y = 2", 1, 9, 8, 6)]
     [InlineData("$x = @(\n  1,\n  2\n)\n$y = 3", 1, 1, 0, 18)]
-    public void PausedStatementRendererDrawsOnlyExactSingleOrMultilineExtentAndInvalidatesEditedFile(
+    public async Task PausedStatementRendererDrawsOnlyExactSingleOrMultilineExtentAndInvalidatesEditedFile(
         string text, int line, int column, int start, int length)
     {
         var path = Path.Combine(Path.GetTempPath(), "DtOwnedRenderer.ps1");
+        var analysis = await AnalyzeAsync(text, path);
         var model = new ScriptTab(ScriptFile.FromBytes(path, Encoding.UTF8.GetBytes(text)));
+        SetScriptAnalysis(model, analysis);
         using var editor = new PowerShellEditorControl(model.Document);
         var owner = new Window { Content = editor, Width = 650, Height = 350 };
         DebugLocation? location = new(path, line, column, "paused");
@@ -1093,11 +1110,14 @@ public sealed class PortableIseEditorTests : IClassFixture<PortableIseEditorRunt
     }
 
     [AvaloniaFact]
-    public void HighContrastSuppressesPausedAdornmentsButKeepsDiagnosticsInSystemForeground()
+    public async Task HighContrastSuppressesPausedAdornmentsButKeepsDiagnosticsInSystemForeground()
     {
         var previous = DesktopTheme.HighContrast;
         var path = Path.Combine(Path.GetTempPath(), "DtOwnedHighContrast-" + Guid.NewGuid().ToString("N") + ".ps1");
-        var model = new ScriptTab(ScriptFile.FromBytes(path, Encoding.UTF8.GetBytes("$x = 1; $y = 2")));
+        const string text = "$x = 1; $y = 2";
+        var analysis = await AnalyzeAsync(text, path);
+        var model = new ScriptTab(ScriptFile.FromBytes(path, Encoding.UTF8.GetBytes(text)));
+        SetScriptAnalysis(model, analysis);
         using var diagnosticEditor = new PowerShellEditorControl(new TextDocument("abcde")) { Height = 150 };
         using var pausedEditor = new PowerShellEditorControl(model.Document) { Height = 150 };
         var owner = new Window

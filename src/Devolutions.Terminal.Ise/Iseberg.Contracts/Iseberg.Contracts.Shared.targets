@@ -1,0 +1,33 @@
+<Project>
+  <PropertyGroup>
+    <_IsebergContractsDirectory>$(MSBuildThisFileDirectory)</_IsebergContractsDirectory>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(_IsebergContractsDirectory)*.cs"
+             Exclude="$(_IsebergContractsDirectory)AssemblyInfo.cs"
+             Link="Contracts\%(Filename)%(Extension)" />
+  </ItemGroup>
+  <Target Name="GenerateBridgeBuildIdentity" BeforeTargets="CoreCompile">
+    <ItemGroup>
+      <_BridgeIdentityInput Include="$(_IsebergContractsDirectory)*.cs;$(_IsebergContractsDirectory)*.csproj;$(_IsebergContractsDirectory)*.targets;$(_IsebergContractsDirectory)..\Iseberg.PowerShell\*.cs;$(_IsebergContractsDirectory)..\Iseberg.PowerShell\*.csproj;$(_IsebergContractsDirectory)..\Iseberg.Core\PowerShellSession*.cs;$(_IsebergContractsDirectory)..\Iseberg.Core\PowerShellProcessDiscovery.cs;$(_IsebergContractsDirectory)..\Iseberg.Core\AnsiOutputParser.cs;$(_IsebergContractsDirectory)..\Iseberg.Core\IseSnippetService.cs;$(_IsebergContractsDirectory)..\Iseberg.Core\SessionRequests.cs;$(_IsebergContractsDirectory)..\Iseberg.Core\TerminalApplication.cs;$(_IsebergContractsDirectory)..\..\..\Directory.Build.props;$(_IsebergContractsDirectory)..\..\..\Directory.Packages.props" />
+    </ItemGroup>
+    <GetFileHash Files="@(_BridgeIdentityInput)" Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="_BridgeIdentityHash" />
+    </GetFileHash>
+    <WriteLinesToFile File="$(IntermediateOutputPath)BridgeBuildFingerprint.txt"
+                      Lines="@(_BridgeIdentityHash->'%(FileHash)', '')"
+                      Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <GetFileHash Files="$(IntermediateOutputPath)BridgeBuildFingerprint.txt" Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="_BridgeFingerprintHash" />
+    </GetFileHash>
+    <PropertyGroup>
+      <_BridgeBuildIdentity>@(_BridgeFingerprintHash->'%(FileHash)')</_BridgeBuildIdentity>
+    </PropertyGroup>
+    <WriteLinesToFile File="$(IntermediateOutputPath)BridgeBuildIdentity.g.cs"
+                      Lines="namespace Iseberg.Core%3B public static class IseBridgeBuild { public const string Identity = &quot;$(_BridgeBuildIdentity)&quot;%3B }"
+                      Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <ItemGroup>
+      <Compile Include="$(IntermediateOutputPath)BridgeBuildIdentity.g.cs" />
+    </ItemGroup>
+  </Target>
+</Project>

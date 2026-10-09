@@ -15,7 +15,7 @@ public static partial class PowerShellIseWorkspaceCatalog
         var path = Path.Combine(workspaceDirectory, "profile.json");
         if (File.Exists(path))
         {
-            var ownerProfile = JsonSerializer.Deserialize<string>(await File.ReadAllTextAsync(path))
+            var ownerProfile = JsonSerializer.Deserialize(await File.ReadAllTextAsync(path), IseJsonContext.Default.String)
                 ?? throw new InvalidDataException($"Empty ISE profile identity: {path}");
             if (!string.Equals(ownerProfile, profileId, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("This ISE workspace belongs to a different profile.");
@@ -24,7 +24,7 @@ public static partial class PowerShellIseWorkspaceCatalog
         var temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            await File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(profileId));
+            await File.WriteAllTextAsync(temporary, JsonSerializer.Serialize(profileId, IseJsonContext.Default.String));
             if (OperatingSystem.IsWindows()) File.Move(temporary, path, overwrite: false);
             else
             {
@@ -59,7 +59,7 @@ public static partial class PowerShellIseWorkspaceCatalog
             if (!Guid.TryParseExact(Path.GetFileName(directory), "N", out var id)) continue;
             var marker = Path.Combine(directory, "profile.json");
             if (!File.Exists(marker)) continue;
-            var ownerProfile = JsonSerializer.Deserialize<string>(await File.ReadAllTextAsync(marker))
+            var ownerProfile = JsonSerializer.Deserialize(await File.ReadAllTextAsync(marker), IseJsonContext.Default.String)
                 ?? throw new InvalidDataException($"Empty ISE profile identity: {marker}");
             if (!string.Equals(ownerProfile, profileId, StringComparison.OrdinalIgnoreCase)) continue;
             var settings = Path.Combine(directory, "settings.json");

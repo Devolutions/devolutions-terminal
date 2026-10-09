@@ -1,12 +1,14 @@
 using System.Management.Automation;
+using SessionState = Iseberg.Core.SessionState;
 using System.Management.Automation.Language;
 using System.Management.Automation.Runspaces;
 using System.Reflection;
 using System.Text.Json;
 
-namespace Iseberg.Core;
+using Iseberg.Core;
+namespace Iseberg.PowerShellHost;
 
-public sealed partial class PowerShellSession
+public sealed partial class ManagedPowerShellSession
 {
     private Runspace? pushedRunspace;
     private bool ownsPushedRunspace;
@@ -22,13 +24,14 @@ public sealed partial class PowerShellSession
     public async Task ConnectAsync(RunspaceConnectionInfo connection, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(connection);
-        await gate.WaitAsync(cancellationToken);
+        await EnterExecutionAsync("This PowerShell tab is busy.", cancellationToken);
         Runspace? remote = null;
+        var started = false;
         try
         {
             EnsureReady();
             if (IsRunspacePushed) throw new InvalidOperationException("Exit the current remote session before connecting.");
-            lock (sync) stopRequested = false;
+            started = true;
             SetState(SessionState.Running);
             remote = RunspaceFactory.CreateRunspace(connection, host, TypeTable.LoadDefaultTypeFiles());
             lock (sync) connectingRunspace = remote;
@@ -43,20 +46,18 @@ public sealed partial class PowerShellSession
         {
             lock (sync) connectingRunspace = null;
             remote?.Dispose();
-            if (!disposed && State != SessionState.Starting) SetState(SessionState.Ready);
-            gate.Release();
+            ReleaseExecution(started);
         }
     }
 
     public async Task ExitRemoteSessionAsync()
     {
-        if (!await gate.WaitAsync(0)) throw new InvalidOperationException("Stop execution before leaving the remote session.");
+        await EnterExecutionAsync("Stop execution before leaving the remote session.");
         var started = false;
         try
         {
             EnsureReady();
             if (!IsRunspacePushed) throw new InvalidOperationException("No interactive session is active.");
-            lock (sync) stopRequested = false;
             started = true;
             SetState(SessionState.Running);
             PopRunspace();
@@ -64,8 +65,7 @@ public sealed partial class PowerShellSession
         }
         finally
         {
-            if (started && !disposed) SetState(SessionState.Ready);
-            gate.Release();
+            ReleaseExecution(started);
         }
     }
 

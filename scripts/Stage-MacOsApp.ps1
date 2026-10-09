@@ -84,6 +84,15 @@ $resources = Join-Path $contents 'Resources'
 New-Item -ItemType Directory -Force -Path $macosDir, $resources | Out-Null
 
 Invoke-Native -FilePath cp -ArgumentList '-a', "$publishDir/.", "$macosDir/"
+$bridgeModule = Join-Path $macosDir 'Devolutions.Iseberg.PowerShell.dll'
+foreach ($legacyPayload in @('Iseberg.PowerShell', 'Iseberg.PowerShell.dll', 'Iseberg.Contracts.dll')) {
+    if (Test-Path -LiteralPath (Join-Path $macosDir $legacyPayload)) {
+        throw "Unexpected legacy Iseberg bridge payload: $legacyPayload."
+    }
+}
+if (Test-Path -LiteralPath $bridgeModule -PathType Leaf) {
+    Move-Item -LiteralPath $bridgeModule -Destination $resources
+}
 Get-ChildItem -LiteralPath $macosDir -Recurse -Filter '*.pdb' | Remove-Item -Force
 Get-ChildItem -LiteralPath $macosDir -Recurse -Filter '*.dbg' | Remove-Item -Force
 Get-ChildItem -LiteralPath $macosDir -Recurse -Directory -Filter '*.dSYM' |

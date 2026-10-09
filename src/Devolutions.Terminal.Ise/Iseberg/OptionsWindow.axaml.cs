@@ -31,7 +31,8 @@ public sealed partial class OptionsWindow : Window
     public OptionsWindow() : this(new UserSettings(), _ => Task.CompletedTask) { }
 
     public OptionsWindow(UserSettings settings, Func<UserSettings, Task> apply, bool hostOwnsTheme = false,
-        IReadOnlyList<EditorTheme>? hostThemes = null, bool fontSizesInDips = false)
+        IReadOnlyList<EditorTheme>? hostThemes = null, bool fontSizesInDips = false,
+        Func<string, CancellationToken, Task<ScriptAnalysis>>? analyze = null)
     {
         this.apply = apply;
         this.hostThemes = hostThemes?.Select(theme => theme.Copy()).ToArray();
@@ -39,7 +40,7 @@ public sealed partial class OptionsWindow : Window
         this.fontSizesInDips = fontSizesInDips;
         draft = settings.Copy();
         draft.Normalize();
-        baseline = JsonSerializer.Serialize(draft);
+        baseline = JsonSerializer.Serialize(draft, IseJsonContext.Default.UserSettings);
         DesktopTheme.ApplyWindow(this);
         InitializeComponent();
         ColorTree.IsEnabled = !hostOwnsTheme;
@@ -56,8 +57,8 @@ public sealed partial class OptionsWindow : Window
             .Append(draft.FontSize).Distinct().Order().ToArray();
         PanePosition.ItemsSource = layouts.Select(UiText.Get).ToArray();
         CompletionTimeout.ItemsSource = Enumerable.Range(1, 30).ToArray();
-        NamedColor.ItemsSource = typeof(Colors).GetProperties().Where(p => p.PropertyType == typeof(Color) && p.Name != "Transparent")
-            .Select(p => p.Name).Order().ToArray();
+        NamedColor.ItemsSource = Enum.GetNames<System.Drawing.KnownColor>().Append("RebeccaPurple")
+            .Where(name => name != "Transparent" && Color.TryParse(name, out _)).Distinct().Order().ToArray();
         SampleEditorControl.Document.Text = """
             # This is a PowerShell comment.
 
@@ -71,8 +72,21 @@ public sealed partial class OptionsWindow : Window
                 }
             }
             """;
-        sampleColorizer.Analysis = EditorAnalysis.Analyze(SampleEditor.Text);
         SampleEditor.TextArea.TextView.LineTransformers.Add(sampleColorizer);
+        if (analyze is not null)
+            Opened += async (_, _) =>
+            {
+                try
+                {
+                    sampleColorizer.Analysis = await analyze(SampleEditor.Text, CancellationToken.None);
+                    SampleEditor.TextArea.TextView.Redraw();
+                }
+                catch (Exception exception) when (exception is InvalidOperationException or IOException or OperationCanceledException)
+                {
+                    ToolTip.SetTip(SampleEditorControl, "Syntax analysis unavailable: " + exception.Message);
+                }
+            };
+        else ToolTip.SetTip(SampleEditorControl, "PowerShell syntax analysis is unavailable without an active session.");
         SampleEditor.Options.AllowScrollBelowDocument = false;
         SampleEditor.Options.LineHeightFactor = 1;
         LoadControls();
@@ -245,7 +259,7 @@ public sealed partial class OptionsWindow : Window
         if (valid) { draft.AutoSaveMinutes = minutes; draft.RecentFileCount = recent; }
         ValidationPanel.IsVisible = !valid || !colorValid;
         ValidationMessage.Text = UiText.Get(colorValid ? "InvalidSettings" : "InvalidColor");
-        AcceptOptions.IsEnabled = ApplyOptions.IsEnabled = valid && colorValid && !saving && JsonSerializer.Serialize(draft) != baseline;
+        AcceptOptions.IsEnabled = ApplyOptions.IsEnabled = valid && colorValid && !saving && JsonSerializer.Serialize(draft, IseJsonContext.Default.UserSettings) != baseline;
         RefreshSample();
     }
 
@@ -268,7 +282,7 @@ public sealed partial class OptionsWindow : Window
         BlueValue.Text = Channel(color.B);
         RedSlider.Value = color.R; GreenSlider.Value = color.G; BlueSlider.Value = color.B;
         ColorSwatch.Color = color;
-        NamedColor.SelectedItem = typeof(Colors).GetProperties().FirstOrDefault(p => p.PropertyType == typeof(Color) && (Color)p.GetValue(null)! == color)?.Name;
+        NamedColor.SelectedItem = NamedColor.ItemsSource?.Cast<string>().FirstOrDefault(name => Color.Parse(name) == color);
         updating = false;
     }
 
@@ -346,7 +360,7 @@ public sealed partial class OptionsWindow : Window
             snapshot.Normalize();
             await apply(snapshot.Copy());
             draft = snapshot;
-            baseline = JsonSerializer.Serialize(draft);
+            baseline = JsonSerializer.Serialize(draft, IseJsonContext.Default.UserSettings);
             return true;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)

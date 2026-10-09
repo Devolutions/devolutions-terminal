@@ -52,6 +52,9 @@ public sealed class IsebergNativeContinuationTests
             for (var continuation = 1; continuation <= 2; continuation++)
             {
                 connection.Write("\r");
+                var expectedContinuation = initial + new string('\n', continuation);
+                await WaitForAsync(() => connection.InputText == expectedContinuation,
+                    () => $"Incomplete draft was not continued: {connection.InputText}");
                 Assert.Equal(initial + new string('\n', continuation), connection.InputText);
                 Assert.Equal(connection.InputText, session.Input);
                 Assert.Equal(initial.Length + continuation, connection.CaretOffset);
@@ -457,6 +460,7 @@ public sealed class IsebergNativeContinuationTests
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static Task NativeSyntaxCoreAsync() => WithNativeHostAsync(async tab =>
     {
+        await ExecuteTokenAsync(tab, "Set-Location -LiteralPath $env:TEMP; 'DT-SYNTAX-READY'", "DT-SYNTAX-READY");
         var session = Assert.Single(tab.Workbench.Workbench.Sessions);
         var connection = NativeConnection(tab);
         var theme = EditorThemePresets.Classic();
@@ -470,6 +474,12 @@ public sealed class IsebergNativeContinuationTests
         theme.Colors["Console.Variable"] = "#FFFFFF";
         const string draft = "$x = 42; Get-Item -Path 'a' # owned";
         connection.Write(draft);
+        await WaitForAsync(() => tab.Terminal.Engine.CreateSnapshot().Buffer.Lines.Any(line =>
+        {
+            var text = string.Concat(line.Cells.Select(cell => cell.Text));
+            var offset = text.IndexOf(draft, StringComparison.Ordinal);
+            return offset >= 0 && line.Cells[offset].Attributes.Foreground == TermColor.FromRgb(0x21, 0x43, 0x65);
+        }), () => "Native draft analysis did not apply its variable palette.");
         void AssertColors()
         {
             var line = Assert.Single(tab.Terminal.Engine.CreateSnapshot().Buffer.Lines, candidate =>
@@ -500,6 +510,12 @@ public sealed class IsebergNativeContinuationTests
         AssertColors();
         connection.SelectInput();
         connection.Write("if ($true) { [int]$x = 42 } # owned");
+        await WaitForAsync(() => tab.Terminal.Engine.CreateSnapshot().Buffer.Lines.Any(line =>
+        {
+            var text = string.Concat(line.Cells.Select(cell => cell.Text));
+            var offset = text.IndexOf("if ($true) { [int]$x = 42 } # owned", StringComparison.Ordinal);
+            return offset >= 0 && line.Cells[offset].Attributes.Foreground == TermColor.FromRgb(0x87, 0xA9, 0xCB);
+        }), () => "Native draft analysis did not apply its keyword palette.");
         var keywordLine = Assert.Single(tab.Terminal.Engine.CreateSnapshot().Buffer.Lines, candidate =>
             string.Concat(candidate.Cells.Select(cell => cell.Text)).Contains("if ($true) { [int]$x = 42 } # owned", StringComparison.Ordinal));
         var rendered = string.Concat(keywordLine.Cells.Select(cell => cell.Text));
@@ -779,6 +795,8 @@ public sealed class IsebergNativeContinuationTests
         var runspace = session.Engine.LocalRunspaceId;
         connection.Write("$global:dtParenthesisCounter += 1; (");
         connection.Write("\r");
+        await WaitForAsync(() => connection.InputText == "$global:dtParenthesisCounter += 1; (\n",
+            () => "Parenthesized draft did not enter continuation.");
         Assert.Equal("$global:dtParenthesisCounter += 1; (\n", connection.InputText);
         Assert.Empty(session.History);
         Assert.Equal(SessionState.Ready, session.Engine.State);
@@ -839,7 +857,7 @@ public sealed class IsebergNativeContinuationTests
         await using var host = new IseTestHost(tab);
         await host.InitializeAsync();
         await test(tab);
-        Assert.Empty(host.Errors);
+        Assert.True(host.Errors.Count == 0, string.Join(Environment.NewLine, host.Errors));
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]

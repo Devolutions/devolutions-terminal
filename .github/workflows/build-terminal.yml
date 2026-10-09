@@ -130,9 +130,13 @@ jobs:
           ) | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
   build:
-    name: Build and test
+    name: Build and test (PowerShell ${{ matrix.powershell }})
     runs-on: windows-latest
     needs: release-metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        powershell: ['7.4.6', '7.5.11', '7.6.6']
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -162,10 +166,12 @@ jobs:
 
       - name: Test
         # Engine tests resolve the separately installed runtime; it is not a DT package payload.
-        run: pwsh -NoLogo -NoProfile -File scripts/Install-IsebergTestPowerShell.ps1
+        run: pwsh -NoLogo -NoProfile -File scripts/Install-IsebergTestPowerShell.ps1 -Version ${{ matrix.powershell }}
 
       - name: Run tests
-        timeout-minutes: 60
+        # Hosted Windows runners can spend several seconds starting each isolated pwsh.
+        # Keep the per-test hang guard below; budget the complete sequential UI suite separately.
+        timeout-minutes: 120
         run: >-
           dotnet test Devolutions.Terminal.slnx -c Release --no-build -m:1
           -p:EnablePowerShellIse=true -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
@@ -177,7 +183,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-test-diagnostics
+          name: windows-test-diagnostics-${{ matrix.powershell }}
           path: artifacts/test-results/windows
           if-no-files-found: ignore
           retention-days: 7
@@ -266,20 +272,19 @@ jobs:
           -c Release
           -r ${{ matrix.rid }}
           --self-contained
-          -p:EnablePowerShellIse=false
           -p:PublishAot=true
           -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
           -o artifacts/${{ matrix.rid }}
 
-      - name: Check opt-in managed Iseberg desktop
+      - name: Check terminal-only NativeAOT desktop
         run: >
           dotnet publish src/Devolutions.Terminal/Devolutions.Terminal.csproj
           -c Release
           -r ${{ matrix.rid }}
           --self-contained
-          -p:EnablePowerShellIse=true
+          -p:EnablePowerShellIse=false
           -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
-          -o artifacts/iseberg-validation/${{ matrix.rid }}
+          -o artifacts/terminal-only-validation/${{ matrix.rid }}
 
       - name: Upload NativeAOT desktop
         uses: actions/upload-artifact@v4
@@ -289,9 +294,13 @@ jobs:
           if-no-files-found: error
 
   linux-managed:
-    name: Linux managed and metadata tests
+    name: Linux managed and metadata tests (PowerShell ${{ matrix.powershell }})
     runs-on: ubuntu-24.04
     needs: release-metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        powershell: ['7.4.6', '7.5.11', '7.6.6']
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -316,7 +325,7 @@ jobs:
         run: dotnet restore Devolutions.Terminal.slnx -p:Configuration=Release -p:EnablePowerShellIse=true -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
 
       - name: Run managed tests
-        run: pwsh -NoLogo -NoProfile -File scripts/Install-IsebergTestPowerShell.ps1
+        run: pwsh -NoLogo -NoProfile -File scripts/Install-IsebergTestPowerShell.ps1 -Version ${{ matrix.powershell }}
 
       - name: Test managed projects
         run: dotnet test Devolutions.Terminal.slnx -c Release --no-restore -p:EnablePowerShellIse=true -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
@@ -325,9 +334,13 @@ jobs:
         run: bash scripts/Test-LinuxPackagingMetadata.sh
 
   macos-managed:
-    name: macOS managed and metadata tests
+    name: macOS managed and metadata tests (PowerShell ${{ matrix.powershell }})
     runs-on: macos-26
     needs: release-metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        powershell: ['7.4.6', '7.5.11', '7.6.6']
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -352,7 +365,7 @@ jobs:
         run: dotnet restore Devolutions.Terminal.slnx -p:Configuration=Release -p:EnablePowerShellIse=true -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
 
       - name: Run managed tests
-        run: pwsh -NoLogo -NoProfile -File scripts/Install-IsebergTestPowerShell.ps1
+        run: pwsh -NoLogo -NoProfile -File scripts/Install-IsebergTestPowerShell.ps1 -Version ${{ matrix.powershell }}
 
       - name: Test managed projects
         run: dotnet test Devolutions.Terminal.slnx -c Release --no-restore -p:EnablePowerShellIse=true -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
@@ -407,7 +420,6 @@ jobs:
           -c Release
           -r ${{ matrix.rid }}
           --self-contained true
-          -p:EnablePowerShellIse=false
           -p:PublishAot=true
           -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
           -p:DebugSymbols=false
@@ -696,7 +708,6 @@ jobs:
             "-c", "Release",
             "-r", "${{ matrix.rid }}",
             "--self-contained", "true",
-            "-p:EnablePowerShellIse=false",
             "-p:PublishAot=true",
             "-p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}",
             "-p:DebugSymbols=false",
@@ -1329,8 +1340,8 @@ jobs:
         env:
           EXPECTED_PUBLISHER: ${{ steps.signing-mode.outputs.publisher }}
         run: |
-          ./src/Devolutions.Terminal.Package/Scripts/Test-WindowsPayloadSignatures.ps1 -PayloadDirectory artifacts/msi/layout/win-x64 -ExpectedPublisher $env:EXPECTED_PUBLISHER
-          ./src/Devolutions.Terminal.Package/Scripts/Test-WindowsPayloadSignatures.ps1 -PayloadDirectory artifacts/msi/layout/win-arm64 -ExpectedPublisher $env:EXPECTED_PUBLISHER
+          ./src/Devolutions.Terminal.Package/Scripts/Test-WindowsPayloadSignatures.ps1 -PayloadDirectory artifacts/msi/layout/win-x64 -RequireIsebergModule -ExpectedPublisher $env:EXPECTED_PUBLISHER
+          ./src/Devolutions.Terminal.Package/Scripts/Test-WindowsPayloadSignatures.ps1 -PayloadDirectory artifacts/msi/layout/win-arm64 -RequireIsebergModule -ExpectedPublisher $env:EXPECTED_PUBLISHER
 
       - name: Upload Windows x64 NuGet payload
         uses: actions/upload-artifact@v4

@@ -1,15 +1,12 @@
 using System.Collections;
 using System.Collections.Specialized;
 using System.ComponentModel;
-using System.Management.Automation;
-using System.Management.Automation.Runspaces;
 using System.Text;
 using System.Xml;
 using System.Xml.Linq;
 using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Controls.Templates;
-using Avalonia.Data;
 using Avalonia.Input;
 using Avalonia.Threading;
 using AvaloniaEdit;
@@ -192,6 +189,7 @@ public sealed partial class WorkbenchControl
             Owner.CommandsPane.PropertyChanged -= OnPaneChanged;
             foreach (var tab in tabs.Values) tab.Detach();
             tabs.Clear();
+            Owner.DetachScriptingBridge();
             Owner.scriptingSettingsPersistence = null;
             lifetime.Unregister();
         }
@@ -213,7 +211,22 @@ public sealed partial class WorkbenchControl
             var control = template.Build(data);
             if (!root.IsDetached && data is SessionModel model &&
                 control is StackPanel panel && panel.Children.FirstOrDefault() is TextBlock label)
-                label.Bind(TextBlock.TextProperty, new Binding(nameof(IsePowerShellTab.DisplayName)) { Source = root.Tab(model) });
+            {
+                var tab = root.Tab(model);
+                void Refresh() => label.Text = tab.DisplayName;
+                PropertyChangedEventHandler changed = (_, args) =>
+                {
+                    if (!root.IsDetached && args.PropertyName is nameof(IsePowerShellTab.DisplayName) or "") Refresh();
+                };
+                Refresh();
+                label.AttachedToVisualTree += (_, _) =>
+                {
+                    tab.PropertyChanged -= changed;
+                    tab.PropertyChanged += changed;
+                    if (!root.IsDetached) Refresh();
+                };
+                label.DetachedFromVisualTree += (_, _) => tab.PropertyChanged -= changed;
+            }
             return control;
         }
     }
@@ -262,8 +275,8 @@ public sealed partial class WorkbenchControl
             tab.Activate();
             return true;
         });
-        public IsePowerShellTab Add() => throw new PSNotSupportedException("Creating PowerShell tabs from scripts is not supported. Use File > New PowerShell Tab.");
-        public void Remove(IsePowerShellTab tab) => throw new PSNotSupportedException("Closing PowerShell tabs from scripts is not supported. Use File > Close PowerShell Tab.");
+        public IsePowerShellTab Add() => throw new NotSupportedException("Creating PowerShell tabs from scripts is not supported. Use File > New PowerShell Tab.");
+        public void Remove(IsePowerShellTab tab) => throw new NotSupportedException("Closing PowerShell tabs from scripts is not supported. Use File > Close PowerShell Tab.");
     }
 
     public sealed class IsePowerShellTab : ObservableModel
@@ -381,7 +394,7 @@ public sealed partial class WorkbenchControl
             set => Read(() =>
             {
                 if (value != (Owner.hostingOptions.ShowScriptPane && Owner.ScriptPane.IsVisible))
-                    throw new PSNotSupportedException("Script pane visibility is owned by the host. Use Options.SelectedScriptPaneState to change its layout.");
+                    throw new NotSupportedException("Script pane visibility is owned by the host. Use Options.SelectedScriptPaneState to change its layout.");
                 return true;
             });
         }
@@ -391,7 +404,7 @@ public sealed partial class WorkbenchControl
             set => Owner.ChangeIseSettings(s =>
             {
                 if (value && !Owner.hostingOptions.EnableCommandsPane)
-                    throw new PSNotSupportedException("The Commands pane is disabled by the workbench host.");
+                    throw new NotSupportedException("The Commands pane is disabled by the workbench host.");
                 s.ShowCommands = value;
             }, Check);
         }
@@ -406,15 +419,15 @@ public sealed partial class WorkbenchControl
         }
         public bool HorizontalAddOnToolsPaneOpened => Read(() => false);
         public bool VerticalAddOnToolsPaneOpened => Read(() => false);
-        public object ConsolePane => Read<object>(() => throw new PSNotSupportedException("The host owns console input and output; a mutable ISE console editor is not exposed."));
+        public object ConsolePane => Read<object>(() => throw new NotSupportedException("The host owns console input and output; a mutable ISE console editor is not exposed."));
         public IseFile? SelectedFile => Read(() => Model.SelectedFile is { } file ? File(file) : null);
         public IseFileCollection Files { get; }
         public IseMenuItem AddOnsMenu { get; }
         public IseSnippetCollection Snippets { get; }
         public IseUnsupportedTools VerticalAddOnTools { get; } = new();
         public IseUnsupportedTools HorizontalAddOnTools { get; } = new();
-        public void Invoke(string script) => throw new PSNotSupportedException("Cross-tab script invocation is not supported. Run the command in its owning PowerShell tab.");
-        public object InvokeSynchronous(string script) => throw new PSNotSupportedException("Cross-tab synchronous invocation is not supported.");
+        public void Invoke(string script) => throw new NotSupportedException("Cross-tab script invocation is not supported. Run the command in its owning PowerShell tab.");
+        public object InvokeSynchronous(string script) => throw new NotSupportedException("Cross-tab synchronous invocation is not supported.");
         public object InvokeSynchronous(string script, bool useNewScope) => InvokeSynchronous(script);
         public object InvokeSynchronous(string script, bool useNewScope, int millisecondsTimeout) => InvokeSynchronous(script);
     }
@@ -477,7 +490,7 @@ public sealed partial class WorkbenchControl
         public void Load(string fullPath)
         {
             if (!Path.IsPathFullyQualified(fullPath)) throw new ArgumentException("Snippets.Load requires a fully qualified local path.", nameof(fullPath));
-            var service = tab.Read(() => tab.Model.Engine.Snippets);
+            var engine = tab.Read(() => tab.Model.Engine);
             var paths = Directory.Exists(fullPath)
                 ? Directory.EnumerateFiles(fullPath, "*", SearchOption.TopDirectoryOnly)
                     .Where(path => path.EndsWith(".snippets.ps1xml", StringComparison.OrdinalIgnoreCase)).Order(StringComparer.Ordinal).ToArray()
@@ -496,7 +509,7 @@ public sealed partial class WorkbenchControl
                 for (var index = 0; index < snippets.Count; index++)
                     metadata[snippets[index]] = (Path.GetFullPath(path), versions[index]);
             }
-            service.Import(fullPath, false);
+            engine.ImportSnippetAsync(fullPath, false).GetAwaiter().GetResult();
             tab.Read(() =>
             {
                 foreach (var entry in metadata) loadedMetadata[entry.Key] = entry.Value;
@@ -525,7 +538,7 @@ public sealed partial class WorkbenchControl
             var file = ScriptFile.FromBytes(fullPath, System.IO.File.ReadAllBytes(fullPath));
             return tab.Read(() =>
             {
-                if (tab.Model.Engine.IsRemote) throw new PSNotSupportedException("Files.Add does not open files in a remote runspace.");
+                if (tab.Model.Engine.IsRemote) throw new NotSupportedException("Files.Add does not open files in a remote runspace.");
                 var existing = tab.Model.Files.FirstOrDefault(candidate => !candidate.File.IsRemote && SameScript(candidate.File.Path, file.Path));
                 var model = existing ?? new ScriptTab(file);
                 if (existing is null) tab.Model.Files.Add(model);
@@ -553,7 +566,7 @@ public sealed partial class WorkbenchControl
             if (tab.Model.Engine.State is SessionState.Debugging or SessionState.NestedPrompt ||
                 file.Model.LineBreakpoints.Count > 0 || tab.Owner.autoSaving ||
                 file.Model.File.Path is not null && tab.Model.Engine.State == SessionState.Running)
-                throw new PSNotSupportedException("Close this file through the UI after stopping execution; breakpoint/recovery work is pending.");
+                throw new NotSupportedException("Close this file through the UI after stopping execution; breakpoint/recovery work is pending.");
             // Never acquire the executing runspace's gate to close a file from inside its script.
             tab.Owner.RemoveRecovery(file.Model.RecoveryId);
             tab.Model.Files.Remove(file.Model);
@@ -626,7 +639,7 @@ public sealed partial class WorkbenchControl
             Check();
             if (Tab.Owner.closingInProgress || Tab.Model.Engine.State == SessionState.Debugging)
                 throw new InvalidOperationException("The script editor is read-only while debugging or closing.");
-            if (Model.File.IsRemote) throw new PSNotSupportedException("ISE file scripting supports local documents only.");
+            if (Model.File.IsRemote) throw new NotSupportedException("ISE file scripting supports local documents only.");
         }
         public string DisplayName => Read(() => Model.File.Title);
         public string? FullPath => Read(() => Model.File.Path);
@@ -656,6 +669,7 @@ public sealed partial class WorkbenchControl
     public sealed class IseEditor : ObservableModel
     {
         private readonly IseFile file;
+        internal IseFile File => file;
         internal IseEditor(IseFile file) => this.file = file;
         private TextDocument Document => file.Model.Document;
         private TextEditor Activate()
@@ -695,14 +709,15 @@ public sealed partial class WorkbenchControl
         {
             var caret = Caret;
             var text = Document.Text;
+            if (file.Model.CurrentAnalysis is not { } analysis) return null;
             if (caret < text.Length && text[caret] is '(' or '[' or '{')
             {
-                var match = EditorAnalysis.MatchingBrace(text, caret);
+                var match = EditorAnalysis.MatchingBrace(analysis, caret);
                 if (match?.Open == caret) return match;
             }
             if (caret > 0 && text[caret - 1] is ')' or ']' or '}')
             {
-                var match = EditorAnalysis.MatchingBrace(text, caret - 1);
+                var match = EditorAnalysis.MatchingBrace(analysis, caret - 1);
                 if (match?.Close == caret - 1) return match;
             }
             return null;
@@ -784,9 +799,9 @@ public sealed partial class WorkbenchControl
     {
         internal IsePowerShellTab Tab { get; }
         internal string Name { get; }
-        internal ScriptBlock? Action { get; }
+        internal string? Action { get; }
         internal KeyGesture? Gesture { get; }
-        internal IseMenuItem(IsePowerShellTab tab, string name, ScriptBlock? action, KeyGesture? gesture)
+        internal IseMenuItem(IsePowerShellTab tab, string name, string? action, KeyGesture? gesture)
         {
             Tab = tab; Name = name; Action = action; Gesture = gesture; Submenus = new(this);
         }
@@ -798,6 +813,7 @@ public sealed partial class WorkbenchControl
     public sealed class IseMenuItemCollection : IseCollection<IseMenuItem>
     {
         private readonly IseMenuItem parent;
+        internal IseMenuItem Parent => parent;
         internal List<IseMenuItem> Items { get; } = [];
         internal IseMenuItemCollection(IseMenuItem parent) => this.parent = parent;
         private void Check()
@@ -806,17 +822,14 @@ public sealed partial class WorkbenchControl
                 throw new ObjectDisposedException("ISE menu");
         }
         protected override IseMenuItem[] Snapshot() => parent.Tab.Read(() => { Check(); return Items.ToArray(); });
-        public IseMenuItem Add(string displayName, ScriptBlock? action, string? shortcut)
+        public IseMenuItem Add(string displayName, string? action, string? shortcut)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(displayName);
             var gesture = string.IsNullOrWhiteSpace(shortcut) ? null : KeyGesture.Parse(shortcut);
             if (action is null && gesture is not null) throw new ArgumentException("A submenu container cannot have a shortcut.");
-            var caller = Runspace.DefaultRunspace?.InstanceId;
             return parent.Tab.Read(() =>
             {
                 Check();
-                if (caller != parent.Tab.Model.Engine.LocalRunspaceId)
-                    throw new PSNotSupportedException("Register menu actions from their owning local PowerShell tab.");
                 if (parent.Action is not null) throw new InvalidOperationException("An action menu cannot contain submenus.");
                 if (Items.Any(item => item.Name == displayName)) throw new ArgumentException("A sibling menu already has this display name.");
                 if (gesture is not null && (parent.Tab.Owner.IsIseShortcutReserved(gesture) ||
@@ -857,7 +870,7 @@ public sealed partial class WorkbenchControl
         public void Clear() => throw WpfNotSupported();
     }
 
-    private static PSNotSupportedException WpfNotSupported() => new(
+    private static NotSupportedException WpfNotSupported() => new(
         "WPF ISE add-on tools are not supported by Iseberg's Avalonia host, including on Windows. " +
         "Use script-based AddOnsMenu actions; WPF controls cannot run natively on Linux or macOS.");
 }

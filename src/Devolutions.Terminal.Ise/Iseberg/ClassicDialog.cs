@@ -1,6 +1,5 @@
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Markup.Xaml.Styling;
 
 namespace Iseberg;
 
@@ -10,10 +9,7 @@ internal static class ClassicDialog
     {
         DesktopTheme.ApplyWindow(window);
         window.Classes.Add("options");
-        window.Styles.Add(new StyleInclude(new Uri("avares://Iseberg/"))
-        {
-            Source = new Uri("avares://Iseberg/CommandDialogStyles.axaml")
-        });
+        window.Styles.Add(new CommandDialogStyles());
         window.Icon = AppIcon.Create();
         window.FontSize = 12 * DesktopTheme.TextScale;
         window.ShowInTaskbar = false;

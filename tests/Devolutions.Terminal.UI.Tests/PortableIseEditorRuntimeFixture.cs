@@ -1,12 +1,18 @@
 using Devolutions.Terminal.App.Connections;
+using Iseberg.Core;
 using Xunit;
 
 namespace Devolutions.Terminal.UI.Tests;
 
 public sealed class PortableIseEditorRuntimeFixture : IAsyncLifetime
 {
-    public ValueTask InitializeAsync() =>
-        new(PowerShellIseRuntime.InitializeAsync().WaitAsync(TimeSpan.FromSeconds(60)));
+    public PowerShellSession Analysis { get; } = new();
 
-    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    public async ValueTask InitializeAsync()
+    {
+        await PowerShellIseRuntime.InitializeAsync().WaitAsync(TimeSpan.FromSeconds(60));
+        await Analysis.InitializeAsync().WaitAsync(TimeSpan.FromSeconds(60));
+    }
+
+    public ValueTask DisposeAsync() => Analysis.DisposeAsync();
 }

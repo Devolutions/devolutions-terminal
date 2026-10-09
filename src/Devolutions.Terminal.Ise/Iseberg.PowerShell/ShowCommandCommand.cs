@@ -1,6 +1,7 @@
 using System.Management.Automation;
 
-namespace Iseberg.Core;
+using Iseberg.Core;
+namespace Iseberg.PowerShellHost;
 
 [Cmdlet(VerbsCommon.Show, "IsebergCommand")]
 [OutputType(typeof(string))]
@@ -36,12 +37,12 @@ public sealed class ShowCommandCommand : PSCmdlet
         {
             var commands = InvokeCommand.InvokeScript(false, ScriptBlock.Create("Get-Command"), null)
                 .Select(entry => entry.BaseObject).OfType<CommandInfo>();
-            name = host.ShowCommand(new() { Commands = PowerShellSession.DescribeCommands(commands) });
+            name = host.ShowCommand(new() { Commands = ManagedPowerShellSession.DescribeCommands(commands) });
             if (name is null) return;
         }
         var command = InvokeCommand.GetCommand(name, CommandTypes.All)
             ?? throw new CommandNotFoundException($"Command '{name}' was not found in this PowerShell tab.");
-        var description = CommandForm.Describe(command);
+        var description = CommandMetadata.Describe(command);
         if (NoCommonParameter)
             description = description with
             {
@@ -55,13 +56,13 @@ public sealed class ShowCommandCommand : PSCmdlet
             ScriptBlock.Create("Get-Help -Name $args[0] -Full"), null, name);
         var helpText = InvokeCommand.InvokeScript(false,
             ScriptBlock.Create("$args[0] | Out-String -Width 100"), null, new object[] { help });
-        var helpDocument = CommandHelpDocument.FromHelp(description.Name, help);
+        var helpDocument = HelpMetadata.FromHelp(description.Name, help);
         var script = host.ShowCommand(new()
         {
             Command = description, PassThru = PassThru, Width = Width, Height = Height,
             HelpText = string.Join(Environment.NewLine, helpText.Select(entry => entry.ToString())),
             HelpDocument = helpDocument,
-            HelpUri = PowerShellSession.FindHelpUri(help)
+            HelpUri = ManagedPowerShellSession.FindHelpUri(help)
         });
         if (script is null) return;
         if (PassThru)

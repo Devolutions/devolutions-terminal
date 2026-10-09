@@ -1,9 +1,12 @@
+using DebuggerResumeAction = System.Management.Automation.DebuggerResumeAction;
+using SessionState = Iseberg.Core.SessionState;
 using System.Collections;
 using System.Management.Automation;
 
-namespace Iseberg.Core;
+using Iseberg.Core;
+namespace Iseberg.PowerShellHost;
 
-public sealed partial class PowerShellSession
+public sealed partial class ManagedPowerShellSession
 {
     private readonly Queue<DebugWork> debugWork = new();
     private readonly Dictionary<int, BreakpointSpec> breakpointSpecs = [];
@@ -27,6 +30,8 @@ public sealed partial class PowerShellSession
             ObjectDisposedException.ThrowIf(disposed, this);
             if (State != SessionState.Debugging || resumeRequested)
                 throw new InvalidOperationException("The debugger is not paused.");
+            if (debugWork.Count >= IseBridgeProtocol.MaximumPendingRequests)
+                throw new InvalidOperationException("The paused debugger work queue is full.");
             debugWork.Enqueue(new(() =>
             {
                 try
@@ -58,7 +63,7 @@ public sealed partial class PowerShellSession
         void Changed(SessionState state)
         {
             if (state is SessionState.Debugging or SessionState.Ready) ready.TrySetResult();
-            else if (state == SessionState.Disposed) ready.TrySetException(new ObjectDisposedException(nameof(PowerShellSession)));
+            else if (state == SessionState.Disposed) ready.TrySetException(new ObjectDisposedException(nameof(ManagedPowerShellSession)));
         }
         lock (sync)
         {
@@ -240,7 +245,7 @@ public sealed partial class PowerShellSession
             var command = new PSCommand().AddCommand("TabExpansion2").AddArgument(text).AddArgument(cursor);
             var result = Inspect(command).Select(value => value.BaseObject).OfType<CommandCompletion>().FirstOrDefault()
                 ?? throw new InvalidOperationException("PowerShell completion did not return a completion result.");
-            return new CompletionSet(result.ReplacementIndex, result.ReplacementLength, result.CompletionMatches.ToArray());
+            return new CompletionSet(result.ReplacementIndex, result.ReplacementLength, result.CompletionMatches.Select(ToCompletion).ToArray());
         }, cancellationToken);
 
     public Task<IReadOnlyList<DebugBreakpoint>> GetBreakpointsAsync() =>
@@ -249,13 +254,13 @@ public sealed partial class PowerShellSession
 
     public Task<DebugBreakpoint> AddBreakpointAsync(BreakpointSpec spec)
     {
-        spec.Validate();
+        ValidateBreakpoint(spec);
         return BreakpointQueryAsync(() => DescribeBreakpoint(CreateBreakpoint(spec)));
     }
 
     public Task<DebugBreakpoint> UpdateBreakpointAsync(int id, BreakpointSpec spec)
     {
-        spec.Validate();
+        ValidateBreakpoint(spec);
         return BreakpointQueryAsync(() =>
         {
             var previous = FindBreakpoint(id);
@@ -292,7 +297,7 @@ public sealed partial class PowerShellSession
     public Task SetLineBreakpointsAsync(string path, IEnumerable<BreakpointSpec> specs)
     {
         var requested = specs.Select(spec => spec with { Kind = BreakpointKind.Line, ScriptPath = path }).ToArray();
-        foreach (var spec in requested) spec.Validate();
+        foreach (var spec in requested) ValidateBreakpoint(spec);
         if (requested.DistinctBy(spec => spec.Line).Count() != requested.Length)
             throw new ArgumentException("Only one editor breakpoint can be specified per line.");
         return BreakpointQueryAsync(() =>
@@ -336,14 +341,14 @@ public sealed partial class PowerShellSession
 
     private Breakpoint CreateBreakpoint(BreakpointSpec spec)
     {
-        spec.Validate();
+        ValidateBreakpoint(spec);
         var action = BreakpointAction(spec);
         var script = string.IsNullOrWhiteSpace(spec.ScriptPath) ? null : spec.ScriptPath;
         Breakpoint breakpoint = spec.Kind switch
         {
             BreakpointKind.Line => runspace.Debugger.SetLineBreakpoint(script!, spec.Line, 0, action),
             BreakpointKind.Command => runspace.Debugger.SetCommandBreakpoint(spec.Target, action, script),
-            BreakpointKind.Variable => runspace.Debugger.SetVariableBreakpoint(spec.Target.TrimStart('$'), spec.AccessMode, action, script),
+            BreakpointKind.Variable => runspace.Debugger.SetVariableBreakpoint(spec.Target.TrimStart('$'), (System.Management.Automation.VariableAccessMode)(long)spec.AccessMode, action, script),
             _ => throw new ArgumentException("Invalid breakpoint kind.")
         };
         if (!spec.Enabled) breakpoint = runspace.Debugger.DisableBreakpoint(breakpoint);
@@ -358,7 +363,7 @@ public sealed partial class PowerShellSession
             {
                 LineBreakpoint line => new(BreakpointKind.Line, line.Script, Line: line.Line, Action: line.Action?.ToString() ?? ""),
                 CommandBreakpoint command => new(BreakpointKind.Command, command.Script, command.Command, Action: command.Action?.ToString() ?? ""),
-                VariableBreakpoint variable => new(BreakpointKind.Variable, variable.Script, variable.Variable, AccessMode: variable.AccessMode, Action: variable.Action?.ToString() ?? ""),
+                VariableBreakpoint variable => new(BreakpointKind.Variable, variable.Script, variable.Variable, AccessMode: (Iseberg.Core.VariableAccessMode)(long)variable.AccessMode, Action: variable.Action?.ToString() ?? ""),
                 _ => throw new InvalidOperationException("Unknown PowerShell breakpoint type.")
             };
         return new(breakpoint.Id, spec with { Enabled = breakpoint.Enabled }, breakpoint.HitCount);

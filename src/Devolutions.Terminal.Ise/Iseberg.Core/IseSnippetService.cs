@@ -5,6 +5,7 @@ public sealed class IseSnippetService(string? userDirectory = null)
     private readonly object sync = new();
     private readonly List<PowerShellSnippet> imported = [];
     public string UserDirectory { get; } = userDirectory ?? SnippetCatalog.UserDirectory;
+    public Func<Task<SnippetLoadResult>>? LoadFromSessionAsync { get; init; }
     private IReadOnlyList<string> Directories => userDirectory is null ? SnippetCatalog.DefaultDirectories : [UserDirectory];
 
     public IEnumerable<FileInfo> GetUserFiles() => Directories.Where(Directory.Exists)
@@ -38,6 +39,7 @@ public sealed class IseSnippetService(string? userDirectory = null)
 
     public async Task<SnippetLoadResult> LoadAsync()
     {
+        if (LoadFromSessionAsync is { } load) return await load();
         var result = await SnippetCatalog.LoadAsync(Directories);
         lock (sync) return result with { Snippets = result.Snippets.Concat(imported).Distinct().ToArray() };
     }

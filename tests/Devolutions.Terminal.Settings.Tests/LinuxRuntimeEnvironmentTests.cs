@@ -57,8 +57,10 @@ public sealed class LinuxRuntimeEnvironmentTests
         var result = await DynamicProfileManager.CreateDefault().GenerateAsync(
             cancellationToken: TestContext.Current.CancellationToken);
 
-        Assert.NotEmpty(result.Profiles);
-        Assert.All(result.Profiles, profile =>
+        Assert.All(result.Profiles, profile => Assert.Equal(DynamicProfileSource.Linux, profile.Source));
+        var shells = result.Profiles.Where(profile => profile.Kind == ProfileKind.Terminal).ToArray();
+        Assert.NotEmpty(shells);
+        Assert.All(shells, profile =>
         {
             Assert.Equal(DynamicProfileSource.Linux, profile.Source);
             Assert.True(File.Exists(profile.Commandline), profile.Commandline);
@@ -76,9 +78,11 @@ public sealed class LinuxRuntimeEnvironmentTests
         var result = await DynamicProfileManager.CreateDefault().GenerateAsync(
             cancellationToken: TestContext.Current.CancellationToken);
 
-        Assert.NotEmpty(result.Profiles);
+        Assert.All(result.Profiles, profile => Assert.Equal(DynamicProfileSource.MacOS, profile.Source));
+        var shells = result.Profiles.Where(profile => profile.Kind == ProfileKind.Terminal).ToArray();
+        Assert.NotEmpty(shells);
         Assert.Contains(result.Profiles, profile => profile.Name == "Zsh");
-        Assert.All(result.Profiles, profile =>
+        Assert.All(shells, profile =>
         {
             Assert.Equal(DynamicProfileSource.MacOS, profile.Source);
             Assert.EndsWith(" -l", profile.Commandline, StringComparison.Ordinal);

@@ -467,6 +467,16 @@ public sealed class ProfileSettings
         Origin = SettingsOrigin.User,
     };
 
+    internal static ProfileSettings CreateGeneratedPowerShellIse(string source, string startingDirectory)
+    {
+        var profile = CreatePowerShellIse();
+        profile.Guid = ProfileGuid.Create(profile.Name, source).ToString("B");
+        profile.Source = source;
+        profile.Origin = SettingsOrigin.Generated;
+        profile.StartingDirectory = startingDirectory;
+        return profile;
+    }
+
     public const string PowerShellIseIcon = "ms-appx:///ProfileIcons/iseberg.png";
 
     public static ProfileSettings CreateBrowserShell() => new()

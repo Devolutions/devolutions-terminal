@@ -37,7 +37,7 @@ public sealed class CommandHelpWindow : Window
         this.apply = apply ?? (_ => Task.CompletedTask);
         Preferences = settings.Copy();
         Preferences.Normalize();
-        baseline = JsonSerializer.Serialize(Preferences);
+        baseline = JsonSerializer.Serialize(Preferences, IseJsonContext.Default.HelpViewSettings);
         ClassicDialog.Apply(this);
         Title = string.Format(UiText.Get("CommandHelpTitle"), document.Name);
         Width = 580 * DesktopTheme.TextScale;
@@ -111,7 +111,7 @@ public sealed class CommandHelpWindow : Window
             {
                 await this.apply(result.Copy());
                 Preferences = result.Copy();
-                baseline = JsonSerializer.Serialize(Preferences);
+                baseline = JsonSerializer.Serialize(Preferences, IseJsonContext.Default.HelpViewSettings);
                 Render();
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
@@ -130,7 +130,7 @@ public sealed class CommandHelpWindow : Window
         Closed += (_, _) => DesktopTheme.Changed -= ApplyAppearance;
         Closing += async (_, e) =>
         {
-            if (closingApproved || baseline == JsonSerializer.Serialize(Preferences)) return;
+            if (closingApproved || baseline == JsonSerializer.Serialize(Preferences, IseJsonContext.Default.HelpViewSettings)) return;
             e.Cancel = true;
             if (saving) return;
             saving = true;

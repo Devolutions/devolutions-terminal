@@ -7,8 +7,8 @@ as a self-contained **NativeAOT** desktop app, and rendered with **Avalonia 12**
 - Azure Cloud Shell for remote Azure sessions
 - selectable built-in or **Ghostty** VT engine
 - Windows Terminal-compatible `settings.json`, actions, keybindings, and `dt` CLI
-- optional source-integrated **Iseberg** PowerShell ISE profiles in managed
-  developer builds only (disabled in default NativeAOT builds and release packages)
+- source-integrated **Iseberg** PowerShell ISE profiles, with execution in an
+  owned PowerShell subprocess and a NativeAOT desktop
 
 This is the [Devolutions Terminal](https://github.com/Devolutions/devolutions-terminal)
 source tree. Projects, namespaces, and the GUI host use `Devolutions.Terminal.*`.
@@ -40,11 +40,11 @@ dotnet publish src/Devolutions.Terminal -c Release -r win-x64 --self-contained
 The executable is written to
 `src/Devolutions.Terminal/bin/Release/net10.0/win-x64/publish/Devolutions.Terminal.exe`.
 
-The default desktop and `dt` CLI are NativeAOT. Release packages exclude Iseberg.
-An explicitly opted-in `-p:EnablePowerShellIse=true` developer build uses a
-managed, untrimmed desktop and separately installed compatible PowerShell; see
-[docs/iseberg.md](docs/iseberg.md). Saved Iseberg profiles remain intact, but
-cannot launch in the default build.
+The default desktop and `dt` CLI are NativeAOT. Desktop release packages include
+Iseberg and its private managed bridge module; PowerShell itself must be installed
+separately and is required only when opening an Iseberg profile. See
+[docs/iseberg.md](docs/iseberg.md). Use `-p:EnablePowerShellIse=false` for an explicit
+terminal-only build; saved Iseberg profiles remain intact but cannot launch there.
 
 macOS app bundles (Darwin only):
 

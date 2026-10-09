@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk" TreatAsLocalProperty="PublishAot;PublishTrimmed;SelfContained;IsAotCompatible;EnableTrimAnalyzer;EnableSingleFileAnalyzer">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>Devolutions.Iseberg.PowerShell</AssemblyName>
+    <IsAotCompatible>false</IsAotCompatible>
+    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+    <PublishAot>false</PublishAot>
+    <PublishTrimmed>false</PublishTrimmed>
+    <SelfContained>false</SelfContained>
+    <EnableSingleFileAnalyzer>false</EnableSingleFileAnalyzer>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <JsonSerializerIsReflectionEnabledByDefault>false</JsonSerializerIsReflectionEnabledByDefault>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.PowerShell.SDK" ExcludeAssets="runtime;native;contentFiles" />
+    <Compile Include="..\Iseberg.Core\AnsiOutputParser.cs" Link="AnsiOutputParser.cs" />
+    <Compile Include="..\Iseberg.Core\IseSnippetService.cs" Link="IseSnippetService.cs" />
+    <Compile Include="..\Iseberg.Core\SessionRequests.cs" Link="SessionRequests.cs" />
+    <Compile Include="..\Iseberg.Core\TerminalApplication.cs" Link="TerminalApplication.cs" />
+  </ItemGroup>
+  <Import Project="..\Iseberg.Contracts\Iseberg.Contracts.Shared.targets" />
+</Project>

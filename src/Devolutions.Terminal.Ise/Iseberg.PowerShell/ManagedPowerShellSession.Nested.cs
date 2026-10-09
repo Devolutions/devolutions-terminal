@@ -1,8 +1,10 @@
 using System.Management.Automation;
+using SessionState = Iseberg.Core.SessionState;
 
-namespace Iseberg.Core;
+using Iseberg.Core;
+namespace Iseberg.PowerShellHost;
 
-public sealed partial class PowerShellSession
+public sealed partial class ManagedPowerShellSession
 {
     private readonly Stack<NestedFrame> nestedFrames = new();
     private sealed class NestedFrame
@@ -83,6 +85,8 @@ public sealed partial class PowerShellSession
             ObjectDisposedException.ThrowIf(disposed, this);
             if (!IsNestedPromptActive) throw new InvalidOperationException("No nested prompt is available.");
             var frame = nestedFrames.Peek();
+            if (frame.Work.Count >= IseBridgeProtocol.MaximumPendingRequests)
+                throw new InvalidOperationException("The nested prompt work queue is full.");
             frame.Busy = true;
             StateChanged?.Invoke(State);
             frame.Work.Enqueue(new(() =>

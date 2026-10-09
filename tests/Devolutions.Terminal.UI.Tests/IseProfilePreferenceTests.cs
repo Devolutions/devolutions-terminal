@@ -143,7 +143,7 @@ public sealed class IseProfilePreferenceTests
                     new(Iseberg.Core.BreakpointKind.Line, ScriptPath: recent, Line: 1,
                         Action: "Write-Output 'owned breakpoint action'", Enabled: false),
                     new(Iseberg.Core.BreakpointKind.Variable, Target: "phase3Inventory", Condition: "$true",
-                        AccessMode: System.Management.Automation.VariableAccessMode.ReadWrite, Enabled: false)] }],
+                        AccessMode: Iseberg.Core.VariableAccessMode.ReadWrite, Enabled: false)] }],
             Geometry = new() { WindowWidth = 1234, WindowHeight = 876, WindowX = 37, WindowY = 53,
                 Maximized = flag, TopScriptRatio = .42, RightScriptRatio = .73,
                 DebuggerWidth = 451, CommandsWidth = 321 }
@@ -275,7 +275,7 @@ public sealed class IseProfilePreferenceTests
             new Iseberg.Core.BreakpointSpec(Iseberg.Core.BreakpointKind.Line, ScriptPath: recent, Line: 1,
                 Action: "Write-Output 'owned breakpoint action'", Enabled: false),
             new Iseberg.Core.BreakpointSpec(Iseberg.Core.BreakpointKind.Variable, Target: "phase3Inventory", Condition: "$true",
-                AccessMode: System.Management.Automation.VariableAccessMode.ReadWrite, Enabled: false)
+                AccessMode: Iseberg.Core.VariableAccessMode.ReadWrite, Enabled: false)
         }, debugger.Breakpoints);
         Assert.Equal(1234, actual.Geometry.WindowWidth);
         Assert.Equal(876, actual.Geometry.WindowHeight);

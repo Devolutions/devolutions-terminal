@@ -27,7 +27,7 @@ public partial class MainWindow
         return await CreatePowerShellIseTabCoreAsync(profile, restored, regenerateIdentities).ConfigureAwait(true);
 #else
         await Task.CompletedTask;
-        throw new NotSupportedException("This terminal-only build does not include Iseberg. Use an Iseberg-enabled managed DT distribution.");
+        throw new NotSupportedException("This terminal-only build does not include Iseberg. Use a DT distribution with Iseberg enabled.");
 #endif
     }
 

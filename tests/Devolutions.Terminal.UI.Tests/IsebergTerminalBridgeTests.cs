@@ -271,7 +271,7 @@ public sealed class IsebergTerminalBridgeTests
             Assert.False(reopenedDescription.IsOpen);
             Assert.Null(reopened.GetLogicalParent());
             Assert.Null(editor.CompletionPopup);
-            Assert.Empty(host.Errors);
+            Assert.True(host.Errors.Count == 0, string.Join(Environment.NewLine, host.Errors));
         }
         finally { editor.CloseCompletion(); }
     }
@@ -770,7 +770,7 @@ public sealed class IsebergTerminalBridgeTests
         await using var host = new IseTestHost(tab);
         await host.InitializeAsync();
         await test(tab, host);
-        Assert.Empty(host.Errors);
+        Assert.True(host.Errors.Count == 0, string.Join(Environment.NewLine, host.Errors));
     }
 
     [AvaloniaTheory]
@@ -1255,8 +1255,8 @@ public sealed class IsebergTerminalBridgeTests
     });
 
     private static CompletionSet NativeContractCompletion(int start, int length) => new(start, length,
-        [new System.Management.Automation.CompletionResult("Get-DTCommand", "Get-DTCommand",
-            System.Management.Automation.CompletionResultType.Command, "Owned deterministic completion")]);
+        [new Iseberg.Core.CompletionResult("Get-DTCommand", "Get-DTCommand",
+            Iseberg.Core.CompletionResultType.Command, "Owned deterministic completion")]);
 
     private static async Task<IsebergTerminalConnection> EditableConnectionAsync(PowerShellIseTab tab, string text)
     {
@@ -1364,10 +1364,10 @@ public sealed class IsebergTerminalBridgeTests
         connection.InputChanged += (_, _) => changes++;
         var completion = new CompletionSet(0, 2,
         [
-            new System.Management.Automation.CompletionResult("alpha", "Alpha",
-                System.Management.Automation.CompletionResultType.Command, "first"),
-            new System.Management.Automation.CompletionResult("beta", "Beta",
-                System.Management.Automation.CompletionResultType.Command, "second")
+            new Iseberg.Core.CompletionResult("alpha", "Alpha",
+                Iseberg.Core.CompletionResultType.Command, "first"),
+            new Iseberg.Core.CompletionResult("beta", "Beta",
+                Iseberg.Core.CompletionResultType.Command, "second")
         ]);
 
         Assert.True(connection.ApplyCompletion(completion, 1, revision));

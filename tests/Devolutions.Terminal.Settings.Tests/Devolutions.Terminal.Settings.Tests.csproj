@@ -2,6 +2,9 @@
   <PropertyGroup>
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(EnablePowerShellIse)' == 'true'">
+    <DefineConstants>$(DefineConstants);POWERSHELL_ISE</DefineConstants>
+  </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Devolutions.Terminal.Settings\Devolutions.Terminal.Settings.csproj" />
   </ItemGroup>

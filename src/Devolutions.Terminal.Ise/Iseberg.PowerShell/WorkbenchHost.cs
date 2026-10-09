@@ -5,7 +5,8 @@ using System.Management.Automation.Host;
 using System.Management.Automation.Runspaces;
 using System.Security;
 
-namespace Iseberg.Core;
+using Iseberg.Core;
+namespace Iseberg.PowerShellHost;
 
 internal sealed record WorkbenchHostServices(Func<ShowCommandRequest, string?> ShowCommand, Action<string> ShowCommandError,
     Func<bool> IsRunspacePushed, IseSnippetService Snippets);

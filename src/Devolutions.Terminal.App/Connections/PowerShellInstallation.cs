@@ -1,16 +1,16 @@
 using System.ComponentModel;
 using System.Diagnostics;
-using System.Reflection;
 using System.Runtime.InteropServices;
-using System.Runtime.Loader;
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using Iseberg.Core;
 
 namespace Devolutions.Terminal.App.Connections;
 
 public sealed record PowerShellInstallation(string Home, string Version, string RuntimeVersion, string Architecture)
 {
     public const string HomeVariable = "DT_ISEBERG_PSHOME";
-    public static Version MinimumVersion { get; } = new(7, 6, 6);
+    public static Version MinimumVersion => PowerShellCompatibility.MinimumVersion;
 
     public static PowerShellInstallation Find()
     {
@@ -42,7 +42,7 @@ public sealed record PowerShellInstallation(string Home, string Version, string 
         catch (Win32Exception exception)
         {
             throw new InvalidOperationException(
-                $"Install PowerShell {MinimumVersion} (7.6.x) on PATH, or set {HomeVariable} to its installation directory.", exception);
+                $"Install PowerShell {PowerShellCompatibility.SupportedVersions} on PATH, or set {HomeVariable} to its installation directory.", exception);
         }
         var output = process.StandardOutput.ReadToEndAsync();
         var error = process.StandardError.ReadToEndAsync();
@@ -57,68 +57,36 @@ public sealed record PowerShellInstallation(string Home, string Version, string 
         PowerShellInstallation installation;
         try
         {
-            installation = JsonSerializer.Deserialize<PowerShellInstallation>(output.GetAwaiter().GetResult())
+            installation = JsonSerializer.Deserialize(output.GetAwaiter().GetResult(),
+                PowerShellInstallationJsonContext.Default.PowerShellInstallation)
                 ?? throw new InvalidOperationException("PowerShell returned an empty installation description.");
         }
         catch (JsonException exception)
         {
             throw new InvalidOperationException("PowerShell returned an invalid installation description.", exception);
         }
-        installation.Validate(Environment.Version, RuntimeInformation.ProcessArchitecture);
+        installation.Validate();
         return installation;
     }
 
-    public void Validate(Version runtimeVersion, Architecture architecture)
+    public void Validate()
     {
         if (!System.Version.TryParse(Version, out var version) ||
-            version.Major != MinimumVersion.Major || version.Minor != MinimumVersion.Minor ||
-            version < MinimumVersion)
-            throw new InvalidOperationException($"Iseberg requires PowerShell {MinimumVersion} or newer in the 7.6.x series; found {Version}.");
+            !PowerShellCompatibility.IsSupportedVersion(version))
+            throw new InvalidOperationException($"Iseberg requires PowerShell {PowerShellCompatibility.SupportedVersions}; found {Version}.");
         if (!System.Version.TryParse(RuntimeVersion, out var runtime) ||
-            runtime.Major != runtimeVersion.Major || runtime.Minor != runtimeVersion.Minor)
-            throw new InvalidOperationException($"PowerShell must use .NET {runtimeVersion.Major}.{runtimeVersion.Minor}; found {RuntimeVersion}.");
-        if (!string.Equals(Architecture, architecture.ToString(), StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException($"PowerShell architecture must match Iseberg ({architecture}); found {Architecture}.");
+            !PowerShellCompatibility.IsSupportedRuntime(version, runtime))
+            throw new InvalidOperationException($"PowerShell {version.Major}.{version.Minor} requires its bundled .NET {PowerShellCompatibility.RuntimeMajor(version)} runtime; found {RuntimeVersion}.");
+        if (!Enum.TryParse<System.Runtime.InteropServices.Architecture>(Architecture, out var architecture) ||
+            !Enum.IsDefined(architecture))
+            throw new InvalidOperationException($"PowerShell returned an unknown process architecture: {Architecture}.");
         if (string.IsNullOrWhiteSpace(Home) || !Path.IsPathFullyQualified(Home) ||
             !File.Exists(Path.Combine(Home, "System.Management.Automation.dll")) ||
             !File.Exists(Path.Combine(Home, "pwsh.dll")))
             throw new InvalidOperationException($"PowerShell installation is incomplete: {Home}.");
     }
 
-    public void Register()
-    {
-        var resolver = new AssemblyDependencyResolver(Path.Combine(Home, "pwsh.dll"));
-        Assembly? ResolveAssembly(AssemblyLoadContext context, AssemblyName name)
-        {
-            var path = resolver.ResolveAssemblyToPath(name);
-            if (path is null && name.Name is { } assemblyName)
-            {
-                var candidate = Path.Combine(Home, assemblyName + ".dll");
-                if (File.Exists(candidate)) path = candidate;
-            }
-            return path is null ? null : context.LoadFromAssemblyPath(path);
-        }
-        IntPtr ResolveNative(Assembly assembly, string name)
-        {
-            var path = resolver.ResolveUnmanagedDllToPath(name);
-            if (path is null)
-            {
-                var fileName = OperatingSystem.IsWindows() ? name + ".dll"
-                    : OperatingSystem.IsMacOS() ? "lib" + name + ".dylib" : "lib" + name + ".so";
-                var candidate = Path.Combine(Home, fileName);
-                if (File.Exists(candidate)) path = candidate;
-            }
-            return path is null ? IntPtr.Zero : NativeLibrary.Load(path);
-        }
-        AssemblyLoadContext.Default.Resolving += ResolveAssembly;
-        AssemblyLoadContext.Default.ResolvingUnmanagedDll += ResolveNative;
-        // Bind the engine before JIT-compiling any desktop or core code that references its types.
-        try { AssemblyLoadContext.Default.LoadFromAssemblyPath(Path.Combine(Home, "System.Management.Automation.dll")); }
-        catch
-        {
-            AssemblyLoadContext.Default.Resolving -= ResolveAssembly;
-            AssemblyLoadContext.Default.ResolvingUnmanagedDll -= ResolveNative;
-            throw;
-        }
-    }
 }
+
+[JsonSerializable(typeof(PowerShellInstallation))]
+internal sealed partial class PowerShellInstallationJsonContext : JsonSerializerContext;

@@ -1,6 +1,4 @@
-using System.Management.Automation;
-using System.Management.Automation.Runspaces;
-using System.Security;
+using Iseberg.Core;
 using Avalonia.Controls;
 using Avalonia.Layout;
 
@@ -55,28 +53,22 @@ public sealed class RemoteConnectionWindow : Window
             {
                 var target = address.Text?.Trim() ?? "";
                 if (string.IsNullOrWhiteSpace(target)) throw new ArgumentException(UiText.Get("RemoteAddressRequired"));
-                RunspaceConnectionInfo connection;
+                RemoteConnectionInfo connection;
                 if (transport.SelectedIndex == 0)
                 {
                     if (!int.TryParse(port.Text, out var number) || number is < 1 or > 65535)
                         throw new ArgumentException(UiText.Get("RemotePortInvalid"));
                     if (string.IsNullOrWhiteSpace(subsystem.Text)) throw new ArgumentException(UiText.Get("RemoteSubsystemRequired"));
-                    connection = new SSHConnectionInfo(user.Text ?? "", target,
-                        string.IsNullOrWhiteSpace(key.Text) ? null : key.Text, number, subsystem.Text!, 30000);
+                    connection = new(RemoteConnectionKind.Ssh, target, user.Text ?? "", number,
+                        string.IsNullOrWhiteSpace(key.Text) ? null : key.Text, subsystem.Text!);
                 }
                 else
                 {
                     if (!Uri.TryCreate(target, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
                         throw new ArgumentException(UiText.Get("RemoteUriInvalid"));
-                    PSCredential? credential = null;
-                    if (!string.IsNullOrWhiteSpace(user.Text))
-                    {
-                        using var secret = new SecureString();
-                        foreach (var character in password.Text ?? "") secret.AppendChar(character);
-                        secret.MakeReadOnly();
-                        credential = new PSCredential(user.Text, secret.Copy());
-                    }
-                    connection = new WSManConnectionInfo(uri, "http://schemas.microsoft.com/powershell/Microsoft.PowerShell", credential);
+                    connection = new(RemoteConnectionKind.WSMan, target, user.Text,
+                        ConnectionUri: uri.AbsoluteUri, ConfigurationName: "http://schemas.microsoft.com/powershell/Microsoft.PowerShell",
+                        Password: string.IsNullOrWhiteSpace(user.Text) ? null : password.Text);
                 }
                 password.Text = "";
                 Close(connection);

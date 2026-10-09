@@ -1,6 +1,7 @@
 using System.Management.Automation;
 
-namespace Iseberg.Core;
+using Iseberg.Core;
+namespace Iseberg.PowerShellHost;
 
 [Cmdlet(VerbsLifecycle.Start, "IsebergTerminal")]
 [OutputType(typeof(int))]

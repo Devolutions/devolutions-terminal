@@ -59,7 +59,7 @@ internal sealed class DtIsebergConsole : IWorkbenchConsole
         completionTimer.Tick += async (_, _) =>
         {
             completionTimer.Stop();
-            await ObserveCompletionAsync();
+            await ObserveCompletionAsync(automatic: true);
         };
     }
     public TermControl Terminal { get; }
@@ -133,7 +133,7 @@ internal sealed class DtIsebergConsole : IWorkbenchConsole
         if (acceptingCompletion) return;
         CloseCompletion();
         if (preferences.ConsoleIntelliSense && Terminal.IsKeyboardFocusWithin && IsInputEnabled && !HasPendingInput &&
-            EditorAnalysis.CompletionFilter(InputText, CaretOffset) is not null)
+            CaretOffset > 0 && "$-:. [\\/".Contains(InputText[CaretOffset - 1]))
             completionTimer.Start();
     }
 
@@ -145,9 +145,9 @@ internal sealed class DtIsebergConsole : IWorkbenchConsole
         completions = null;
     }
 
-    private async Task ObserveCompletionAsync()
+    private async Task ObserveCompletionAsync(bool automatic = false)
     {
-        try { await ShowCompletionAsync(); }
+        try { await ShowCompletionAsync(automatic); }
         catch (OperationCanceledException) { }
         catch (Exception error)
         {
@@ -156,7 +156,7 @@ internal sealed class DtIsebergConsole : IWorkbenchConsole
         }
     }
 
-    private async Task ShowCompletionAsync()
+    private async Task ShowCompletionAsync(bool automatic = false)
     {
         var connection = _connection;
         if (connection is null || !IsInputEnabled || HasPendingInput || workbench?.IsDisposed != false) return;
@@ -167,7 +167,17 @@ internal sealed class DtIsebergConsole : IWorkbenchConsole
         var revision = connection.InputRevision;
         try
         {
+            IReadOnlySet<CompletionResultType>? filter = null;
+            if (automatic)
+            {
+                var analysis = await connection.RequestAnalysisAsync(cancellation.Token);
+                if (analysis is null || revision != connection.InputRevision) return;
+                filter = EditorAnalysis.CompletionFilter(analysis, InputText, CaretOffset);
+                if (filter is null) return;
+            }
             var result = await connection.RequestCompletionAsync(cancellation.Token);
+            if (result is not null && filter is not null)
+                result = result with { Matches = result.Matches.Where(match => filter.Contains(match.ResultType)).ToArray() };
             if (result is null || result.Matches.Count == 0 || revision != connection.InputRevision ||
                 workbench.IsDisposed || !Terminal.IsKeyboardFocusWithin || !IsInputEnabled) return;
             completions = result;

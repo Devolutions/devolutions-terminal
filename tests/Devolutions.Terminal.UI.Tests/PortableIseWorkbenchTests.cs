@@ -815,12 +815,12 @@ public sealed class PortableIseWorkbenchTests
         var options = workbench.Scripting.Options;
         var before = System.Text.Json.JsonSerializer.Serialize(workbench.GetScriptingSettings());
         Assert.Equal("Profile loading is owned by DT's PowerShell ISE profile.",
-            Assert.Throws<System.Management.Automation.PSNotSupportedException>(() => options.LoadProfiles = true).Message);
+            Assert.Throws<NotSupportedException>(() => options.LoadProfiles = true).Message);
         Assert.Equal("Choose the theme through the host's settings UI.",
-            Assert.Throws<System.Management.Automation.PSNotSupportedException>(() => options.Theme = new EditorTheme()).Message);
+            Assert.Throws<NotSupportedException>(() => options.Theme = new EditorTheme()).Message);
         foreach (var read in new Func<object>[] { () => options.TokenColors, () => options.ConsoleTokenColors, () => options.XmlTokenColors })
             Assert.Equal("ISE token-color dictionaries are not exposed; choose colors through the host's theme settings.",
-                Assert.Throws<System.Management.Automation.PSNotSupportedException>(() => read()).Message);
+                Assert.Throws<NotSupportedException>(() => read()).Message);
         foreach (var write in new Action[]
         {
             () => options.TokenColors = new object(), () => options.ConsoleTokenColors = new object(),
@@ -828,7 +828,7 @@ public sealed class PortableIseWorkbenchTests
             options.RestoreDefaultConsoleTokenColors, options.RestoreDefaultXmlTokenColors
         })
             Assert.Equal("Token colors are owned by the host's theme settings.",
-                Assert.Throws<System.Management.Automation.PSNotSupportedException>(write).Message);
+                Assert.Throws<NotSupportedException>(write).Message);
         var detachedTheme = options.Theme;
         detachedTheme.Colors["Script.Foreground"] = "#123456";
         Assert.Equal(before, System.Text.Json.JsonSerializer.Serialize(workbench.GetScriptingSettings()));
@@ -978,7 +978,7 @@ public sealed class PortableIseWorkbenchTests
         Assert.Equal(workbench.FindControl<TextBlock>("StatusText")!.Text, tab.StatusText);
         Assert.True(tab.ExpandedScript);
         Assert.Equal("Script pane visibility is owned by the host. Use Options.SelectedScriptPaneState to change its layout.",
-            Assert.Throws<System.Management.Automation.PSNotSupportedException>(() => tab.ExpandedScript = false).Message);
+            Assert.Throws<NotSupportedException>(() => tab.ExpandedScript = false).Message);
         foreach (var accepted in new[] { 20d, 400d, 175d })
         {
             tab.Zoom = accepted;
@@ -1016,11 +1016,13 @@ public sealed class PortableIseWorkbenchTests
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static Task GoToMatchCoreAsync(int column, bool canMatch, int destination) =>
-        WithModuleWorkbenchAsync(false, (workbench, _) =>
+        WithModuleWorkbenchAsync(false, async (workbench, _) =>
         {
             var editor = workbench.Scripting.CurrentEditor!;
             editor.Text = "{ $x }";
             editor.SetCaretPosition(1, column);
+            var analysis = await workbench.ScriptEditorView.AnalyzeAsync();
+            Assert.Equal(Iseberg.Editor.EditorAnalysisState.Available, analysis.State);
             Assert.Equal(canMatch, editor.CanGoToMatch);
             editor.GoToMatch();
             Assert.Equal(destination, editor.CaretColumn);
@@ -1029,7 +1031,6 @@ public sealed class PortableIseWorkbenchTests
             workbench.Scripting.Options.ShowOutlining = false;
             editor.ToggleOutliningExpansion();
             Assert.Equal(destination, editor.CaretColumn);
-            return Task.CompletedTask;
         });
 
     [AvaloniaFact]
@@ -1517,10 +1518,10 @@ public sealed class PortableIseWorkbenchTests
             var before = JsonSerializer.Serialize(workbench.GetScriptingSettings());
             Assert.False(options.ShowToolBar);
             Assert.Equal("The toolbar is disabled by the workbench host.",
-                Assert.Throws<System.Management.Automation.PSNotSupportedException>(() => options.ShowToolBar = true).Message);
+                Assert.Throws<NotSupportedException>(() => options.ShowToolBar = true).Message);
             foreach (var layout in new[] { "Top", "Right" })
                 Assert.Equal("This pane layout is disabled by the workbench host.",
-                    Assert.Throws<System.Management.Automation.PSNotSupportedException>(() => options.SelectedScriptPaneState = layout).Message);
+                    Assert.Throws<NotSupportedException>(() => options.SelectedScriptPaneState = layout).Message);
             Assert.Equal(before, JsonSerializer.Serialize(workbench.GetScriptingSettings()));
             var model = new SessionModel("PowerShell 1");
             workbench.Workbench.Sessions.Add(model);
@@ -1528,7 +1529,7 @@ public sealed class PortableIseWorkbenchTests
             var tab = workbench.Scripting.CurrentPowerShellTab;
             Assert.False(tab.ShowCommands);
             Assert.Equal("The Commands pane is disabled by the workbench host.",
-                Assert.Throws<System.Management.Automation.PSNotSupportedException>(() => tab.ShowCommands = true).Message);
+                Assert.Throws<NotSupportedException>(() => tab.ShowCommands = true).Message);
             Assert.Equal(before, JsonSerializer.Serialize(workbench.GetScriptingSettings()));
         }
         finally { await workbench.DisposeAsync(); }
@@ -1562,18 +1563,18 @@ public sealed class PortableIseWorkbenchTests
         Assert.Same(selected, own.Files.SelectedFile);
         Assert.Same(foreignDocument, Assert.Single(foreignModel.Files));
         Assert.Equal("Cross-tab script invocation is not supported. Run the command in its owning PowerShell tab.",
-            Assert.Throws<System.Management.Automation.PSNotSupportedException>(() => own.Invoke("'never run'")).Message);
+            Assert.Throws<NotSupportedException>(() => own.Invoke("'never run'")).Message);
         foreach (var operation in new Action[]
         {
             () => own.InvokeSynchronous("'never run'"), () => own.InvokeSynchronous("'never run'", true),
             () => own.InvokeSynchronous("'never run'", false, 0)
         })
             Assert.Equal("Cross-tab synchronous invocation is not supported.",
-                Assert.Throws<System.Management.Automation.PSNotSupportedException>(operation).Message);
+                Assert.Throws<NotSupportedException>(operation).Message);
         Assert.Equal("Creating PowerShell tabs from scripts is not supported. Use File > New PowerShell Tab.",
-            Assert.Throws<System.Management.Automation.PSNotSupportedException>(() => workbench.Scripting.PowerShellTabs.Add()).Message);
+            Assert.Throws<NotSupportedException>(() => workbench.Scripting.PowerShellTabs.Add()).Message);
         Assert.Equal("Closing PowerShell tabs from scripts is not supported. Use File > Close PowerShell Tab.",
-            Assert.Throws<System.Management.Automation.PSNotSupportedException>(() => workbench.Scripting.PowerShellTabs.Remove(own)).Message);
+            Assert.Throws<NotSupportedException>(() => workbench.Scripting.PowerShellTabs.Remove(own)).Message);
         const string wpf = "WPF ISE add-on tools are not supported by Iseberg's Avalonia host, including on Windows. " +
             "Use script-based AddOnsMenu actions; WPF controls cannot run natively on Linux or macOS.";
         foreach (var operation in new Action[]
@@ -1584,11 +1585,11 @@ public sealed class PortableIseWorkbenchTests
             () => { _ = workbench.Scripting.VisibleHorizontalAddOnTools; },
             () => { _ = workbench.Scripting.VisibleVerticalAddOnTools; }
         })
-            Assert.Equal(wpf, Assert.Throws<System.Management.Automation.PSNotSupportedException>(operation).Message);
+            Assert.Equal(wpf, Assert.Throws<NotSupportedException>(operation).Message);
         Assert.False(own.HorizontalAddOnToolsPaneOpened);
         Assert.False(own.VerticalAddOnToolsPaneOpened);
         Assert.Equal("The host owns console input and output; a mutable ISE console editor is not exposed.",
-            Assert.Throws<System.Management.Automation.PSNotSupportedException>(() => own.ConsolePane).Message);
+            Assert.Throws<NotSupportedException>(() => own.ConsolePane).Message);
         Assert.Same(selected, own.Files.SelectedFile);
         Assert.Equal("", selected!.Editor.Text);
         return Task.CompletedTask;
@@ -1630,6 +1631,9 @@ public sealed class PortableIseWorkbenchTests
         await WaitForAsync(() => view.Form?.Description.Name == "Invoke-OwnedParity",
             () => "The selected engine's command form did not load.");
         Assert.Equal("Invoke-OwnedParity", view.Form!.Description.InvocationName);
+        await WaitForAsync(() => Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(view).OfType<TextBox>()
+                .Any(box => Avalonia.Automation.AutomationProperties.GetName(box) == "Text"),
+            () => "The selected command's Text parameter control did not become available.");
         var text = Assert.Single(Avalonia.VisualTree.VisualExtensions.GetVisualDescendants(view).OfType<TextBox>(),
             box => Avalonia.Automation.AutomationProperties.GetName(box) == "Text");
         text.Text = "café 'quoted'";
@@ -1660,7 +1664,10 @@ public sealed class PortableIseWorkbenchTests
             Assert.Same(engine, Assert.Single(workbench.Workbench.Sessions).Engine);
             var owner = Assert.IsType<Window>(TopLevel.GetTopLevel(workbench));
             Assert.True(workbench.GetScriptingSettings().UseLocalHelp);
-            ClickOwnedButton(workbench.FindControl<Button>("CommandHelpButton")!);
+            var helpButton = workbench.FindControl<Button>("CommandHelpButton")!;
+            await WaitForAsync(() => helpButton.IsEnabled,
+                () => "Commands pane help did not become ready after execution.");
+            ClickOwnedButton(helpButton);
             await WaitForAsync(() => owner.OwnedWindows.OfType<CommandHelpWindow>().Any(),
                 () => "The Commands pane did not show its local help on the current engine.");
             var help = Assert.Single(owner.OwnedWindows.OfType<CommandHelpWindow>());
@@ -2437,6 +2444,8 @@ public sealed class PortableIseWorkbenchTests
                 Assert.DoesNotContain(view.Form.Description.ParameterSets.SelectMany(set => set.Parameters), parameter => parameter.IsCommon);
                 Assert.False(dialog.FindControl<Button>("ShowCommandRun")!.IsEnabled);
                 Assert.False(dialog.FindControl<MenuItem>("ShowCommandInsert")!.IsEnabled);
+                await WaitForAsync(() => view.Result is not null,
+                    () => "Show-Command did not finish validating its initial form.");
                 Assert.False(view.Result!.IsValid);
                 Assert.False(request.IsCompleted);
                 Assert.Equal("before after", workbench.ScriptEditorView.Document.Text);
@@ -2699,6 +2708,7 @@ public sealed class PortableIseWorkbenchTests
         var editor = workbench.ScriptEditorView;
         editor.Document.Text = "before $x\n'café <&> 😀' after";
         editor.Select(new(start, length));
+        Assert.Equal(Iseberg.Editor.EditorAnalysisState.Available, (await editor.AnalyzeAsync()).State);
         var caret = editor.CaretOffset;
         var sentinelFormat = Avalonia.Input.DataFormat.CreateBytesPlatformFormat("DT-Iseberg-Clipboard-Sentinel");
         var sentinelBytes = System.Text.Encoding.UTF8.GetBytes("owned byte transport sentinel");
@@ -2768,6 +2778,7 @@ public sealed class PortableIseWorkbenchTests
         editor.CaretOffset = 10;
         editor.IsReadOnly = readOnly;
         editor.TextEditor.Options.CutCopyWholeLine = wholeLine;
+        Assert.Equal(Iseberg.Editor.EditorAnalysisState.Available, (await editor.AnalyzeAsync()).State);
         await Avalonia.Input.Platform.ClipboardExtensions.SetTextAsync(owner.Clipboard!, "owned clipboard sentinel");
         editor.TextEditor.Copy();
         Assert.Equal(wholeLine ? "café <&>" + Environment.NewLine : "owned clipboard sentinel", await Avalonia.Input.Platform.ClipboardExtensions.TryGetTextAsync(owner.Clipboard!));
@@ -2950,7 +2961,7 @@ public sealed class PortableIseWorkbenchTests
                 await WaitForAsync(() => ToolTip.GetIsOpen(editor), () => "Variable boundary hover did not open.");
                 Assert.Equal(expected, Assert.IsType<TextBlock>(ToolTip.GetTip(editor)).Text);
             }
-            session.Engine.Resume(System.Management.Automation.DebuggerResumeAction.Continue);
+            session.Engine.Resume(Iseberg.Core.DebuggerResumeAction.Continue);
             await execution.WaitAsync(TimeSpan.FromSeconds(60));
             await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() => { }, Avalonia.Threading.DispatcherPriority.Background);
             Assert.False(ToolTip.GetIsOpen(editor));
@@ -3040,7 +3051,7 @@ public sealed class PortableIseWorkbenchTests
             }
             finally
             {
-                if (session.Engine.IsDebuggerPaused) session.Engine.Resume(System.Management.Automation.DebuggerResumeAction.Continue);
+                if (session.Engine.IsDebuggerPaused) session.Engine.Resume(Iseberg.Core.DebuggerResumeAction.Continue);
                 if (execution is not null) await execution.WaitAsync(TimeSpan.FromSeconds(60));
                 await session.Engine.SetLineBreakpointsAsync(path, []);
                 owner.Content = workbench;
@@ -3317,6 +3328,9 @@ public sealed class PortableIseWorkbenchTests
             session.Input = "$console = 17";
             var console = workbench.FindControl<AvaloniaEdit.TextEditor>("ConsoleEditor")!;
             owner.UpdateLayout();
+            await WaitForAsync(() => Phase2RenderedColorAt(console, session.Console.InputStart) ==
+                    Avalonia.Media.Color.Parse("#2468AC"),
+                () => "Console analysis did not apply the persisted variable palette.");
             Assert.Equal("Owned persisted palette", workbench.GetScriptingSettings().Theme.Name);
             Assert.Equal(Avalonia.Media.Color.Parse("#13579B"), Phase2RenderedColorAt(script.TextEditor, 0));
             Assert.Equal(Avalonia.Media.Color.Parse("#2468AC"), Phase2RenderedColorAt(console, session.Console.InputStart));
@@ -3652,6 +3666,8 @@ public sealed class PortableIseWorkbenchTests
                 var form = Assert.Single(owner.OwnedWindows.OfType<ShowCommandWindow>());
                 var view = form.FindControl<CommandFormView>("ShowCommandForm")!;
                 Assert.Equal("Invoke-Phase2Picked", view.Form!.Description.Name);
+                await WaitForAsync(() => view.Result is { IsValid: true },
+                    () => "The picked command did not finish validating its form.");
                 Assert.Equal(action == "pick-owned-module" ? "& 'Phase2OwnedPicker\\Invoke-Phase2Picked'" : "& 'Invoke-Phase2Picked'",
                     view.GetCommand());
                 Assert.True(view.Result!.IsValid);
@@ -4332,11 +4348,11 @@ public sealed class PortableIseWorkbenchTests
             await engine.ExecuteAsync("""
                 $iss = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault2()
                 $iss.Commands.Add([System.Management.Automation.Runspaces.SessionStateCmdletEntry]::new(
-                    'New-IseSnippet', [Iseberg.Core.NewIseSnippetCommand], $null))
+                    'New-IseSnippet', [Iseberg.PowerShellHost.NewIseSnippetCommand], $null))
                 $iss.Commands.Add([System.Management.Automation.Runspaces.SessionStateCmdletEntry]::new(
-                    'Get-IseSnippet', [Iseberg.Core.GetIseSnippetCommand], $null))
+                    'Get-IseSnippet', [Iseberg.PowerShellHost.GetIseSnippetCommand], $null))
                 $iss.Commands.Add([System.Management.Automation.Runspaces.SessionStateCmdletEntry]::new(
-                    'Import-IseSnippet', [Iseberg.Core.ImportIseSnippetCommand], $null))
+                    'Import-IseSnippet', [Iseberg.PowerShellHost.ImportIseSnippetCommand], $null))
                 $global:phase4Pushed = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace($Host, $iss)
                 $global:phase4Pushed.Open()
                 $Host.PushRunspace($global:phase4Pushed)
@@ -4374,23 +4390,42 @@ public sealed class PortableIseWorkbenchTests
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static Task Phase4SnippetWithoutHostCoreAsync(string command) => Task.Run(() =>
+    private static async Task Phase4SnippetWithoutHostCoreAsync(string command)
     {
-        var state = System.Management.Automation.Runspaces.InitialSessionState.CreateDefault2();
-        state.Commands.Add(new System.Management.Automation.Runspaces.SessionStateCmdletEntry(
-            "Get-IseSnippet", typeof(GetIseSnippetCommand), null));
-        state.Commands.Add(new System.Management.Automation.Runspaces.SessionStateCmdletEntry(
-            "New-IseSnippet", typeof(NewIseSnippetCommand), null));
-        state.Commands.Add(new System.Management.Automation.Runspaces.SessionStateCmdletEntry(
-            "Import-IseSnippet", typeof(ImportIseSnippetCommand), null));
-        using var runspace = System.Management.Automation.Runspaces.RunspaceFactory.CreateRunspace(state);
-        runspace.Open();
-        using var shell = System.Management.Automation.PowerShell.Create();
-        shell.Runspace = runspace;
-        shell.AddScript("try { " + command +
-            " -ErrorAction Stop; 'unexpected success' } catch { $_.Exception.Message }");
-        var output = shell.Invoke();
-        Assert.Empty(shell.Streams.Error);
-        Assert.Equal("ISE snippet commands require a local Iseberg PowerShell tab.", Assert.Single(output).BaseObject);
-    });
+        await using var engine = new PowerShellSession();
+        await engine.InitializeAsync();
+        var output = new List<OutputEntry>();
+        engine.Output += output.Add;
+        await engine.ExecuteAsync($$"""
+            $state = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault2()
+            $state.Commands.Add([System.Management.Automation.Runspaces.SessionStateCmdletEntry]::new(
+                'Get-IseSnippet', [Iseberg.PowerShellHost.GetIseSnippetCommand], $null))
+            $state.Commands.Add([System.Management.Automation.Runspaces.SessionStateCmdletEntry]::new(
+                'New-IseSnippet', [Iseberg.PowerShellHost.NewIseSnippetCommand], $null))
+            $state.Commands.Add([System.Management.Automation.Runspaces.SessionStateCmdletEntry]::new(
+                'Import-IseSnippet', [Iseberg.PowerShellHost.ImportIseSnippetCommand], $null))
+            $runspace = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace($state)
+            $shell = [System.Management.Automation.PowerShell]::Create()
+            try {
+                $runspace.Open()
+                $shell.Runspace = $runspace
+                $command = '{{command.Replace("'", "''", StringComparison.Ordinal)}}'
+                $null = $shell.AddScript("try { " + $command +
+                    " -ErrorAction Stop; 'unexpected success' } catch { `$_.Exception.Message }")
+                $results = $shell.Invoke()
+                if ($shell.Streams.Error.Count -ne 0) { throw $shell.Streams.Error[0] }
+                if ($results.Count -ne 1) { throw "Expected one guard result; got $($results.Count)." }
+                $results[0]
+            }
+            finally {
+                $shell.Dispose()
+                $runspace.Dispose()
+            }
+            """);
+        Assert.DoesNotContain(output, entry => entry.Kind == OutputKind.Error);
+        Assert.Equal("ISE snippet commands require a local Iseberg PowerShell tab.",
+            Assert.Single(output, entry => entry.Kind == OutputKind.Output).Text.TrimEnd('\r', '\n'));
+        Assert.DoesNotContain(AppDomain.CurrentDomain.GetAssemblies(),
+            assembly => assembly.GetName().Name == "System.Management.Automation");
+    }
 }

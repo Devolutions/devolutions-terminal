@@ -10,14 +10,6 @@
     <PublishTrimmed>true</PublishTrimmed>
     <PublishAot Condition="'$(Configuration)' == 'Debug'">false</PublishAot>
     <PublishTrimmed Condition="'$(Configuration)' == 'Debug'">false</PublishTrimmed>
-    <PublishAot Condition="'$(EnablePowerShellIse)' == 'true'">false</PublishAot>
-    <PublishTrimmed Condition="'$(EnablePowerShellIse)' == 'true'">false</PublishTrimmed>
-    <PublishSelfContained Condition="'$(EnablePowerShellIse)' == 'true' and '$(Configuration)' != 'Debug'">true</PublishSelfContained>
-    <PublishSingleFile Condition="'$(EnablePowerShellIse)' == 'true' and '$(Configuration)' != 'Debug'">true</PublishSingleFile>
-    <IncludeAllContentForSelfExtract Condition="'$(EnablePowerShellIse)' == 'true'">true</IncludeAllContentForSelfExtract>
-    <EnableSingleFileAnalyzer Condition="'$(EnablePowerShellIse)' == 'true'">false</EnableSingleFileAnalyzer>
-    <IsAotCompatible Condition="'$(EnablePowerShellIse)' == 'true'">false</IsAotCompatible>
-    <EnableTrimAnalyzer Condition="'$(EnablePowerShellIse)' == 'true'">false</EnableTrimAnalyzer>
     <InvariantGlobalization>false</InvariantGlobalization>
     <IlcOptimizationPreference>Speed</IlcOptimizationPreference>
     <DebugType>embedded</DebugType>
@@ -45,12 +37,6 @@
 
   <Import Project="..\..\native\NativeLibraries.targets" />
 
-  <Target Name="ValidatePowerShellIsePublish" BeforeTargets="PrepareForBuild;PrepareForPublish"
-          Condition="'$(EnablePowerShellIse)' == 'true'">
-    <Error Condition="'$(PublishAot)' == 'true' or '$(PublishTrimmed)' == 'true'"
-           Text="PowerShell ISE requires dynamic code and reflection. Publish untrimmed without NativeAOT, or set EnablePowerShellIse=false for a terminal-only NativeAOT distribution." />
-  </Target>
-
   <Target Name="KeepNativePayloadSignable" BeforeTargets="_ComputeFilesToBundle"
           Condition="'$(PublishSingleFile)' == 'true'">
     <ItemGroup>
@@ -65,10 +51,23 @@
           Condition="'$(EnablePowerShellIse)' == 'true'">
     <ItemGroup>
       <_ForbiddenPowerShellPayload Include="@(ResolvedFileToPublish)"
-          Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('%(ResolvedFileToPublish.Filename)', '(?i)^(System\.Management\.Automation|Microsoft\.PowerShell\.|PowerShell\.|Microsoft\.Management\.Infrastructure)'))" />
+          Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('%(ResolvedFileToPublish.Filename)', '(?i)^(System\.Management\.Automation|Microsoft\.PowerShell\.|PowerShell\.|Microsoft\.Management\.Infrastructure|pwsh$)'))" />
+      <_ForbiddenPowerShellPayload Include="@(ResolvedFileToPublish)"
+          Condition="'$(PublishAot)' == 'true' and $([System.Text.RegularExpressions.Regex]::IsMatch('%(ResolvedFileToPublish.Filename)', '(?i)^(lib)?(coreclr|hostfxr|hostpolicy|clrjit|mscordaccore)$'))" />
+      <_IsebergBridgeModule Include="@(ResolvedFileToPublish)"
+          Condition="'%(ResolvedFileToPublish.RelativePath)' == 'Devolutions.Iseberg.PowerShell.dll'" />
+      <_UnexpectedIsebergBridgePayload Include="@(ResolvedFileToPublish)"
+          Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('%(ResolvedFileToPublish.RelativePath)', '(^|[\\/])Iseberg\.PowerShell[\\/]'))
+              or '%(ResolvedFileToPublish.Filename)%(ResolvedFileToPublish.Extension)' == 'Iseberg.PowerShell.dll'
+              or ('%(ResolvedFileToPublish.Filename)%(ResolvedFileToPublish.Extension)' == 'Devolutions.Iseberg.PowerShell.dll' and '%(ResolvedFileToPublish.RelativePath)' != 'Devolutions.Iseberg.PowerShell.dll')
+              or ('$(PublishAot)' == 'true' and '%(ResolvedFileToPublish.Filename)%(ResolvedFileToPublish.Extension)' == 'Iseberg.Contracts.dll')" />
     </ItemGroup>
     <Error Condition="'@(_ForbiddenPowerShellPayload)' != ''"
            Text="Iseberg must load the separately installed PowerShell runtime, not redistribute SDK runtime assets: @(_ForbiddenPowerShellPayload)" />
+    <Error Condition="'@(_UnexpectedIsebergBridgePayload)' != ''"
+           Text="The Iseberg bridge payload must contain only Devolutions.Iseberg.PowerShell.dll beside the executables: @(_UnexpectedIsebergBridgePayload)" />
+    <Error Condition="'@(_IsebergBridgeModule)' == ''"
+           Text="The Iseberg publish must include Devolutions.Iseberg.PowerShell.dll as loose content beside the executables." />
   </Target>
 
   <Target Name="PublishDtCli" AfterTargets="Publish">

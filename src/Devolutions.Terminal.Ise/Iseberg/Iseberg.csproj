@@ -5,6 +5,9 @@
     <PackageReference Include="Avalonia.AvaloniaEdit" />
     <ProjectReference Include="..\Iseberg.Core\Iseberg.Core.csproj" />
     <ProjectReference Include="..\Iseberg.Editor\Iseberg.Editor.csproj" />
+    <ProjectReference Include="..\Iseberg.PowerShell\Iseberg.PowerShell.csproj"
+                      ReferenceOutputAssembly="false" PrivateAssets="all"
+                      AdditionalProperties="PublishAot=false;PublishTrimmed=false;SelfContained=false" />
     <None Include="..\..\..\docs\licenses\iseberg.txt" Link="THIRD-PARTY-NOTICES-ISEBERG.txt"
           CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
     <None Include="..\..\..\docs\licenses\iseberg-editor.md" Link="THIRD-PARTY-NOTICES-ISEBERG-EDITOR.txt"
@@ -12,4 +15,23 @@
     <None Include="..\..\..\docs\licenses\avaloniaedit.txt" Link="THIRD-PARTY-NOTICES-AVALONIAEDIT.txt"
           CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
   </ItemGroup>
+  <Target Name="CollectIsebergModuleContent"
+          BeforeTargets="GetCopyToOutputDirectoryItems;GetCopyToPublishDirectoryItems"
+          DependsOnTargets="ResolveProjectReferences">
+    <MSBuild Projects="..\Iseberg.PowerShell\Iseberg.PowerShell.csproj"
+             Targets="GetTargetPath"
+             RemoveProperties="TargetFramework"
+             Properties="Configuration=$(Configuration);PublishAot=false;PublishTrimmed=false;SelfContained=false">
+      <Output TaskParameter="TargetOutputs" ItemName="_IsebergModuleAssembly" />
+    </MSBuild>
+    <ItemGroup>
+      <_IsebergModuleContent Include="@(_IsebergModuleAssembly)" />
+      <ContentWithTargetPath Include="@(_IsebergModuleContent)"
+               Link="%(Filename)%(Extension)"
+               TargetPath="%(Filename)%(Extension)"
+               CopyToOutputDirectory="PreserveNewest"
+               CopyToPublishDirectory="PreserveNewest"
+               ExcludeFromSingleFile="true" />
+    </ItemGroup>
+  </Target>
 </Project>

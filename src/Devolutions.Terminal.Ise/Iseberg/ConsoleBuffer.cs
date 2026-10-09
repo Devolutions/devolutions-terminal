@@ -1,5 +1,6 @@
 using AvaloniaEdit.Document;
 using AvaloniaEdit.Editing;
+using Avalonia.Threading;
 using Iseberg.Core;
 
 namespace Iseberg;
@@ -7,7 +8,10 @@ namespace Iseberg;
 public sealed class ConsoleBuffer : IReadOnlySectionProvider
 {
     public sealed record Span(int Start, int End, OutputKind Kind, int CodeStart = 0, ScriptAnalysis? Analysis = null,
-        OutputStyle? Style = null, IReadOnlyList<OutputEntry>? PromptStyles = null);
+        OutputStyle? Style = null, IReadOnlyList<OutputEntry>? PromptStyles = null)
+    {
+        internal Guid AnalysisId { get; init; } = Guid.NewGuid();
+    }
     public TextDocument Document { get; } = new();
     public List<Span> Spans { get; } = [];
     public int TranscriptEnd { get; private set; }
@@ -20,18 +24,51 @@ public sealed class ConsoleBuffer : IReadOnlySectionProvider
     private bool warnedUnsupportedControl;
     public IReadOnlyList<OutputEntry> PromptParts { get; private set; } = [];
     private string? analyzedInput;
+    private string observedInput = "";
     private ScriptAnalysis? inputAnalysis;
-    public ScriptAnalysis InputAnalysis
+    public long InputRevision { get; private set; }
+    private CancellationTokenSource? inputAnalysisCancellation;
+    public Func<string, CancellationToken, Task<ScriptAnalysis>>? Analyze { get; set; }
+    public ScriptAnalysis? InputAnalysis => analyzedInput == Input ? inputAnalysis : null;
+    public event Action? AnalysisChanged;
+    public event Action<Exception>? AnalysisFailed;
+
+    public ConsoleBuffer() => Document.TextChanged += (_, _) => ObserveInputChange();
+
+    private void ObserveInputChange()
     {
-        get
+        var input = Input;
+        if (input == observedInput) return;
+        observedInput = input;
+        InputRevision++;
+        ScheduleInputAnalysis();
+    }
+
+    private void ScheduleInputAnalysis()
+    {
+        if (Analyze is null || analyzedInput == Input) return;
+        inputAnalysisCancellation?.Cancel();
+        inputAnalysisCancellation?.Dispose();
+        inputAnalysisCancellation = new();
+        _ = AnalyzeInputAsync(Input, inputAnalysisCancellation.Token);
+    }
+
+    private async Task AnalyzeInputAsync(string text, CancellationToken cancellation)
+    {
+        try
         {
-            var input = Input;
-            if (inputAnalysis is null || analyzedInput != input)
-            {
-                analyzedInput = input;
-                inputAnalysis = EditorAnalysis.Analyze(input);
-            }
-            return inputAnalysis;
+            await Task.Delay(150, cancellation);
+            var analysis = await Analyze!(text, cancellation);
+            cancellation.ThrowIfCancellationRequested();
+            if (Input != text) return;
+            analyzedInput = text;
+            inputAnalysis = analysis;
+            AnalysisChanged?.Invoke();
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+        catch (Exception exception) when (exception is InvalidOperationException or IOException or ObjectDisposedException)
+        {
+            AnalysisFailed?.Invoke(exception);
         }
     }
 
@@ -41,7 +78,7 @@ public sealed class ConsoleBuffer : IReadOnlySectionProvider
         set
         {
             if (HasPrompt) Document.Replace(InputStart, Document.TextLength - InputStart, value);
-            else draft = value;
+            else { draft = value; ObserveInputChange(); }
         }
     }
 
@@ -137,8 +174,37 @@ public sealed class ConsoleBuffer : IReadOnlySectionProvider
         if (entry.Kind != OutputKind.Command && Spans.Count > 0 && Spans[^1].Kind == entry.Kind && Spans[^1].End == start && Spans[^1].Style == entry.Style)
             Spans[^1] = Spans[^1] with { End = TranscriptEnd };
         else
-            Spans.Add(new(start, TranscriptEnd, entry.Kind, start + entry.CodeStart,
-                entry.Kind == OutputKind.Command ? EditorAnalysis.Analyze(entry.Text[entry.CodeStart..]) : null, entry.Style, promptStyles));
+        {
+            var span = new Span(start, TranscriptEnd, entry.Kind, start + entry.CodeStart,
+                entry.Kind == OutputKind.Command && analyzedInput == entry.Text[entry.CodeStart..] ? inputAnalysis : null, entry.Style, promptStyles);
+            Spans.Add(span);
+            if (entry.Kind == OutputKind.Command && span.Analysis is null && Analyze is not null)
+                _ = AnalyzeCommandAsync(span.AnalysisId, entry.Text[entry.CodeStart..]);
+        }
+    }
+
+    private async Task AnalyzeCommandAsync(Guid id, string text)
+    {
+        try
+        {
+            var result = await Analyze!(text, CancellationToken.None);
+            var index = Spans.FindIndex(span => span.AnalysisId == id);
+            if (index < 0) return;
+            Spans[index] = Spans[index] with { Analysis = result };
+            AnalysisChanged?.Invoke();
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or IOException or OperationCanceledException or ObjectDisposedException)
+        {
+            AnalysisFailed?.Invoke(exception);
+        }
+    }
+
+    internal void CancelAnalysis()
+    {
+        inputAnalysisCancellation?.Cancel();
+        inputAnalysisCancellation?.Dispose();
+        inputAnalysisCancellation = null;
+        Analyze = null;
     }
 
     private void Trim()

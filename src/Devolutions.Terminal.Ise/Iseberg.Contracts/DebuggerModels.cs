@@ -1,5 +1,3 @@
-using System.Management.Automation;
-
 namespace Iseberg.Core;
 
 public enum BreakpointKind { Line, Command, Variable }
@@ -18,8 +16,6 @@ public sealed record BreakpointSpec(BreakpointKind Kind, string? ScriptPath = nu
             throw new ArgumentException("Invalid breakpoint kind or variable access mode.");
         if (!string.IsNullOrWhiteSpace(Condition) && !string.IsNullOrWhiteSpace(Action))
             throw new ArgumentException("Use a condition or an action, not both.");
-        if (!string.IsNullOrWhiteSpace(Condition)) _ = ScriptBlock.Create($"if ({Condition}) {{ break }}");
-        if (!string.IsNullOrWhiteSpace(Action)) _ = ScriptBlock.Create(Action);
     }
 }
 

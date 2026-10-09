@@ -23,10 +23,9 @@ Build the MSI:
 
 This project owns the development package identity and the scripts that turn the
 `win-x64` and `win-arm64` NativeAOT publishes into per-architecture MSIX packages.
-Default release packages exclude Iseberg. `Build-Packages.ps1` explicitly
-publishes with `EnablePowerShellIse=false` to retain NativeAOT packaging.
-Iseberg requires an explicit managed, untrimmed build with
-`EnablePowerShellIse=true`, outside the default packaging flow.
+Default release packages include Iseberg in the NativeAOT desktop and ship its
+private managed bridge module. The bridge runs only inside separately installed
+PowerShell; it does not turn the desktop into a managed publish.
 See [Iseberg prerequisites and distribution](../../docs/iseberg.md).
 Direct `dotnet run` and `dotnet publish` remain unpackaged and do not require
 registration.

@@ -75,7 +75,7 @@ public sealed class DynamicProfileGeneratorTests
 
         var result = await new PowerShellCoreProfileGenerator(environment).GenerateAsync(default);
 
-        Assert.Equal(3, result.Profiles.Count);
+        Assert.Equal(3, result.Profiles.Count(profile => profile.Kind == ProfileKind.Terminal));
         Assert.Equal("PowerShell", result.Profiles[0].Name);
         Assert.Equal("{574e775e-4f2a-5b96-ac1e-a2962a402336}", result.Profiles[0].Guid);
         Assert.Equal($"\"{stable}\"", result.Profiles[0].Commandline);
@@ -95,7 +95,7 @@ public sealed class DynamicProfileGeneratorTests
 
         var result = await new PowerShellCoreProfileGenerator(fixture.Environment()).GenerateAsync(default);
 
-        var profile = Assert.Single(result.Profiles);
+        var profile = Assert.Single(result.Profiles, profile => profile.Kind == ProfileKind.Terminal);
         Assert.Equal("PowerShell", profile.Name);
         Assert.Equal("{574e775e-4f2a-5b96-ac1e-a2962a402336}", profile.Guid);
 
@@ -104,6 +104,155 @@ public sealed class DynamicProfileGeneratorTests
         var x86 = Assert.Single(result.Profiles, item => item.Name == "PowerShell 7 (x86)");
         Assert.Equal(ProfileGuid.CreateDynamic("PowerShell 7 (x86)").ToString("B"), x86.Guid);
     }
+
+    [Theory]
+    [InlineData(false, false, DynamicProfileSource.PowerShellCore)]
+    [InlineData(true, false, DynamicProfileSource.Linux)]
+    [InlineData(false, true, DynamicProfileSource.MacOS)]
+    public async Task AutomaticIsebergProfileFollowsDetectedPowerShellAndBuildFlag(
+        bool isLinux, bool isMacOS, string source)
+    {
+        using var fixture = new DirectoryFixture();
+        var executable = fixture.Touch("path", isLinux || isMacOS ? "pwsh" : "pwsh.exe");
+        if (!isLinux && !isMacOS)
+        {
+            fixture.Touch("ProgramFiles", "PowerShell", "7", "pwsh.exe");
+            fixture.Touch("ProgramFiles", "PowerShell", "7-preview", "pwsh.exe");
+        }
+        var environment = fixture.Environment(isLinux: isLinux, isMacOS: isMacOS);
+        var manager = DynamicProfileManager.CreateDefault(environment,
+            new StubRunner(new DynamicProfileCommandResult(0, string.Empty, string.Empty, false)));
+
+        var first = await manager.GenerateAsync();
+        var second = await manager.GenerateAsync();
+
+        Assert.All(first.Profiles, profile => Assert.Equal(source, profile.Source));
+        Assert.Contains(first.Profiles, profile =>
+            profile.Kind == ProfileKind.Terminal && profile.Commandline.Contains(executable, StringComparison.Ordinal));
+        Assert.Equal(first.Profiles.Select(profile => profile.Guid), second.Profiles.Select(profile => profile.Guid));
+#if POWERSHELL_ISE
+        var ise = Assert.Single(first.Profiles, profile => profile.Kind == ProfileKind.PowerShellIse);
+        Assert.Equal("Iseberg", ise.Name);
+        Assert.Equal(ProfileGuid.Create("Iseberg", source).ToString("B"), ise.Guid);
+        Assert.Equal(source, ise.Source);
+        Assert.Equal(SettingsOrigin.Generated, ise.Origin);
+        Assert.Equal(environment.UserProfile, ise.StartingDirectory);
+        Assert.Equal(ProfileSettings.PowerShellIseIcon, ise.Icon);
+        Assert.Equal(string.Empty, ise.Commandline);
+        Assert.Null(ise.ConnectionType);
+        Assert.Empty(ise.Environment);
+        Assert.False(ise.Hidden);
+        Assert.False(ise.IseLoadProfiles);
+        var state = new ApplicationStateData();
+        first.UpdateState(state);
+        Assert.Contains(Guid.Parse(ise.Guid!), state.GeneratedProfiles);
+#else
+        Assert.DoesNotContain(first.Profiles, profile => profile.Kind == ProfileKind.PowerShellIse);
+#endif
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task MissingPowerShellDoesNotGenerateIseberg(bool isLinux, bool isMacOS)
+    {
+        using var fixture = new DirectoryFixture();
+        fixture.Touch("System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+        fixture.Touch("path", "bash");
+        var manager = DynamicProfileManager.CreateDefault(
+            fixture.Environment(isLinux: isLinux, isMacOS: isMacOS),
+            new StubRunner(new DynamicProfileCommandResult(0, string.Empty, string.Empty, false)));
+
+        var result = await manager.GenerateAsync();
+
+        Assert.DoesNotContain(result.Profiles, profile => profile.Kind == ProfileKind.PowerShellIse);
+        Assert.DoesNotContain(result.Profiles, profile => profile.Name == "PowerShell");
+        Assert.NotEmpty(result.Profiles);
+    }
+
+    [Theory]
+    [InlineData(false, false, DynamicProfileSource.PowerShellCore)]
+    [InlineData(true, false, DynamicProfileSource.Linux)]
+    [InlineData(false, true, DynamicProfileSource.MacOS)]
+    public async Task DisabledPowerShellSourceAlsoDisablesAutomaticIseberg(
+        bool isLinux, bool isMacOS, string source)
+    {
+        using var fixture = new DirectoryFixture();
+        fixture.Touch("path", isLinux || isMacOS ? "pwsh" : "pwsh.exe");
+        var manager = DynamicProfileManager.CreateDefault(
+            fixture.Environment(isLinux: isLinux, isMacOS: isMacOS),
+            new StubRunner(new DynamicProfileCommandResult(0, string.Empty, string.Empty, false)));
+
+        var result = await manager.GenerateAsync([source]);
+
+        Assert.DoesNotContain(result.Profiles, profile => profile.Source == source);
+        Assert.DoesNotContain(result.Profiles, profile => profile.Kind == ProfileKind.PowerShellIse);
+        Assert.Contains(result.Diagnostics, diagnostic =>
+            diagnostic.Code == "DynamicProfileSourceDisabled" && diagnostic.Source == source);
+    }
+
+#if POWERSHELL_ISE
+    [Theory]
+    [InlineData(false, false, DynamicProfileSource.PowerShellCore)]
+    [InlineData(true, false, DynamicProfileSource.Linux)]
+    [InlineData(false, true, DynamicProfileSource.MacOS)]
+    public async Task AutomaticIsebergPreservesExistingProfilesDefaultAndUserOverrides(
+        bool isLinux, bool isMacOS, string source)
+    {
+        using var fixture = new DirectoryFixture();
+        fixture.Touch("path", isLinux || isMacOS ? "pwsh" : "pwsh.exe");
+        var environment = fixture.Environment(isLinux: isLinux, isMacOS: isMacOS);
+        var manager = DynamicProfileManager.CreateDefault(environment,
+            new StubRunner(new DynamicProfileCommandResult(0, string.Empty, string.Empty, false)));
+        var iseId = ProfileGuid.Create("Iseberg", source);
+        var manualId = Guid.NewGuid();
+        const string defaults = """
+            { "profiles": { "defaults": {}, "list": [] }, "schemes": [{ "name": "Campbell" }] }
+            """;
+        var user = $$"""
+            {
+              "defaultProfile": "{{manualId:B}}",
+              "profiles": {
+                "list": [
+                  { "guid": "{{manualId:B}}", "name": "My terminal", "commandline": "my-shell" },
+                  {
+                    "guid": "{{iseId:B}}",
+                    "name": "My workbench",
+                    "hidden": true,
+                    "startingDirectory": {{Json(environment.UserProfile)}},
+                    "ise": { "colorTheme": "Dark", "showLineNumbers": false }
+                  }
+                ]
+              }
+            }
+            """;
+
+        var loaded = await DynamicSettingsLoader.LoadAsync(defaults, user, [], manager);
+        var reloaded = await DynamicSettingsLoader.LoadAsync(defaults,
+            SettingsLoader.SerializeUserDocument(loaded.Settings), [], manager);
+
+        foreach (var settings in new[] { loaded.Settings, reloaded.Settings })
+        {
+            Assert.Equal(manualId.ToString("B"), settings.DefaultProfile);
+            var manual = Assert.Single(settings.Profiles, profile => profile.Guid == manualId.ToString("B"));
+            Assert.Equal(ProfileKind.Terminal, manual.Kind);
+            Assert.Equal("My terminal", manual.Name);
+            Assert.Equal("my-shell", manual.Commandline);
+            var ise = Assert.Single(settings.Profiles, profile => profile.Kind == ProfileKind.PowerShellIse);
+            Assert.Equal(iseId.ToString("B"), ise.Guid);
+            Assert.Equal("My workbench", ise.Name);
+            Assert.Equal(source, ise.Source);
+            Assert.Equal(SettingsOrigin.Generated, ise.Origin);
+            Assert.True(ise.Hidden);
+            Assert.False(ise.Orphaned);
+            Assert.Equal(environment.UserProfile, ise.StartingDirectory);
+            Assert.Equal(IsebergThemes.Dark, ise.IseColorTheme);
+            Assert.False(ise.IseShowLineNumbers);
+            Assert.Equal(string.Empty, ise.Commandline);
+        }
+    }
+#endif
 
     [Fact]
     public async Task InboxShellsUseUpstreamGuidsAndCommands()
