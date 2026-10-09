@@ -260,8 +260,9 @@ excluded when the feature is off. CI builds the feature-enabled native desktop
 and retains a separate terminal-only configuration gate.
 Windows CI runs test projects sequentially (`-m:1`) to avoid concurrent test-host
 startup starving short broker deadlines. It retains TRX results and per-test
-hang diagnostics; the complete suite has a separate, longer time budget for the
-slower hosted Windows runner.
+hang diagnostics with a five-minute hang guard; the complete suite has a separate
+120-minute budget because isolated `pwsh` startup is slower on hosted Windows
+runners. This does not change individual test assertions or hang deadlines.
 
 Native libraries/helpers and legal notices remain loose for package signing and
 license checks. Ship `Iseberg.PowerShell/Iseberg.PowerShell.dll` and its sibling

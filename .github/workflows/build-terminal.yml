@@ -169,7 +169,9 @@ jobs:
         run: pwsh -NoLogo -NoProfile -File scripts/Install-IsebergTestPowerShell.ps1 -Version ${{ matrix.powershell }}
 
       - name: Run tests
-        timeout-minutes: 60
+        # Hosted Windows runners can spend several seconds starting each isolated pwsh.
+        # Keep the per-test hang guard below; budget the complete sequential UI suite separately.
+        timeout-minutes: 120
         run: >-
           dotnet test Devolutions.Terminal.slnx -c Release --no-build -m:1
           -p:EnablePowerShellIse=true -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
