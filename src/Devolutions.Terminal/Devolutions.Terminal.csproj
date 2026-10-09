@@ -56,17 +56,15 @@
           Condition="'$(PublishAot)' == 'true' and $([System.Text.RegularExpressions.Regex]::IsMatch('%(ResolvedFileToPublish.Filename)', '(?i)^(lib)?(coreclr|hostfxr|hostpolicy|clrjit|mscordaccore)$'))" />
       <_IsebergBridgeModule Include="@(ResolvedFileToPublish)"
           Condition="'%(ResolvedFileToPublish.Filename)%(ResolvedFileToPublish.Extension)' == 'Iseberg.PowerShell.dll' and $([System.Text.RegularExpressions.Regex]::IsMatch('%(ResolvedFileToPublish.RelativePath)', '(^|[\\/])Iseberg\.PowerShell[\\/]'))" />
-      <_IsebergBridgeContracts Include="@(ResolvedFileToPublish)"
-          Condition="'%(ResolvedFileToPublish.Filename)%(ResolvedFileToPublish.Extension)' == 'Iseberg.Contracts.dll' and $([System.Text.RegularExpressions.Regex]::IsMatch('%(ResolvedFileToPublish.RelativePath)', '(^|[\\/])Iseberg\.PowerShell[\\/]'))" />
       <_UnexpectedIsebergBridgePayload Include="@(ResolvedFileToPublish)"
-          Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('%(ResolvedFileToPublish.RelativePath)', '(^|[\\/])Iseberg\.PowerShell[\\/]')) and '%(ResolvedFileToPublish.Filename)%(ResolvedFileToPublish.Extension)' != 'Iseberg.PowerShell.dll' and '%(ResolvedFileToPublish.Filename)%(ResolvedFileToPublish.Extension)' != 'Iseberg.Contracts.dll'" />
+          Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('%(ResolvedFileToPublish.RelativePath)', '(^|[\\/])Iseberg\.PowerShell[\\/]')) and '%(ResolvedFileToPublish.Filename)%(ResolvedFileToPublish.Extension)' != 'Iseberg.PowerShell.dll'" />
     </ItemGroup>
     <Error Condition="'@(_ForbiddenPowerShellPayload)' != ''"
            Text="Iseberg must load the separately installed PowerShell runtime, not redistribute SDK runtime assets: @(_ForbiddenPowerShellPayload)" />
     <Error Condition="'@(_UnexpectedIsebergBridgePayload)' != ''"
-           Text="The Iseberg bridge payload must contain only the two DT-owned module and contract assemblies: @(_UnexpectedIsebergBridgePayload)" />
-    <Error Condition="'@(_IsebergBridgeModule)' == '' or '@(_IsebergBridgeContracts)' == ''"
-           Text="The Iseberg publish must include Iseberg.PowerShell.dll and Iseberg.Contracts.dll as loose content in the Iseberg.PowerShell directory." />
+           Text="The Iseberg bridge payload must contain only Iseberg.PowerShell.dll: @(_UnexpectedIsebergBridgePayload)" />
+    <Error Condition="'@(_IsebergBridgeModule)' == ''"
+           Text="The Iseberg publish must include Iseberg.PowerShell.dll as loose content in the Iseberg.PowerShell directory." />
   </Target>
 
   <Target Name="PublishDtCli" AfterTargets="Publish">

@@ -26,7 +26,6 @@
     </MSBuild>
     <ItemGroup>
       <_IsebergModuleContent Include="@(_IsebergModuleAssembly)" />
-      <_IsebergModuleContent Include="@(_IsebergModuleAssembly->'%(RootDir)%(Directory)Iseberg.Contracts.dll')" />
       <ContentWithTargetPath Include="@(_IsebergModuleContent)"
                Link="Iseberg.PowerShell\%(Filename)%(Extension)"
                TargetPath="Iseberg.PowerShell\%(Filename)%(Extension)"

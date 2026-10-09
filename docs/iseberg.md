@@ -265,9 +265,13 @@ hang diagnostics with a five-minute hang guard; the complete suite has a separat
 runners. This does not change individual test assertions or hang deadlines.
 
 Native libraries/helpers and legal notices remain loose for package signing and
-license checks. Ship `Iseberg.PowerShell/Iseberg.PowerShell.dll` and its sibling
-`Iseberg.Contracts.dll` as loose content beside the executable; neither is loaded
-into DT. macOS app staging moves this module folder to `Contents/Resources`, while
+license checks. Ship only `Iseberg.PowerShell/Iseberg.PowerShell.dll` as loose
+content beside the executable; it is not loaded into DT. Shared contract sources
+and source-generated JSON are compiled into this module and separately into
+the SMA-free `Iseberg.Contracts` project referenced by the NativeAOT parent.
+The shared build-identity target fingerprints the same inputs in both builds.
+`Iseberg.Contracts.dll` is a parent build artifact, not a distribution payload.
+macOS app staging moves this module folder to `Contents/Resources`, while
 `Contents/MacOS` contains only native code.
 Keep all `THIRD-PARTY-NOTICES*.txt` files in distributions.
 
@@ -291,8 +295,8 @@ not recommended user installations.
 
 ### Windows NativeAOT subprocess evidence
 
-The feature-enabled `win-x64` Release publish was exercised as an actual native
-desktop, not a managed harness. Both desktop and CLI executables have no CLR
+The original two-DLL feature-enabled `win-x64` Release publish was exercised as
+an actual native desktop, not a managed harness. Both desktop and CLI executables have no CLR
 header. Its loose module folder contains only the two DT-owned assemblies; the
 publish contains no PowerShell engine/CoreCLR payload.
 
@@ -331,13 +335,13 @@ workflows on serviced PowerShell 7.4.20/.NET 8.0.31.
 
 ### Subprocess regression evidence
 
-Complete affected-project runs passed **1,625 tests, 0 failed, 9 skipped** across the
-affected projects. The skips are existing Unix PTY cases on Windows; no Iseberg
-case was skipped.
+The latest complete affected-project runs passed **1,627 tests, 0 failed,
+9 skipped** across the affected projects. The skips are existing Unix PTY cases
+on Windows; no Iseberg case was skipped.
 
 | Test project | Passed | Failed | Skipped |
 | --- | ---: | ---: | ---: |
-| Devolutions.Terminal.App.Tests | 587 | 0 | 0 |
+| Devolutions.Terminal.App.Tests | 589 | 0 | 0 |
 | Devolutions.Terminal.UI.Tests | 665 | 0 | 0 |
 | Devolutions.Terminal.Settings.Tests | 190 | 0 | 0 |
 | Devolutions.Terminal.Settings.Editor.Tests | 64 | 0 | 0 |
@@ -357,10 +361,20 @@ connection disposal; cancellation/removal is synchronized so a completed
 handler's disposed token source cannot cause unexpected session loss.
 CLI, compatibility and package suites separately passed 34 tests.
 
+`SingleAssemblyModuleAuthenticatesAndExecutesWithoutContractsDll` copies only
+the module into an isolated directory, completes the authenticated handshake,
+executes with persistent state and parses incomplete input. It verifies that
+the child contracts belong to `Iseberg.PowerShell`, with no separate contracts
+assembly referenced or loaded, and that the parent remains SMA-free. This
+regression passes within all four complete App runs above; the single-DLL
+minimum-runtime UI run passes all 665 cases.
+
 The complete Release solution builds with zero warnings/errors, and the default
 Release NativeAOT desktop/CLI publish succeeds. Positive and negative publish
-guard checks accept the two owned bridge assemblies and reject SMA, CoreCLR,
-unexpected bridge dependencies or a missing contract assembly. Actual desktop
+guard checks accept the single owned module and reject SMA, CoreCLR,
+unexpected bridge dependencies (including a separate contracts DLL) or a missing
+module. MSI component generation preserves the single module at
+`<INSTALLLOCATION>/Iseberg.PowerShell/Iseberg.PowerShell.dll`. Actual desktop
 compiler references exclude SMA and the managed module. These checks are
 separate from the published native GUI evidence above.
 
@@ -474,7 +488,7 @@ at revision **`d2e723f4f8ed4e08db28a89f09a783e40aed001c`**:
 | Local project | Imported responsibility |
 | --- | --- |
 | Iseberg.Core | Parent session client, files and settings models (engine/host extracted into the child module) |
-| Iseberg.Contracts | Private wire DTOs and source-generated JSON shared by parent and child |
+| Iseberg.Contracts | SMA-free parent contracts project; canonical contract sources and build identity also compiled directly into the child module |
 | Iseberg.PowerShell | Managed binary module, custom PowerShell host, parser, execution and debugger |
 | Iseberg.Editor | Engine-independent AvaloniaEdit editor, accessibility, markers and editing commands |
 | Iseberg | Embeddable WorkbenchControl, dialogs, models and scoped resources |

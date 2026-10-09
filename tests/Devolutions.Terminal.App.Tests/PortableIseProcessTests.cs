@@ -7,6 +7,48 @@ namespace Devolutions.Terminal.App.Tests;
 public sealed class PortableIseProcessTests
 {
     [Fact]
+    public async Task SingleAssemblyModuleAuthenticatesAndExecutesWithoutContractsDll()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "dt-ise-single-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var module = Path.Combine(directory, "Iseberg.PowerShell.dll");
+            File.Copy(PowerShellProcessDiscovery.ModulePath, module);
+            Assert.Equal(new[] { module }, Directory.GetFiles(directory));
+            await using var session = new PowerShellSession { ModulePath = module };
+            await session.InitializeAsync();
+            var childId = Assert.IsType<int>(session.ChildProcessId);
+            var output = new List<OutputEntry>();
+            session.Output += output.Add;
+            await session.ExecuteAsync("""
+                'DT-CONTRACT-OWNER:' + [Iseberg.Core.IseBridgeProtocol].Assembly.GetName().Name
+                'DT-CONTRACT-REFERENCE:' + (@([Iseberg.Core.IseBridgeProtocol].Assembly.GetReferencedAssemblies() |
+                    Where-Object Name -eq 'Iseberg.Contracts').Count)
+                'DT-CONTRACT-LOADED:' + (@([AppDomain]::CurrentDomain.GetAssemblies() |
+                    Where-Object { $_.GetName().Name -eq 'Iseberg.Contracts' }).Count)
+                $global:dtSingleModuleValue = 42
+                """);
+            Assert.Equal(new[] { "DT-CONTRACT-OWNER:Iseberg.PowerShell", "DT-CONTRACT-REFERENCE:0", "DT-CONTRACT-LOADED:0" },
+                output.Where(entry => entry.Kind == OutputKind.Output).Select(entry => entry.Text.TrimEnd('\r', '\n')).ToArray());
+            Assert.DoesNotContain(output, entry => entry.Kind == OutputKind.Error);
+            output.Clear();
+            await session.ExecuteAsync("'DT-SINGLE-MODULE:' + $global:dtSingleModuleValue");
+            Assert.Equal("DT-SINGLE-MODULE:42",
+                Assert.Single(output, entry => entry.Kind == OutputKind.Output).Text.TrimEnd('\r', '\n'));
+            Assert.DoesNotContain(output, entry => entry.Kind == OutputKind.Error);
+            Assert.True(Assert.Single((await session.AnalyzeAsync("'unterminated")).Errors).IncompleteInput);
+            Assert.Equal(childId, session.ChildProcessId);
+            Assert.Equal(SessionState.Ready, session.State);
+            AssertParentHasNoPowerShellEngine();
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task ExecutionAndAnalysisStayInTheOwnedPowerShellChild()
     {
         await using var session = new PowerShellSession();

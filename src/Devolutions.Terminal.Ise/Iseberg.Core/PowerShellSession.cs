@@ -75,9 +75,6 @@ public sealed class PowerShellSession : IAsyncDisposable
         {
             if (!Path.IsPathFullyQualified(ModulePath) || !File.Exists(ModulePath))
                 throw new FileNotFoundException("The DT-owned Iseberg PowerShell bridge module is missing.", ModulePath);
-            var contractPath = Path.Combine(Path.GetDirectoryName(ModulePath)!, "Iseberg.Contracts.dll");
-            if (!File.Exists(contractPath))
-                throw new FileNotFoundException("The DT-owned Iseberg PowerShell bridge payload is incomplete: Iseberg.Contracts.dll is missing.", contractPath);
             var executable = ExecutablePath ?? PowerShellProcessDiscovery.FindExecutable();
             var endpoint = "dt-iseberg-" + Guid.NewGuid().ToString("N");
             var authentication = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));

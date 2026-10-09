@@ -54,10 +54,11 @@ it runs inside the installed PowerShell subprocess.
 ## Desktop distribution
 
 Default publishes and release packages are self-contained NativeAOT and include
-Iseberg. Ship the loose `Iseberg.PowerShell` folder with both DT-owned assemblies:
-`Iseberg.PowerShell.dll` and `Iseberg.Contracts.dll`. These are imported by
-separately installed PowerShell; do not ship SMA, PowerShell's runtime/native
-dependency graph, or CoreCLR. macOS staging places this folder in
+Iseberg. Ship the loose `Iseberg.PowerShell` folder containing only
+`Iseberg.PowerShell.dll`. Its shared contract sources are compiled into the module
+and separately into the NativeAOT parent; do not ship `Iseberg.Contracts.dll`.
+The module is imported by separately installed PowerShell; do not ship SMA,
+PowerShell's runtime/native dependency graph, or CoreCLR. macOS staging places this folder in
 `Contents/Resources`, outside the Mach-O-only `Contents/MacOS` directory.
 The `dt` CLI remains NativeAOT. Explicit terminal-only publishes use
 `-p:EnablePowerShellIse=false` and do not include the bridge.
