@@ -1,0 +1,111 @@
+name: Test Iseberg
+
+on:
+  push:
+    branches:
+      - "**"
+    paths:
+      - ".github/workflows/test-iseberg.yml"
+      - "src/**"
+      - "tests/**"
+      - "native/**"
+      - "assets/**"
+      - "Directory.Build.*"
+      - "Directory.Packages.props"
+      - "NuGet.Config"
+      - "global.json"
+      - "scripts/Install-IsebergTestPowerShell.ps1"
+  pull_request:
+    paths:
+      - ".github/workflows/test-iseberg.yml"
+      - "src/**"
+      - "tests/**"
+      - "native/**"
+      - "assets/**"
+      - "Directory.Build.*"
+      - "Directory.Packages.props"
+      - "NuGet.Config"
+      - "global.json"
+      - "scripts/Install-IsebergTestPowerShell.ps1"
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: iseberg-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Iseberg on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-24.04, macos-26]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache native libraries
+        uses: actions/cache@v4
+        with:
+          path: |
+            artifacts/tools
+            artifacts/ghostty-src
+            native/ghostty/*/*
+            native/linux-pty/*/dt-pty-host
+            native/noto-emoji/NotoColorEmoji.ttf
+          key: native-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/**/*.ps1', 'native/ghostty/ghostty-upstream.json', 'native/linux-pty/dt-pty-host.c', 'native/noto-emoji/noto-emoji.json') }}
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install test-only PowerShell
+        shell: pwsh
+        run: ./scripts/Install-IsebergTestPowerShell.ps1
+
+      - name: Test engine, workbench, and settings
+        timeout-minutes: 120
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          foreach ($project in @(
+            'Devolutions.Terminal.App.Tests',
+            'Devolutions.Terminal.UI.Tests',
+            'Devolutions.Terminal.Settings.Tests',
+            'Devolutions.Terminal.Settings.Editor.Tests'
+          )) {
+            dotnet test "tests/$project/$project.csproj" -c Release -m:1 `
+              -p:EnablePowerShellIse=true `
+              --logger "console;verbosity=normal" --logger trx `
+              --results-directory "artifacts/test-results/$project" `
+              --blame-hang --blame-hang-timeout 5min --blame-hang-dump-type none
+          }
+
+      - name: Upload test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iseberg-test-diagnostics-${{ matrix.os }}
+          path: artifacts/test-results
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Check terminal-only Windows NativeAOT publishes
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          foreach ($rid in @('win-x64', 'win-arm64')) {
+            dotnet publish src/Devolutions.Terminal/Devolutions.Terminal.csproj `
+              -c Release -r $rid --self-contained -p:EnablePowerShellIse=false `
+              -o "artifacts/terminal-only-validation/$rid"
+          }

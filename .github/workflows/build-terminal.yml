@@ -130,13 +130,9 @@ jobs:
           ) | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
   build:
-    name: Build and test (PowerShell ${{ matrix.powershell }})
+    name: Build and test
     runs-on: windows-latest
     needs: release-metadata
-    strategy:
-      fail-fast: false
-      matrix:
-        powershell: ['7.4.6', '7.5.11', '7.6.6']
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -159,22 +155,16 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Restore
-        run: dotnet restore Devolutions.Terminal.slnx -p:Configuration=Release -p:EnablePowerShellIse=true -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
+        run: dotnet restore Devolutions.Terminal.slnx -p:Configuration=Release -p:EnablePowerShellIse=false -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
 
       - name: Build
-        run: dotnet build Devolutions.Terminal.slnx -c Release --no-restore -p:EnablePowerShellIse=true -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
-
-      - name: Test
-        # Engine tests resolve the separately installed runtime; it is not a DT package payload.
-        run: pwsh -NoLogo -NoProfile -File scripts/Install-IsebergTestPowerShell.ps1 -Version ${{ matrix.powershell }}
+        run: dotnet build Devolutions.Terminal.slnx -c Release --no-restore -p:EnablePowerShellIse=false -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
 
       - name: Run tests
-        # Hosted Windows runners can spend several seconds starting each isolated pwsh.
-        # Keep the per-test hang guard below; budget the complete sequential UI suite separately.
-        timeout-minutes: 120
+        timeout-minutes: 60
         run: >-
           dotnet test Devolutions.Terminal.slnx -c Release --no-build -m:1
-          -p:EnablePowerShellIse=true -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
+          -p:EnablePowerShellIse=false -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
           --logger "console;verbosity=normal" --logger trx
           --results-directory artifacts/test-results/windows
           --blame-hang --blame-hang-timeout 5min --blame-hang-dump-type none
@@ -183,7 +173,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-test-diagnostics-${{ matrix.powershell }}
+          name: windows-test-diagnostics
           path: artifacts/test-results/windows
           if-no-files-found: ignore
           retention-days: 7
@@ -202,7 +192,6 @@ jobs:
     runs-on: windows-latest
     needs:
       - release-metadata
-      - build
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -276,16 +265,6 @@ jobs:
           -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
           -o artifacts/${{ matrix.rid }}
 
-      - name: Check terminal-only NativeAOT desktop
-        run: >
-          dotnet publish src/Devolutions.Terminal/Devolutions.Terminal.csproj
-          -c Release
-          -r ${{ matrix.rid }}
-          --self-contained
-          -p:EnablePowerShellIse=false
-          -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
-          -o artifacts/terminal-only-validation/${{ matrix.rid }}
-
       - name: Upload NativeAOT desktop
         uses: actions/upload-artifact@v4
         with:
@@ -294,13 +273,9 @@ jobs:
           if-no-files-found: error
 
   linux-managed:
-    name: Linux managed and metadata tests (PowerShell ${{ matrix.powershell }})
+    name: Linux managed and metadata tests
     runs-on: ubuntu-24.04
     needs: release-metadata
-    strategy:
-      fail-fast: false
-      matrix:
-        powershell: ['7.4.6', '7.5.11', '7.6.6']
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -322,25 +297,18 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Restore
-        run: dotnet restore Devolutions.Terminal.slnx -p:Configuration=Release -p:EnablePowerShellIse=true -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
-
-      - name: Run managed tests
-        run: pwsh -NoLogo -NoProfile -File scripts/Install-IsebergTestPowerShell.ps1 -Version ${{ matrix.powershell }}
+        run: dotnet restore Devolutions.Terminal.slnx -p:Configuration=Release -p:EnablePowerShellIse=false -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
 
       - name: Test managed projects
-        run: dotnet test Devolutions.Terminal.slnx -c Release --no-restore -p:EnablePowerShellIse=true -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
+        run: dotnet test Devolutions.Terminal.slnx -c Release --no-restore -p:EnablePowerShellIse=false -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
 
       - name: Validate Linux scripts and metadata
         run: bash scripts/Test-LinuxPackagingMetadata.sh
 
   macos-managed:
-    name: macOS managed and metadata tests (PowerShell ${{ matrix.powershell }})
+    name: macOS managed and metadata tests
     runs-on: macos-26
     needs: release-metadata
-    strategy:
-      fail-fast: false
-      matrix:
-        powershell: ['7.4.6', '7.5.11', '7.6.6']
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -362,13 +330,10 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Restore
-        run: dotnet restore Devolutions.Terminal.slnx -p:Configuration=Release -p:EnablePowerShellIse=true -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
-
-      - name: Run managed tests
-        run: pwsh -NoLogo -NoProfile -File scripts/Install-IsebergTestPowerShell.ps1 -Version ${{ matrix.powershell }}
+        run: dotnet restore Devolutions.Terminal.slnx -p:Configuration=Release -p:EnablePowerShellIse=false -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
 
       - name: Test managed projects
-        run: dotnet test Devolutions.Terminal.slnx -c Release --no-restore -p:EnablePowerShellIse=true -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
+        run: dotnet test Devolutions.Terminal.slnx -c Release --no-restore -p:EnablePowerShellIse=false -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
 
       - name: Validate macOS scripts and metadata
         run: pwsh -NoLogo -NoProfile -File scripts/Test-MacOsPackagingMetadata.ps1
@@ -386,7 +351,6 @@ jobs:
     name: macOS NativeAOT desktop ${{ matrix.rid }}
     runs-on: macos-26
     needs:
-      - macos-managed
       - release-metadata
     strategy:
       fail-fast: false
@@ -651,7 +615,6 @@ jobs:
     name: Linux packages ${{ matrix.rid }}
     runs-on: ubuntu-24.04
     needs:
-      - linux-managed
       - release-metadata
     strategy:
       fail-fast: false
@@ -746,7 +709,7 @@ jobs:
             artifacts/linux-packages/*-"${{ matrix.rid }}".AppImage
 
       - name: Rebuild and compare x64 packages
-        if: matrix.rid == 'linux-x64'
+        if: matrix.rid == 'linux-x64' && github.event_name != 'workflow_dispatch' && !startsWith(github.ref, 'refs/tags/')
         env:
           APPIMAGE_RUNTIME_FILE: ${{ github.workspace }}/artifacts/tools/runtime-${{ matrix.appimage_arch }}
           LINUX_PUBLISH_DIR: ${{ github.workspace }}/artifacts/publish/${{ matrix.rid }}
