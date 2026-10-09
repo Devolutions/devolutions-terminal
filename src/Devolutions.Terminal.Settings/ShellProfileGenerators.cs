@@ -85,6 +85,12 @@ public sealed class PowerShellCoreProfileGenerator : IDynamicProfileGenerator
             });
         }
 
+#if POWERSHELL_ISE
+        if (instances.Length > 0)
+        {
+            profiles.Add(ProfileSettings.CreateGeneratedPowerShellIse(Source, _environment.UserProfile));
+        }
+#endif
         return ValueTask.FromResult(new DynamicProfileGeneratorResult(profiles, []));
     }
 

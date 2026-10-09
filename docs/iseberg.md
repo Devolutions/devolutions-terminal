@@ -4,7 +4,15 @@
 command line or a separate application. **It is enabled in default NativeAOT
 desktop builds and release packages.** The workbench executes PowerShell in an
 owned `pwsh` subprocess through a private managed module shipped with DT.
-In **Settings**, select **Add a new
+When shell discovery detects `pwsh`, an **Iseberg** profile appears automatically
+in the new-tab menu on Windows, Linux and macOS, including with existing settings.
+Its stable generated identity preserves customizations across restarts. Hiding
+the profile or disabling its shell-discovery source also hides/removes it; the
+ordinary PowerShell profile and your default profile are otherwise unchanged.
+Explicit terminal-only builds do not generate Iseberg profiles. Compatibility
+validation still happens when the workbench is opened.
+
+To create additional workbench profiles, in **Settings**, select **Add a new
 profile**, choose **PowerShell ISE (Iseberg)** under **Profile type**, configure
 its name, starting directory and font, then select that
 profile from the new-tab menu. Existing PowerShell profiles continue to launch
@@ -335,7 +343,7 @@ workflows on serviced PowerShell 7.4.20/.NET 8.0.31.
 
 ### Subprocess regression evidence
 
-The latest complete affected-project runs passed **1,627 tests, 0 failed,
+The latest complete affected-project runs passed **1,639 tests, 0 failed,
 9 skipped** across the affected projects. The skips are existing Unix PTY cases
 on Windows; no Iseberg case was skipped.
 
@@ -343,7 +351,7 @@ on Windows; no Iseberg case was skipped.
 | --- | ---: | ---: | ---: |
 | Devolutions.Terminal.App.Tests | 589 | 0 | 0 |
 | Devolutions.Terminal.UI.Tests | 665 | 0 | 0 |
-| Devolutions.Terminal.Settings.Tests | 190 | 0 | 0 |
+| Devolutions.Terminal.Settings.Tests | 202 | 0 | 0 |
 | Devolutions.Terminal.Settings.Editor.Tests | 64 | 0 | 0 |
 | Devolutions.Terminal.Connection.Tests | 119 | 0 | 9 |
 
@@ -368,6 +376,13 @@ the child contracts belong to `Iseberg.PowerShell`, with no separate contracts
 assembly referenced or loaded, and that the parent remains SMA-free. This
 regression passes within all four complete App runs above; the single-DLL
 minimum-runtime UI run passes all 665 cases.
+
+Automatic profile regressions cover Windows/Linux/macOS discovery, one stable
+generated identity even with multiple PowerShell installations, absence when
+`pwsh` is missing, disabling the shared discovery source, and retaining user
+overrides and the existing default profile through settings serialization.
+The complete Settings suite passes 202 cases; the terminal-only discovery
+subset passes 31 cases and verifies that no Iseberg profile is generated.
 
 The complete Release solution builds with zero warnings/errors, and the default
 Release NativeAOT desktop/CLI publish succeeds. Positive and negative publish

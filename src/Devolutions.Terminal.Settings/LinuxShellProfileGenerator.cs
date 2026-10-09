@@ -38,7 +38,13 @@ public sealed class LinuxShellProfileGenerator(
                 static executable => Path.GetFileName(executable),
                 StringComparer.OrdinalIgnoreCase)
             .Select(CreateProfile)
-            .ToArray();
+            .ToList();
+#if POWERSHELL_ISE
+        if (candidates.Any(static executable => Path.GetFileName(executable) == "pwsh"))
+        {
+            profiles.Add(ProfileSettings.CreateGeneratedPowerShellIse(Source, environment.UserProfile));
+        }
+#endif
         return ValueTask.FromResult(new DynamicProfileGeneratorResult(profiles, []));
 
         void Add(string? executable)
