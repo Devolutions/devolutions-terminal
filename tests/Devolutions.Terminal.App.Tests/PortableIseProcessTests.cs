@@ -29,6 +29,37 @@ public sealed class PortableIseProcessTests
     }
 
     [Fact]
+    public async Task ResizingDuringInitializationDefersIpcUntilTheSessionIsReady()
+    {
+        await using var session = new PowerShellSession();
+        var output = new List<OutputEntry>();
+        session.Output += output.Add;
+        session.SetTerminalSize(83, 29);
+        var initialization = session.InitializeAsync();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        while (!initialization.IsCompleted)
+        {
+            session.SetTerminalSize(83, 29);
+            await Task.Delay(1, deadline.Token);
+        }
+        await initialization;
+        var childId = Assert.IsType<int>(session.ChildProcessId);
+        await session.ExecuteAsync("'DT-STARTUP-SIZE:' + $Host.UI.RawUI.WindowSize.Width + ':' + $Host.UI.RawUI.WindowSize.Height");
+        Assert.Equal("DT-STARTUP-SIZE:83:29",
+            Assert.Single(output, entry => entry.Kind == OutputKind.Output).Text.TrimEnd('\r', '\n'));
+        Assert.DoesNotContain(output, entry => entry.Kind == OutputKind.Error);
+        output.Clear();
+        session.SetTerminalSize(91, 31);
+        await session.ExecuteAsync("'DT-READY-SIZE:' + $Host.UI.RawUI.WindowSize.Width + ':' + $Host.UI.RawUI.WindowSize.Height");
+        Assert.Equal("DT-READY-SIZE:91:31",
+            Assert.Single(output, entry => entry.Kind == OutputKind.Output).Text.TrimEnd('\r', '\n'));
+        Assert.DoesNotContain(output, entry => entry.Kind == OutputKind.Error);
+        Assert.Equal(childId, session.ChildProcessId);
+        Assert.Equal(SessionState.Ready, session.State);
+        AssertParentHasNoPowerShellEngine();
+    }
+
+    [Fact]
     public async Task DisposingSessionTerminatesItsOwnedChild()
     {
         var session = new PowerShellSession();

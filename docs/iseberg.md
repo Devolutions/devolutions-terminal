@@ -102,7 +102,8 @@ outgoing queue overflow disconnects rather than silently dropping notifications.
 Independent readers keep reverse host/UI callbacks and cancellation available
 while a command, input prompt or debugger stop is waiting.
 Terminal-size updates are acknowledged before subsequent execution, so host
-RawUI dimensions reflect the latest resize. Background command-catalog refreshes
+RawUI dimensions reflect the latest resize. Initial layout changes are retained
+until the authenticated execution session is initialized. Background command-catalog refreshes
 wait for running commands to finish rather than reporting a busy-session error.
 
 This prerequisite is lazy: ordinary terminal profiles remain usable without

@@ -27,6 +27,7 @@ public sealed class PowerShellSession : IAsyncDisposable
     private int executionRequests;
     private int failed;
     private volatile bool authenticated;
+    private bool initialized;
     private volatile bool closing;
     private int columns = 120;
     private int rows = 40;
@@ -118,7 +119,13 @@ public sealed class PowerShellSession : IAsyncDisposable
                 throw new InvalidOperationException($"Iseberg requires the matching DT bridge build and PowerShell {PowerShellCompatibility.SupportedVersions}.");
             authenticated = true;
             await SendAsync("initialize", new SessionInitialize(snippetDirectory, ScriptingCallback is not null)).ConfigureAwait(false);
-            await SendAsync("terminalSize", new TerminalSizeRequest(columns, rows)).ConfigureAwait(false);
+            Task resize;
+            lock (sync)
+            {
+                initialized = true;
+                resize = terminalSizeUpdate = UpdateTerminalSizeAsync(terminalSizeUpdate, columns, rows);
+            }
+            await resize.ConfigureAwait(false);
         }
         catch (Exception exception)
         {
@@ -132,15 +139,15 @@ public sealed class PowerShellSession : IAsyncDisposable
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(columns, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(rows, 1);
-        this.columns = columns;
-        this.rows = rows;
-        if (connection is not null && State is not (SessionState.Failed or SessionState.Disposed))
+        Task update;
+        lock (sync)
         {
-            Task update;
-            lock (sync)
-                update = terminalSizeUpdate = UpdateTerminalSizeAsync(terminalSizeUpdate, columns, rows);
-            Observe(update);
+            this.columns = columns;
+            this.rows = rows;
+            if (!initialized || State is SessionState.Failed or SessionState.Disposed) return;
+            update = terminalSizeUpdate = UpdateTerminalSizeAsync(terminalSizeUpdate, columns, rows);
         }
+        Observe(update);
     }
 
     private async Task UpdateTerminalSizeAsync(Task previous, int columns, int rows)
