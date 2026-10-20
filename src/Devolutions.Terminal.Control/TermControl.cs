@@ -635,7 +635,20 @@ public sealed class TermControl : Avalonia.Controls.Control
 
     public void ClearBuffer()
     {
-        Engine.Feed("\u001b[3J\u001b[2J\u001b[H");
+        lock (_outputLock)
+        {
+            Engine.ClearBufferKeepingCursorRow();
+        }
+
+        try
+        {
+            _connection?.ClearBuffer(keepCursorRow: true);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or System.Runtime.InteropServices.ExternalException)
+        {
+            ReportInteractionError("Terminal clear was not applied to the shell's console", ex);
+        }
+
         SetSelection(null);
         InvalidateVisual();
     }

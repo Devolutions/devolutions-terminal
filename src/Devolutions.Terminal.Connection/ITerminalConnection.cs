@@ -18,6 +18,13 @@ public interface ITerminalConnection : IAsyncDisposable
     void Resize(int columns, int rows);
     void Resize(int columns, int rows, int pixelWidth, int pixelHeight) =>
         Resize(columns, rows);
+
+    // Clears screen state the connection keeps on its side (ConPTY has its own buffer)
+    // after the terminal clears its buffer. keepCursorRow moves the cursor's row to the
+    // top instead of erasing it. Plain byte-stream connections have nothing to clear.
+    void ClearBuffer(bool keepCursorRow)
+    {
+    }
 }
 
 public interface IRestartableTerminalConnection : ITerminalConnection

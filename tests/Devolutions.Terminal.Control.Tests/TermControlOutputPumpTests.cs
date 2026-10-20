@@ -309,6 +309,40 @@ public sealed class TermControlOutputPumpTests
         await control.CloseAsync();
     }
 
+    [AvaloniaFact]
+    public async Task ClearBufferKeepsPromptRowAndClearsTheShellConsole()
+    {
+        var connection = new FakePtyConnection();
+        var control = new TermControl { ConnectionFactory = _ => connection };
+
+        try
+        {
+            await control.StartAsync(new ProfileSettings { Commandline = "cmd.exe" }, 80, 24);
+            connection.Emit("banner\r\noutput\r\nPS> ");
+
+            control.ClearBuffer();
+
+            Assert.Equal([true], connection.ClearRequests);
+            Assert.Equal((4, 0), (control.Engine.CursorX, control.Engine.CursorY));
+            Assert.Equal(0, control.Engine.HistoryCount);
+            Assert.Equal("PS>", RowText(control, 0));
+            Assert.Equal(string.Empty, RowText(control, 1));
+
+            // The shell's console was cleared the same way, so its next absolute
+            // cursor move targets the prompt on the top row.
+            connection.Emit("\u001b[1;5Hdir");
+            Assert.Equal("PS> dir", RowText(control, 0));
+        }
+        finally
+        {
+            await control.CloseAsync();
+        }
+    }
+
+    private static string RowText(TermControl control, int row) =>
+        string.Concat(control.Engine.CreateSnapshot().Buffer.Lines[row].Cells
+            .Select(static cell => cell.Text)).TrimEnd();
+
     private sealed class FakePtyConnection : IRestartableTerminalConnection
     {
         public event EventHandler<ReadOnlyMemory<byte>>? OutputReceived;
@@ -371,6 +405,10 @@ public sealed class TermControlOutputPumpTests
             Columns = columns;
             Rows = rows;
         }
+
+        public List<bool> ClearRequests { get; } = [];
+
+        public void ClearBuffer(bool keepCursorRow) => ClearRequests.Add(keepCursorRow);
 
         public Task RestartAsync(
             TerminalLaunchOptions? options = null,
