@@ -1013,13 +1013,17 @@ public sealed class TermControl : Avalonia.Controls.Control
 
     public void SetScrollOffset(int offset)
     {
-        var normalized = Math.Clamp(offset, 0, Engine.HistoryCount);
-        if (Engine.ScrollOffset == normalized)
+        lock (_outputLock)
         {
-            return;
+            var normalized = Math.Clamp(offset, 0, Engine.HistoryCount);
+            if (Engine.ScrollOffset == normalized)
+            {
+                return;
+            }
+
+            Engine.SetScrollOffset(normalized);
         }
 
-        Engine.SetScrollOffset(normalized);
         ViewportChanged?.Invoke(this, EventArgs.Empty);
         InvalidateVisual();
     }
@@ -1059,7 +1063,11 @@ public sealed class TermControl : Avalonia.Controls.Control
 
     public void ResetTerminal()
     {
-        Engine.Reset();
+        lock (_outputLock)
+        {
+            Engine.Reset();
+        }
+
         SetSelection(null);
         _isMarkMode = false;
         _composition = null;
@@ -1483,7 +1491,11 @@ public sealed class TermControl : Avalonia.Controls.Control
 
         try
         {
-            Engine.Resize(recording.Width, recording.Height);
+            lock (_outputLock)
+            {
+                Engine.Resize(recording.Width, recording.Height);
+            }
+
             ResetTerminal();
             var previousTimestamp = 0d;
             foreach (var frame in recording.Frames)
@@ -1492,7 +1504,11 @@ public sealed class TermControl : Avalonia.Controls.Control
                 await DelayReplayAsync(delay, replayCancellationTokenSource).ConfigureAwait(true);
 
                 replayToken.ThrowIfCancellationRequested();
-                Engine.Feed(frame.Data);
+                lock (_outputLock)
+                {
+                    Engine.Feed(frame.Data);
+                }
+
                 previousTimestamp = frame.Timestamp;
                 lock (_replayLock)
                 {
@@ -1894,11 +1910,15 @@ public sealed class TermControl : Avalonia.Controls.Control
             return;
         }
 
-        Engine.Resize(
-            columns,
-            rows,
-            cellWidthPixels,
-            cellHeightPixels);
+        lock (_outputLock)
+        {
+            Engine.Resize(
+                columns,
+                rows,
+                cellWidthPixels,
+                cellHeightPixels);
+        }
+
         _engineCellWidthPixels = cellWidthPixels;
         _engineCellHeightPixels = cellHeightPixels;
     }
@@ -2631,15 +2651,18 @@ public sealed class TermControl : Avalonia.Controls.Control
                 .ToArray();
         }
 
-        foreach (var selection in selections)
+        lock (_outputLock)
         {
-            var start = Min(selection.Anchor, selection.Active);
-            var end = Max(selection.Anchor, selection.Active);
-            Engine.Buffer.ApplyColors(
-                new BufferPosition(start.Line, start.Column),
-                new BufferPosition(end.Line, end.Column),
-                foregroundColor,
-                backgroundColor);
+            foreach (var selection in selections)
+            {
+                var start = Min(selection.Anchor, selection.Active);
+                var end = Max(selection.Anchor, selection.Active);
+                Engine.Buffer.ApplyColors(
+                    new BufferPosition(start.Line, start.Column),
+                    new BufferPosition(end.Line, end.Column),
+                    foregroundColor,
+                    backgroundColor);
+            }
         }
 
         ClearSelection();
