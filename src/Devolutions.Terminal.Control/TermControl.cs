@@ -1887,7 +1887,7 @@ public sealed class TermControl : Avalonia.Controls.Control
                 _pendingPtyPixelWidth,
                 _pendingPtyPixelHeight);
         }
-        catch (Exception ex) when (ex is IOException or InvalidOperationException or OverflowException)
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or OverflowException or System.Runtime.InteropServices.ExternalException)
         {
             ReportInteractionError("Terminal resize was not accepted; resize again after input drains", ex);
         }

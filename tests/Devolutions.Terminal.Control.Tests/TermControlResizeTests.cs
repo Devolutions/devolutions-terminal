@@ -114,6 +114,35 @@ public sealed class TermControlResizeTests
     }
 
     [AvaloniaFact]
+    public async Task ResizeRejectedByConsoleIsReportedInsteadOfThrown()
+    {
+        var connection = new FakePtyConnection
+        {
+            ResizeFailure = new System.Runtime.InteropServices.COMException("Resize rejected.", unchecked((int)0x80070057)),
+        };
+        var control = CreateControl(connection);
+        var errors = new List<TerminalInteractionErrorEventArgs>();
+        control.InteractionError += (_, args) => errors.Add(args);
+        try
+        {
+            ArrangeControl(control, 800, 600);
+            await control.StartAsync(new ProfileSettings { Commandline = "cmd.exe" }, 62, 19);
+
+            ArrangeControl(control, 1040, 600);
+            await Task.Delay(80);
+            Dispatcher.UIThread.RunJobs();
+
+            var error = Assert.Single(errors);
+            Assert.IsType<System.Runtime.InteropServices.COMException>(error.Exception);
+            Assert.Equal(1, connection.ResizeCount);
+        }
+        finally
+        {
+            await control.CloseAsync();
+        }
+    }
+
+    [AvaloniaFact]
     public async Task RestartRestoresCurrentGridAfterConnectionReusesLaunchSize()
     {
         var connection = new FakePtyConnection();
@@ -240,6 +269,7 @@ public sealed class TermControlResizeTests
         public TaskCompletionSource StartEntered { get; } = NewGate();
         public TaskCompletionSource RestartEntered { get; } = NewGate();
         public Exception? StartFailure { get; init; }
+        public Exception? ResizeFailure { get; init; }
         public bool Disposed { get; private set; }
         public bool IsRunning { get; private set; }
         public int Columns { get; private set; }
@@ -302,11 +332,16 @@ public sealed class TermControlResizeTests
         public void Resize(int columns, int rows, int pixelWidth, int pixelHeight)
         {
             Assert.True(IsRunning);
+            ResizeCount++;
+            if (ResizeFailure is not null)
+            {
+                throw ResizeFailure;
+            }
+
             Columns = columns;
             Rows = rows;
             PixelWidth = pixelWidth;
             PixelHeight = pixelHeight;
-            ResizeCount++;
         }
 
         public async Task RestartAsync(
