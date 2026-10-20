@@ -309,6 +309,99 @@ public sealed class TermControlOutputPumpTests
         await control.CloseAsync();
     }
 
+    [AvaloniaFact]
+    public async Task ClearBufferKeepsPromptRowAndClearsTheShellConsole()
+    {
+        var connection = new FakePtyConnection();
+        var control = new TermControl { ConnectionFactory = _ => connection };
+
+        try
+        {
+            await control.StartAsync(new ProfileSettings { Commandline = "cmd.exe" }, 80, 24);
+            connection.Emit("banner\r\noutput\r\nPS> ");
+
+            control.ClearBuffer();
+
+            Assert.Equal([true], connection.ClearRequests);
+            Assert.Equal((4, 0), (control.Engine.CursorX, control.Engine.CursorY));
+            Assert.Equal(0, control.Engine.HistoryCount);
+            Assert.Equal("PS>", RowText(control, 0));
+            Assert.Equal(string.Empty, RowText(control, 1));
+
+            // The shell's console was cleared the same way, so its next absolute
+            // cursor move targets the prompt on the top row.
+            connection.Emit("\u001b[1;5Hdir");
+            Assert.Equal("PS> dir", RowText(control, 0));
+        }
+        finally
+        {
+            await control.CloseAsync();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task ResizingWhileOutputStreamsKeepsEveryLine()
+    {
+        var connection = new FakePtyConnection();
+        var control = new TermControl { ConnectionFactory = _ => connection };
+        var errors = new List<Exception>();
+        control.InteractionError += (_, args) =>
+        {
+            lock (errors)
+            {
+                errors.Add(args.Exception);
+            }
+        };
+
+        try
+        {
+            await control.StartAsync(new ProfileSettings { Commandline = "cmd.exe" }, 80, 24);
+            using var stop = new CancellationTokenSource();
+            var emitted = 0;
+            var producer = new Thread(() =>
+            {
+                while (!stop.IsCancellationRequested)
+                {
+                    connection.Emit($"line {emitted:D6} \u001b[31mred\u001b[m filler filler filler filler filler\r\n");
+                    emitted++;
+                }
+            });
+            producer.Start();
+            for (var index = 0; index < 400; index++)
+            {
+                var width = index % 2 == 0 ? 300 : 900;
+                var height = index % 3 == 0 ? 120 : 500;
+                control.Measure(new Avalonia.Size(width, height));
+                control.Arrange(new Avalonia.Rect(0, 0, width, height));
+            }
+
+            stop.Cancel();
+            producer.Join();
+            connection.Emit("tail-marker\r\n");
+            Dispatcher.UIThread.RunJobs();
+
+            lock (errors)
+            {
+                Assert.Empty(errors);
+            }
+
+            var history = control.Engine.CreateSnapshot(includeHistory: true).Buffer;
+            var text = string.Join(
+                '\n',
+                history.Lines.Select(static line => string.Concat(line.Cells.Select(static cell => cell.Text))));
+            Assert.Contains("tail-marker", text, StringComparison.Ordinal);
+            Assert.True(emitted > 0);
+        }
+        finally
+        {
+            await control.CloseAsync();
+        }
+    }
+
+    private static string RowText(TermControl control, int row) =>
+        string.Concat(control.Engine.CreateSnapshot().Buffer.Lines[row].Cells
+            .Select(static cell => cell.Text)).TrimEnd();
+
     private sealed class FakePtyConnection : IRestartableTerminalConnection
     {
         public event EventHandler<ReadOnlyMemory<byte>>? OutputReceived;
@@ -371,6 +464,10 @@ public sealed class TermControlOutputPumpTests
             Columns = columns;
             Rows = rows;
         }
+
+        public List<bool> ClearRequests { get; } = [];
+
+        public void ClearBuffer(bool keepCursorRow) => ClearRequests.Add(keepCursorRow);
 
         public Task RestartAsync(
             TerminalLaunchOptions? options = null,

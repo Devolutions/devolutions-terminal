@@ -171,6 +171,25 @@ public sealed class ConPtyConnection : IRestartableTerminalConnection
         }
     }
 
+    public void ClearBuffer(bool keepCursorRow)
+    {
+        lock (_stateLock)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            var pseudoConsole = _session?.PseudoConsole;
+            if (pseudoConsole is null || pseudoConsole.IsInvalid || pseudoConsole.IsClosed)
+            {
+                return;
+            }
+
+            var hr = ConPty.ClearPseudoConsole(pseudoConsole, keepCursorRow ? 1 : 0);
+            if (hr != 0)
+            {
+                Marshal.ThrowExceptionForHR(hr);
+            }
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         await _lifecycleLock.WaitAsync().ConfigureAwait(false);

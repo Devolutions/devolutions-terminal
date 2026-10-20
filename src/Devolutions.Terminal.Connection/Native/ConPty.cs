@@ -13,6 +13,9 @@ internal static partial class ConPty
     [LibraryImport("conpty.dll", EntryPoint = "ConptyResizePseudoConsole")]
     internal static partial int ResizePseudoConsole(SafePseudoConsoleHandle hPC, Kernel32.Coord size);
 
+    [LibraryImport("conpty.dll", EntryPoint = "ConptyClearPseudoConsole")]
+    internal static partial int ClearPseudoConsole(SafePseudoConsoleHandle hPC, int keepCursorRow);
+
     [LibraryImport("conpty.dll", EntryPoint = "ConptyClosePseudoConsole")]
     internal static partial void ClosePseudoConsole(nint hPC);
 }
