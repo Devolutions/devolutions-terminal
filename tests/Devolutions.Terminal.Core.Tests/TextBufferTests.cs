@@ -205,6 +205,79 @@ public sealed class TextBufferTests
     }
 
     [Fact]
+    public void ResizeShrinkTrimsBlankRowsBelowCursorInsteadOfScrolling()
+    {
+        var engine = new TerminalEngine(20, 10);
+        engine.Feed("banner\r\nPS> ");
+
+        engine.Resize(20, 4);
+
+        Assert.Equal(0, engine.Buffer.HistoryCount);
+        Assert.Equal("banner", RowText(engine.Buffer, 0));
+        Assert.Equal("PS>", RowText(engine.Buffer, 1));
+        Assert.Equal(4, engine.CursorX);
+        Assert.Equal(1, engine.CursorY);
+    }
+
+    [Fact]
+    public void ResizeShrinkScrollsOnlyTheRowsThatNoLongerFit()
+    {
+        var engine = new TerminalEngine(20, 10);
+        engine.Feed("l0\r\nl1\r\nl2\r\nl3\r\nl4\r\nl5\r\nPS> ");
+
+        engine.Resize(20, 4);
+
+        Assert.Equal(3, engine.Buffer.HistoryCount);
+        Assert.Equal("l3", RowText(engine.Buffer, 0));
+        Assert.Equal("PS>", RowText(engine.Buffer, 3));
+        Assert.Equal(3, engine.CursorY);
+    }
+
+    [Fact]
+    public void ResizeGrowKeepsViewportTopAndDoesNotPullScrollback()
+    {
+        var engine = new TerminalEngine(20, 3);
+        engine.Feed("l0\r\nl1\r\nl2\r\nl3\r\nPS> ");
+
+        engine.Resize(20, 6);
+
+        Assert.Equal(2, engine.Buffer.HistoryCount);
+        Assert.Equal("l2", RowText(engine.Buffer, 0));
+        Assert.Equal("PS>", RowText(engine.Buffer, 2));
+        Assert.Equal("", RowText(engine.Buffer, 5));
+        Assert.Equal(2, engine.CursorY);
+    }
+
+    [Fact]
+    public void ResizeShrinkBeforeOutputThenGrowKeepsAbsoluteCursorMovesAligned()
+    {
+        var engine = new TerminalEngine(20, 5);
+        engine.Resize(20, 4);
+        engine.Feed("banner\r\nPS> ");
+
+        engine.Resize(20, 5);
+        engine.Feed("\u001b[2;5Hcd");
+
+        Assert.Equal("banner", RowText(engine.Buffer, 0));
+        Assert.Equal("PS> cd", RowText(engine.Buffer, 1));
+        Assert.Equal(1, engine.CursorY);
+    }
+
+    [Fact]
+    public void ResizeKeepsTextBelowTheCursorWhenItStillFits()
+    {
+        var engine = new TerminalEngine(20, 10);
+        engine.Feed("top\u001b[8;1Hstatus\u001b[2;1H");
+
+        engine.Resize(20, 8);
+
+        Assert.Equal(0, engine.Buffer.HistoryCount);
+        Assert.Equal("top", RowText(engine.Buffer, 0));
+        Assert.Equal("status", RowText(engine.Buffer, 7));
+        Assert.Equal(1, engine.CursorY);
+    }
+
+    [Fact]
     public void LeftRightMarginsWrapAndHomeInsideTheRegion()
     {
         var engine = new TerminalEngine(10, 3);

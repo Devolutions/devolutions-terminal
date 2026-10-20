@@ -177,9 +177,27 @@ public sealed class TextBuffer
             retainedAnchors,
             cursorAbsoluteLine,
             CursorX + (wasWrapPending ? 1 : 0),
+            oldViewport,
             out var cursorLine,
-            out var cursorColumn);
-        while (reflowed.Count < rows)
+            out var cursorColumn,
+            out var oldViewportTopLine);
+
+        // Place the viewport like conhost/ConPTY and Windows Terminal do: keep the
+        // old viewport top anchored unless the text (or cursor) no longer fits, and
+        // never pull scrollback into view or push blank rows below the cursor into
+        // history. ConPTY addresses the cursor with absolute positions relative to
+        // its own (scrollback-less) buffer, so any other placement desynchronizes
+        // the shell's input line from what is rendered.
+        var bottomLine = Math.Max(LastTextLine(reflowed, retainedAnchors), cursorLine);
+        var viewportTop = Math.Max(oldViewportTopLine, bottomLine - rows + 1);
+        viewportTop = Math.Clamp(viewportTop, 0, Math.Max(0, cursorLine));
+        var viewportEnd = viewportTop + rows;
+        if (reflowed.Count > viewportEnd)
+        {
+            reflowed.RemoveRange(viewportEnd, reflowed.Count - viewportEnd);
+        }
+
+        while (reflowed.Count < viewportEnd)
         {
             reflowed.Add(NewBlankLine(CellAttributes.Default));
         }
@@ -2046,15 +2064,19 @@ public sealed class TextBuffer
         IReadOnlyList<TerminalImageAnchor>? retainedAnchors,
         int cursorLine,
         int cursorX,
+        int viewportTopLine,
         out int newCursorLine,
-        out int newCursorX)
+        out int newCursorX,
+        out int newViewportTopLine)
     {
         var result = new List<BufferLine>();
         newCursorLine = 0;
         newCursorX = 0;
+        newViewportTopLine = 0;
         var paragraphCells = new List<Cell>();
         var paragraphMarks = new List<(int Offset, ShellMark Mark)>();
         var cursorOffset = -1;
+        var viewportTopOffset = -1;
         var paragraphRendition = LineRendition.SingleWidth;
         var paragraphLogicalLineId = 0L;
         var paragraphLogicalOffset = 0;
@@ -2089,6 +2111,11 @@ public sealed class TextBuffer
             foreach (var mark in line.Marks)
             {
                 paragraphMarks.Add((DisplayWidth(paragraphCells) + mark.StartColumn, mark));
+            }
+
+            if (lineIndex == viewportTopLine)
+            {
+                viewportTopOffset = DisplayWidth(paragraphCells);
             }
 
             if (lineIndex == cursorLine)
@@ -2137,6 +2164,14 @@ public sealed class TextBuffer
                     newCursorLine = result.Count - relativeLine;
                     newCursorX = relativeColumn;
                     cursorOffset = -1;
+                }
+
+                if (viewportTopOffset >= 0)
+                {
+                    newViewportTopLine = paragraphStart + Math.Min(
+                        viewportTopOffset / destinationColumns,
+                        result.Count - paragraphStart - 1);
+                    viewportTopOffset = -1;
                 }
 
                 paragraphCells.Clear();
@@ -2225,6 +2260,39 @@ public sealed class TextBuffer
 
         output.Add(line);
         linesAfterCursor = cursorLineIndex < 0 ? 0 : output.Count - cursorLineIndex;
+    }
+
+    private static int LastTextLine(
+        IReadOnlyList<BufferLine> lines,
+        IReadOnlyList<TerminalImageAnchor>? retainedAnchors)
+    {
+        for (var index = lines.Count - 1; index >= 0; index--)
+        {
+            var line = lines[index];
+            foreach (var cell in line.Cells)
+            {
+                // Match conhost: only text counts, so rows that were merely erased
+                // with a colored background are trimmed like any other blank row.
+                if (!cell.IsWideContinuation &&
+                    (cell.Rune.Value != ' ' || !string.IsNullOrEmpty(cell.CombiningCharacters)))
+                {
+                    return index;
+                }
+            }
+
+            if (retainedAnchors is not null)
+            {
+                foreach (var anchor in retainedAnchors)
+                {
+                    if (anchor.LogicalLineId == line.LogicalLineId)
+                    {
+                        return index;
+                    }
+                }
+            }
+        }
+
+        return -1;
     }
 
     private static int LastContentColumn(Cell[] cells)
