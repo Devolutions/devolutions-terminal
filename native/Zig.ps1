@@ -82,16 +82,26 @@ function Install-Zig {
     if (-not (Test-Path -LiteralPath $marker)) {
         $archivePath = Join-Path $toolRoot $archiveName
         Write-Host "Downloading $url"
-        Invoke-WebRequest -Uri $url -OutFile $archivePath
+        # Windows PowerShell (used by MSBuild) downloads much slower while rendering progress.
+        $previousProgress = $ProgressPreference
+        $ProgressPreference = "SilentlyContinue"
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $archivePath
+        }
+        finally {
+            $ProgressPreference = $previousProgress
+        }
         if (Test-Path -LiteralPath $extractRoot) {
             Remove-Item -LiteralPath $extractRoot -Recurse -Force
         }
 
-        New-Item -ItemType Directory -Force -Path $extractRoot | Out-Null
         if ($extension -eq "zip") {
-            Expand-Archive -LiteralPath $archivePath -DestinationPath $extractRoot
+            # Expand-Archive takes many minutes on Zig's thousands of small files under Windows PowerShell.
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            [System.IO.Compression.ZipFile]::ExtractToDirectory($archivePath, $extractRoot)
         }
         else {
+            New-Item -ItemType Directory -Force -Path $extractRoot | Out-Null
             & tar -xJf $archivePath -C $extractRoot
             if ($LASTEXITCODE -ne 0) {
                 throw "Failed to extract $archivePath."

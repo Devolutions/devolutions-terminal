@@ -292,7 +292,9 @@ manual dispatch trigger it; the core suite does not gate release publication.
 Iseberg CI runs test projects sequentially (`-m:1`) to avoid concurrent test-host
 startup starving short broker deadlines. It retains TRX results and per-test
 hang diagnostics and a 20-minute test-step budget for the slower hosted Windows
-runner. A failed App test project stops the step before starting the UI suite.
+runner. Native libraries are restored in a preceding step, so a native-cache miss
+(Zig download and Ghostty build) does not consume that budget. A failed App test
+project stops the step before starting the UI suite.
 
 Run the same core locally after installing the test runtime:
 
