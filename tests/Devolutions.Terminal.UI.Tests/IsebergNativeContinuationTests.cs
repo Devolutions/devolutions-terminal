@@ -845,6 +845,33 @@ public sealed class IsebergNativeContinuationTests
         await SubmitTokenAsync(tab, "'DT-INVALID-STILL-USABLE'", "DT-INVALID-STILL-USABLE");
     });
 
+    [AvaloniaTheory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task CompletionWithNothingToReplaceAnchorsEmptySpanAtCaret(string text)
+    {
+        await InitializeRuntimeAsync();
+        await EmptyCompletionCoreAsync(text);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static Task EmptyCompletionCoreAsync(string text) => WithNativeHostAsync(async tab =>
+    {
+        // PowerShell returns ReplacementIndex/Length = -1 here; the session must not pass that on.
+        var session = Assert.Single(tab.Workbench.Workbench.Sessions);
+        var completion = await session.Engine.CompleteAsync(text, text.Length).WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.Equal(text.Length, completion.Start);
+        Assert.Equal(0, completion.Length);
+        Assert.Empty(completion.Matches);
+
+        var editor = tab.Workbench.FindControl<Iseberg.Editor.PowerShellEditorControl>("ScriptEditorControl")!;
+        editor.Document.Text = text;
+        editor.CaretOffset = text.Length;
+        var result = await editor.RequestCompletionAsync().WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.Equal(new Iseberg.Editor.EditorTextSpan(text.Length, 0), result.ReplacementSpan);
+        Assert.True(result.Items.IsEmpty);
+    });
+
     private static Popup ConsolePopup(DtIsebergConsole console) =>
         Assert.Single(console.View.GetLogicalDescendants().OfType<Popup>(),
             popup => ReferenceEquals(popup.PlacementTarget, console.Terminal));

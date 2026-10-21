@@ -8,6 +8,13 @@ public sealed partial class ManagedPowerShellSession
     private static Iseberg.Core.CompletionResult ToCompletion(System.Management.Automation.CompletionResult result) =>
         new(result.CompletionText, result.ListItemText, (Iseberg.Core.CompletionResultType)(long)result.ResultType, result.ToolTip);
 
+    // PowerShell reports ReplacementIndex/Length of -1 when it found nothing to replace
+    // (e.g. empty or whitespace-only input); anchor that as an empty span at the cursor.
+    private static CompletionSet ToCompletionSet(CommandCompletion result, int cursor) =>
+        result.ReplacementIndex < 0 || result.ReplacementLength < 0
+            ? new(cursor, 0, result.CompletionMatches.Select(ToCompletion).ToArray())
+            : new(result.ReplacementIndex, result.ReplacementLength, result.CompletionMatches.Select(ToCompletion).ToArray());
+
     internal SessionStatus Status() => new(State, Prompt, Version, LocalRunspaceId, RunspaceId,
         IsRunspacePushed, IsRemote, RemoteComputerName, IsDebuggerPaused, IsNestedPromptActive, NestedPrompt);
 

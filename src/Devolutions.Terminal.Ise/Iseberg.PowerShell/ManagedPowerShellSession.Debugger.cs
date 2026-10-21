@@ -245,7 +245,7 @@ public sealed partial class ManagedPowerShellSession
             var command = new PSCommand().AddCommand("TabExpansion2").AddArgument(text).AddArgument(cursor);
             var result = Inspect(command).Select(value => value.BaseObject).OfType<CommandCompletion>().FirstOrDefault()
                 ?? throw new InvalidOperationException("PowerShell completion did not return a completion result.");
-            return new CompletionSet(result.ReplacementIndex, result.ReplacementLength, result.CompletionMatches.Select(ToCompletion).ToArray());
+            return ToCompletionSet(result, cursor);
         }, cancellationToken);
 
     public Task<IReadOnlyList<DebugBreakpoint>> GetBreakpointsAsync() =>
