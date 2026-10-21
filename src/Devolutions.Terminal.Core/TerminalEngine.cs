@@ -710,7 +710,9 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
                 data,
                 Param(parameters, 0, 0),
                 Param(parameters, 1, 0),
-                Param(parameters, 2, 0),
+                // P3 is the horizontal grid size, not a colour; the background
+                // of a non-transparent image is colour register 0.
+                backgroundColor: 0,
                 out var image) ||
             image is null)
         {

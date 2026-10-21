@@ -88,7 +88,9 @@ public static class AvaloniaKeyChord
             Key.Decimal => "numpad_period",
             Key.OemQuestion => "slash",
             Key.Divide => "numpad_divide",
-            Key.OemBackslash => "backslash",
+            // The US "\|" key is OemPipe (VK_OEM_5, as the global hotkey backend
+            // maps "backslash"); OemBackslash (VK_OEM_102) is the ISO 102nd key.
+            Key.OemPipe or Key.OemBackslash => "backslash",
             Key.OemSemicolon => "semicolon",
             Key.OemQuotes => "quote",
             Key.OemOpenBrackets => "open_bracket",

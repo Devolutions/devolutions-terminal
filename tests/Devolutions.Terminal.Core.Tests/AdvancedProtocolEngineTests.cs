@@ -790,6 +790,31 @@ public sealed class AdvancedProtocolEngineTests
     }
 
     [Fact]
+    public void SixelGridSizeParameterIsNotUsedAsBackgroundColor()
+    {
+        var engine = new TerminalEngine(80, 24);
+        engine.Feed("\u001b[?80l\u001bP0;0;5q#1?~\u001b\\");
+
+        var sixel = Assert.Single(engine.Images).Sixel!;
+        Assert.False(sixel.TransparentBackground);
+        Assert.Equal(0, sixel.PixelIndices.Span[0]);
+        Assert.Equal(1, sixel.PixelIndices.Span[1]);
+    }
+
+    [Theory]
+    [InlineData("\u001b]2;abc\u001b[1mX")]
+    [InlineData("\u001b_Gabc\u001b[1mX")]
+    public void EscapeInsideUnterminatedStringStartsNewSequence(string input)
+    {
+        var engine = new TerminalEngine(20, 2);
+        engine.Feed(input);
+
+        var cell = engine.Buffer.GetCell(0, 0);
+        Assert.Equal("X", cell.Text);
+        Assert.Equal(CellFlags.Bold, cell.Attributes.Flags);
+    }
+
+    [Fact]
     public void LeavingAlternateScreenWithoutCursorSaveKeepsCurrentSgr()
     {
         var engine = new TerminalEngine(20, 2);

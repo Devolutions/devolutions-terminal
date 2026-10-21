@@ -112,6 +112,7 @@ public sealed class ActionDispatcherTests
     [InlineData(Key.NumPad3, "numpad3")]
     [InlineData(Key.F12, "f12")]
     [InlineData(Key.Escape, "esc")]
+    [InlineData(Key.OemPipe, "backslash")]
     [InlineData(Key.Return, "enter")]
     [InlineData(Key.LineFeed, "enter")]
     [InlineData(Key.PageDown, "pagedown")]

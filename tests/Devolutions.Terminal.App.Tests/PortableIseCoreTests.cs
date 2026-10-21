@@ -11,6 +11,27 @@ public sealed class PortableIseCoreTests(PortableIseRuntimeFixture runtime) : IC
         runtime.Analysis.AnalyzeAsync(text, path, CancellationToken.None);
 
     [Fact]
+    public void RegexLineEndMatchesBeforeCrLfWithoutConsumingCarriageReturn()
+    {
+        var options = new ReplacementOptions(RegularExpression: true);
+
+        var trailing = ReplacementSearch.Find("a \r\nb\t\r\nc", @"\s+$", "", options);
+        Assert.Equal(new[] { (1, 1), (5, 1) }, trailing.Select(match => (match.Start, match.Length)).ToArray());
+        Assert.Equal(2, ReplacementSearch.Find("x\r\nx\r\n", "x$", "", options).Count);
+        Assert.Single(ReplacementSearch.Find("cost $5\r\n", @"\$5$", "", options));
+    }
+
+    [Fact]
+    public void SelectionOnlyFindsMatchesStartingInsideTheSelection()
+    {
+        var literal = ReplacementSearch.Find("aaa", "aa", "", new ReplacementOptions(), start: 1, length: 2);
+        Assert.Equal((1, 2), (Assert.Single(literal).Start, literal[0].Length));
+
+        var words = ReplacementSearch.Find("hello world", @"\w+", "", new ReplacementOptions(RegularExpression: true), 2, 9);
+        Assert.Equal(new[] { (2, 3), (6, 5) }, words.Select(match => (match.Start, match.Length)).ToArray());
+    }
+
+    [Fact]
     public void PersistenceLeaseContentionPreservesFirstOwnerAndLockBytes()
     {
         using var sandbox = new RecoverySandbox();

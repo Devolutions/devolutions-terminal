@@ -68,6 +68,23 @@ public sealed class PaneTreeTests
         Assert.Equal(expected, tree.ActiveContent);
     }
 
+    [Theory]
+    [InlineData(PaneDirection.Up)]
+    [InlineData(PaneDirection.Down)]
+    [InlineData(PaneDirection.Left)]
+    public void DirectionalFocusIgnoresPanesNotBeyondTheActiveEdge(PaneDirection direction)
+    {
+        var tree = new PaneTree<string>("one");
+        tree.SplitActive("two", PaneSplitOrientation.Vertical);
+        tree.SplitActive("three", PaneSplitOrientation.Horizontal);
+        tree.Activate("one");
+
+        Assert.False(tree.MoveFocus(direction));
+        Assert.False(tree.SwapActive(direction));
+        Assert.Equal("one", tree.ActiveContent);
+        Assert.Equal(["one", "two", "three"], tree.Leaves());
+    }
+
     [Fact]
     public void ClosingPaneCollapsesItsParentSplit()
     {

@@ -35,6 +35,7 @@ public sealed record PaneSplit<T>(
 public sealed class PaneTree<T> where T : class
 {
     private const double MinimumRatio = 0.1;
+    private const double EdgeTolerance = 1e-9;
     private readonly IEqualityComparer<T> _comparer;
 
     public PaneTree(T initialContent, IEqualityComparer<T>? comparer = null)
@@ -202,16 +203,18 @@ public sealed class PaneTree<T> where T : class
         }
 
         var candidate = bounds
-            .Where(pair => !_comparer.Equals(pair.Key, ActiveContent) && IsInDirection(activeBounds, pair.Value, direction))
+            // Only panes beyond the active pane's edge that share some of its span
+            // are in that direction; a full-height pane has nothing above it.
+            .Where(pair => !_comparer.Equals(pair.Key, ActiveContent) &&
+                           IsInDirection(activeBounds, pair.Value, direction) &&
+                           OrthogonallyOverlaps(activeBounds, pair.Value, direction))
             .Select(pair => new
             {
                 pair.Key,
-                Aligned = OrthogonallyOverlaps(activeBounds, pair.Value, direction),
                 Primary = PrimaryDistance(activeBounds, pair.Value, direction),
                 Secondary = SecondaryDistance(activeBounds, pair.Value, direction),
             })
-            .OrderByDescending(static item => item.Aligned)
-            .ThenBy(static item => item.Primary)
+            .OrderBy(static item => item.Primary)
             .ThenBy(static item => item.Secondary)
             .FirstOrDefault();
 
@@ -593,10 +596,10 @@ public sealed class PaneTree<T> where T : class
     private static bool IsInDirection(PaneBounds source, PaneBounds target, PaneDirection direction) =>
         direction switch
         {
-            PaneDirection.Left => target.CenterX < source.CenterX,
-            PaneDirection.Right => target.CenterX > source.CenterX,
-            PaneDirection.Up => target.CenterY < source.CenterY,
-            PaneDirection.Down => target.CenterY > source.CenterY,
+            PaneDirection.Left => target.X + target.Width <= source.X + EdgeTolerance,
+            PaneDirection.Right => target.X >= source.X + source.Width - EdgeTolerance,
+            PaneDirection.Up => target.Y + target.Height <= source.Y + EdgeTolerance,
+            PaneDirection.Down => target.Y >= source.Y + source.Height - EdgeTolerance,
             _ => false,
         };
 

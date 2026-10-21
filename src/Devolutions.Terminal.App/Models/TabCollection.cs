@@ -183,6 +183,6 @@ public sealed class TabCollection<TTab, TSnapshot>
         ArgumentNullException.ThrowIfNull(text);
         return string.IsNullOrWhiteSpace(query)
             ? _items.ToArray()
-            : _items.Where(tab => text(tab).Contains(query, StringComparison.CurrentCultureIgnoreCase)).ToArray();
+            : _items.Where(tab => text(tab).Contains(query, StringComparison.OrdinalIgnoreCase)).ToArray();
     }
 }
