@@ -49,6 +49,42 @@ public sealed class MainWindowPowerShellIseTests
         await SavedThemeCoreAsync();
     }
 
+    [AvaloniaFact]
+    public async Task ReopenAndDuplicateUseLiveProfileOptionsInsteadOfStaleLayoutCopies()
+    {
+        await InitializeRuntimeAsync();
+        await LiveProfileOptionsCoreAsync();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static Task LiveProfileOptionsCoreAsync() => WithWindowAsync(async (window, environment) =>
+    {
+        var original = ActiveIse(window);
+        Assert.Equal(IsebergThemes.Classic, original.Terminal.Profile!.IseColorTheme);
+        await ActivateAsync(window, ShortcutAction.DuplicateTab);
+        var duplicateTab = window.ActiveTab!;
+        var stale = window.CaptureLayout().Tabs.Single(tab => tab.TabId == duplicateTab.Id).Root.Session!;
+        Assert.Equal(IsebergThemes.Classic, stale.IseColorTheme);
+        await ActivateAsync(window, ShortcutAction.CloseTab, new CloseTabArgs(IndexOf(window, duplicateTab)));
+
+        // The user changes the profile after the layout was captured.
+        var settings = SettingsService.Load();
+        var profile = settings.Profiles.Single(candidate => candidate.Guid == environment.ProfileId);
+        profile.IseColorTheme = "Dark";
+        profile.IseLoadProfiles = false;
+        window.SaveSettingsAndRefresh(settings);
+
+        await ActivateAsync(window, ShortcutAction.RestoreLastClosed);
+        var reopened = ActiveIse(window);
+        Assert.Equal("Dark", reopened.Terminal.Profile!.IseColorTheme);
+        Assert.False(reopened.Terminal.Profile.IseLoadProfiles);
+        Assert.Equal(0xFF1E1E1Eu, reopened.Terminal.Engine.Scheme.Background);
+        Assert.Equal("Dark", window.CaptureLayout().Tabs.Single(tab => tab.TabId == duplicateTab.Id).Root.Session!.IseColorTheme);
+        await ActivateAsync(window, ShortcutAction.DuplicateTab);
+        Assert.Equal("Dark", ActiveIse(window).Terminal.Profile!.IseColorTheme);
+        await SubmitTokenAsync(reopened, "'DT-LIVE-PROFILE-REOPENED'", "DT-LIVE-PROFILE-REOPENED");
+    });
+
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static Task SavedThemeCoreAsync() => WithWindowAsync(async (window, _) =>
     {

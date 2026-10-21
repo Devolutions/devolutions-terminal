@@ -21,6 +21,7 @@ $tests = [ordered]@{
         'PortableIseCoreTests.CleanSaveRemovesOnlyOwnSnapshot'
         'PowerShellIseWorkspaceCatalogTests.ConcurrentProfileRecordsPublishOneOwnerAndNeverRebind'
         'PowerShellIseWorkspaceCatalogTests.SameProfileReleasedWorkspaceIsFoundWithoutConsumingOrRewritingData'
+        'PowerShellIseWorkspaceCatalogTests.CorruptCatalogStorageIsSkippedWithoutOverwritingDataOrBlockingOtherWorkspaces'
     )
     'Devolutions.Terminal.UI.Tests' = @(
         'PortableIseEditorTests.'
@@ -32,7 +33,10 @@ $tests = [ordered]@{
         'IsebergNativeContinuationTests.ParenthesizedContinuationCompletedAfterFirstEnterExecutesExactlyOnce'
         'IsebergNativeContinuationTests.CompleteInvalidInputPublishesOneParseErrorWithoutEnteringContinuation'
         'PowerShellIseTabTests.DirtyCloseCancellationPreservesDocumentAndEngine'
+        'PowerShellIseTabTests.AutosaveAfterPreparedCloseCannotResurrectDiscardedRecovery'
+        'PowerShellIseTabTests.HostedSessionActionsCannotCreateOrCloseHiddenSessions'
         'MainWindowPowerShellIseTests.SavedIseProfileLaunchesAndCapturesRealWorkbenchTab'
+        'MainWindowPowerShellIseTests.ReopenAndDuplicateUseLiveProfileOptionsInsteadOfStaleLayoutCopies'
         'PortableIseWorkbenchTests.ExplicitRecoverySavesExactDocumentsSelectionCaretAndReleasedOwnership'
         'PortableIseWorkbenchTests.RecoverRoutesSameNamedDocumentsToSavedSessionsAndRestoresActiveSession'
     )
@@ -44,6 +48,7 @@ $tests = [ordered]@{
         'PowerShellIseProfileTests.TerminalProfilesAndOverridesRemainTerminal'
         'PowerShellIseProfileTests.IseThemeDefaultsToClassicWithoutAddingThemeToLegacyTerminal'
         'PowerShellIseProfileTests.UnknownIseThemeIsPreservedWithoutDefaultOrTerminalFallback'
+        'PowerShellIseProfileTests.TerminalLaunchDefaultsDoNotInvalidateIseProfilesButStillApplyToTerminals'
     )
     'Devolutions.Terminal.Settings.Editor.Tests' = @(
         'IseProfileHarmonizationTests.'

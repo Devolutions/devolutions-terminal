@@ -204,11 +204,7 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
         outputTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
         outputTimer.Tick += (_, _) => FlushOutput();
         autoSaveTimer = new DispatcherTimer();
-        autoSaveTimer.Tick += (_, _) =>
-        {
-            if (autoSaving || closingInProgress) return;
-            autoSaveTask = AutoSaveAsync();
-        };
+        autoSaveTimer.Tick += (_, _) => StartAutoSave();
         persistenceTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
         persistenceTimer.Tick += async (_, _) =>
         {
@@ -603,13 +599,19 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
             await GuardAsync(() => ActAsync(action));
     }
 
+    private bool IsEnabledByHost(string action) => action switch
+    {
+        "NewSession" or "NewRemoteSession" or "CloseSession" => hostingOptions.ShowSessionTabs,
+        "Commands" => hostingOptions.EnableCommandsPane,
+        "DebuggerPanes" => hostingOptions.EnableDebuggerPane,
+        "CheckForUpdates" => hostingOptions.EnableUpdateChecks,
+        _ => true
+    };
+
     private async Task ActAsync(string action)
     {
         if (closingInProgress) return;
-        if (action == "CheckForUpdates" && !hostingOptions.EnableUpdateChecks ||
-            action == "Commands" && !hostingOptions.EnableCommandsPane ||
-            action == "DebuggerPanes" && !hostingOptions.EnableDebuggerPane ||
-            !hostingOptions.ShowSessionTabs && action is "NewSession" or "NewRemoteSession" or "CloseSession")
+        if (!IsEnabledByHost(action))
             throw new NotSupportedException("This feature is disabled by the workbench host.");
         var session = Workbench.SelectedSession;
         if (hostingOptions.Console is { } console && IsNativeConsoleActive)
@@ -1229,14 +1231,7 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
         foreach (var item in ActionMenus())
         {
             if (item.Tag is not string action) continue;
-            item.IsVisible = action switch
-            {
-                "NewSession" or "NewRemoteSession" or "CloseSession" => hostingOptions.ShowSessionTabs,
-                "Commands" => hostingOptions.EnableCommandsPane,
-                "DebuggerPanes" => hostingOptions.EnableDebuggerPane,
-                "CheckForUpdates" => hostingOptions.EnableUpdateChecks,
-                _ => true
-            };
+            item.IsVisible = IsEnabledByHost(action);
             item.IsChecked = action switch
             {
                 "Top" or "Right" or "Maximized" => action == settings.Layout,
@@ -1374,6 +1369,14 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
             DisplayFile();
         }
         finally { recovering = false; }
+    }
+
+    private void StartAutoSave()
+    {
+        // Once a close is prepared the host may already be deleting recovery: a late snapshot would
+        // resurrect drafts the user chose to discard.
+        if (autoSaving || closingInProgress || closePrepared || windowClosed) return;
+        autoSaveTask = AutoSaveAsync();
     }
 
     private async Task AutoSaveAsync()
@@ -2020,7 +2023,8 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
             Key.OemMinus or Key.Subtract when ctrl => "ZoomOut",
             _ => null
         };
-        if (action is null) return;
+        // Shortcuts for host-disabled features (e.g. Ctrl+T session tabs) belong to the host, not an error toast.
+        if (action is null || !IsEnabledByHost(action)) return;
         e.Handled = true;
         await GuardAsync(() => ActAsync(action));
     }

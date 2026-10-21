@@ -244,7 +244,7 @@ public sealed class PowerShellIseWorkspaceCatalogTests
     [InlineData("profile.json")]
     [InlineData("settings.json.workbench.json")]
     [InlineData("settings.json.recovery")]
-    public async Task CorruptCatalogStoragePropagatesWithoutOverwritingData(string target)
+    public async Task CorruptCatalogStorageIsSkippedWithoutOverwritingDataOrBlockingOtherWorkspaces(string target)
     {
         using var fixture = new CatalogFixture();
         var directory = await fixture.CreateAsync(Workspace, Profile);
@@ -254,8 +254,13 @@ public sealed class PowerShellIseWorkspaceCatalogTests
         await File.WriteAllTextAsync(path, "{broken");
         var before = fixture.Bytes(directory);
 
-        await Assert.ThrowsAsync<JsonException>(
-            () => PowerShellIseWorkspaceCatalog.FindRecoverableAsync(fixture.Root, Profile));
+        // A corrupt workspace must not make every new tab for its profile fail.
+        Assert.Null(await PowerShellIseWorkspaceCatalog.FindRecoverableAsync(fixture.Root, Profile));
+        var healthy = Guid.Parse("44444444-4444-4444-4444-444444444444");
+        await fixture.CreateAsync(healthy, Profile);
+        Assert.Equal(healthy, await PowerShellIseWorkspaceCatalog.FindRecoverableAsync(fixture.Root, Profile));
+        Directory.SetLastWriteTimeUtc(directory, DateTime.UtcNow.AddMinutes(1));
+        Assert.Equal(healthy, await PowerShellIseWorkspaceCatalog.FindRecoverableAsync(fixture.Root, Profile));
         fixture.AssertUnchanged(before);
         Assert.Equal("{broken", await File.ReadAllTextAsync(path));
     }
@@ -332,11 +337,14 @@ public sealed class PowerShellIseWorkspaceCatalogTests
         var before = fixture.Bytes(directory);
         var files = Directory.GetFiles(directory, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal).ToArray();
 
-        var error = operation == "record"
-            ? await Assert.ThrowsAsync<InvalidDataException>(() => PowerShellIseWorkspaceCatalog.RecordProfileAsync(directory, Profile))
-            : await Assert.ThrowsAsync<InvalidDataException>(() => PowerShellIseWorkspaceCatalog.FindRecoverableAsync(fixture.Root, Profile));
+        if (operation == "record")
+        {
+            var error = await Assert.ThrowsAsync<InvalidDataException>(() => PowerShellIseWorkspaceCatalog.RecordProfileAsync(directory, Profile));
+            Assert.Equal("Empty ISE profile identity: " + marker, error.Message);
+        }
+        // Discovery skips the unreadable workspace instead of failing every new tab for the profile.
+        else Assert.Null(await PowerShellIseWorkspaceCatalog.FindRecoverableAsync(fixture.Root, Profile));
 
-        Assert.Equal("Empty ISE profile identity: " + marker, error.Message);
         Assert.Equal(new byte[] { 110, 117, 108, 108 }, await File.ReadAllBytesAsync(marker));
         fixture.AssertUnchanged(before);
         Assert.Equal(files, Directory.GetFiles(directory, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal).ToArray());

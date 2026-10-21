@@ -9,11 +9,14 @@ namespace Iseberg.PowerShellHost;
 
 internal static partial class PowerShellEditorAnalysis
 {
-    private static ScriptExtent Extent(IScriptExtent extent) => new(extent.StartOffset, extent.EndOffset,
-        extent.StartLineNumber, extent.StartColumnNumber, extent.EndLineNumber, extent.EndColumnNumber, extent.Text);
+    private static ScriptExtent Extent(IScriptExtent extent, bool includeText = true) => new(extent.StartOffset, extent.EndOffset,
+        extent.StartLineNumber, extent.StartColumnNumber, extent.EndLineNumber, extent.EndColumnNumber,
+        includeText ? extent.Text : "");
 
+    // Token and statement extents omit their text: the token already carries it, statements are located by offset,
+    // and nested statement text grows quadratically and would exceed the transport limit for large scripts.
     private static Iseberg.Core.Token ConvertToken(Token token) =>
-        new((Iseberg.Core.TokenKind)(long)token.Kind, (Iseberg.Core.TokenFlags)(long)token.TokenFlags, Extent(token.Extent), token.Text)
+        new((Iseberg.Core.TokenKind)(long)token.Kind, (Iseberg.Core.TokenFlags)(long)token.TokenFlags, Extent(token.Extent, false), token.Text)
         {
             NestedTokens = token is StringExpandableToken { NestedTokens: { } nested }
                 ? nested.Select(ConvertToken).ToArray() : null,
@@ -60,7 +63,7 @@ internal static partial class PowerShellEditorAnalysis
         {
             BracePairs = pairs,
             Statements = ast.FindAll(node => node is StatementAst && node is not StatementBlockAst, true)
-                .Select(node => Extent(node.Extent)).ToArray(),
+                .Select(node => Extent(node.Extent, false)).ToArray(),
             Commands = ast.FindAll(node => node is CommandAst, true).OfType<CommandAst>()
                 .Select(command => new CommandSpan(command.Extent.StartOffset, command.Extent.EndOffset,
                     command.GetCommandName())).ToArray()

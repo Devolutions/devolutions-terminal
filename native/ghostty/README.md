@@ -12,7 +12,9 @@ The optional Ghostty terminal engine uses `libghostty-vt` built from
 Binaries are **not** committed. `dotnet build` / `dotnet test` restore the host
 RID via [`../Restore-NativeLibraries.ps1`](../Restore-NativeLibraries.ps1),
 which downloads Zig 0.16.0 if needed and compiles `libghostty-vt` into
-`native/ghostty/<rid>/` (gitignored). ABI checks use the type manifest, not a
+`native/ghostty/<rid>/` (gitignored). A `zig` on `PATH` is used only when it is
+Zig 0.16.x; any other version (for example a newer system install) is ignored
+and the pinned Zig is downloaded into `artifacts/tools` instead. ABI checks use the type manifest, not a
 file hash.
 
 Linux: glibc **2.31+**. macOS: **13.0+** (`aarch64-macos.13.0` /

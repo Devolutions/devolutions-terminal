@@ -82,16 +82,26 @@ function Install-Zig {
     if (-not (Test-Path -LiteralPath $marker)) {
         $archivePath = Join-Path $toolRoot $archiveName
         Write-Host "Downloading $url"
-        Invoke-WebRequest -Uri $url -OutFile $archivePath
+        # Windows PowerShell (used by MSBuild) downloads much slower while rendering progress.
+        $previousProgress = $ProgressPreference
+        $ProgressPreference = "SilentlyContinue"
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $archivePath
+        }
+        finally {
+            $ProgressPreference = $previousProgress
+        }
         if (Test-Path -LiteralPath $extractRoot) {
             Remove-Item -LiteralPath $extractRoot -Recurse -Force
         }
 
-        New-Item -ItemType Directory -Force -Path $extractRoot | Out-Null
         if ($extension -eq "zip") {
-            Expand-Archive -LiteralPath $archivePath -DestinationPath $extractRoot
+            # Expand-Archive takes many minutes on Zig's thousands of small files under Windows PowerShell.
+            Add-Type -AssemblyName System.IO.Compression.FileSystem
+            [System.IO.Compression.ZipFile]::ExtractToDirectory($archivePath, $extractRoot)
         }
         else {
+            New-Item -ItemType Directory -Force -Path $extractRoot | Out-Null
             & tar -xJf $archivePath -C $extractRoot
             if ($LASTEXITCODE -ne 0) {
                 throw "Failed to extract $archivePath."
@@ -111,6 +121,50 @@ function Install-Zig {
     return $found.FullName
 }
 
+function Get-ZigVersion {
+    param(
+        [Parameter(Mandatory)]
+        [string] $ZigPath
+    )
+
+    try {
+        $output = & $ZigPath version 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            return $null
+        }
+
+        return ([string]$output).Trim()
+    }
+    catch {
+        return $null
+    }
+}
+
+# Zig's build API changes between minor releases, so only the pinned major.minor can build the
+# pinned sources; patch releases (and dev builds of that minor) are accepted.
+function Test-ZigVersionCompatible {
+    param(
+        [string] $Actual,
+        [Parameter(Mandatory)]
+        [string] $Required
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Actual)) {
+        return $false
+    }
+
+    $actualCore = ($Actual -split '[-+]', 2)[0]
+    $requiredCore = ($Required -split '[-+]', 2)[0]
+    $actualVersion = $null
+    $requiredVersion = $null
+    if (-not [version]::TryParse($actualCore, [ref]$actualVersion) -or
+        -not [version]::TryParse($requiredCore, [ref]$requiredVersion)) {
+        return $false
+    }
+
+    return $actualVersion.Major -eq $requiredVersion.Major -and $actualVersion.Minor -eq $requiredVersion.Minor
+}
+
 function Resolve-ZigPath {
     param(
         [string] $ZigPath,
@@ -122,18 +176,24 @@ function Resolve-ZigPath {
     )
 
     if (-not [string]::IsNullOrWhiteSpace($ZigPath) -and (Test-Path -LiteralPath $ZigPath)) {
+        $explicitVersion = Get-ZigVersion -ZigPath $ZigPath
+        if (-not (Test-ZigVersionCompatible -Actual $explicitVersion -Required $Version)) {
+            Write-Warning "Using explicit Zig '$ZigPath' ($explicitVersion); the pinned sources expect Zig $Version."
+        }
+
         return $ZigPath
     }
 
-    # Only use a zig on PATH if it matches the pinned version; Ghostty rejects other versions.
+    # A different system Zig (for example a newer release on PATH) is ignored rather than failing
+    # the build: the pinned version is used from, or downloaded into, artifacts/tools instead.
     $command = Get-Command zig -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($null -ne $command) {
-        $pathVersion = (& $command.Source version 2>$null | Out-String).Trim()
-        if ($pathVersion -eq $Version) {
+        $pathVersion = Get-ZigVersion -ZigPath $command.Source
+        if (Test-ZigVersionCompatible -Actual $pathVersion -Required $Version) {
             return $command.Source
         }
 
-        Write-Host "Ignoring zig $pathVersion at '$($command.Source)'; Zig $Version is required."
+        Write-Host "Ignoring Zig $pathVersion at '$($command.Source)'; native libraries require Zig $Version."
     }
 
     $zigName = if (Test-HostWindows) { "zig.exe" } else { "zig" }

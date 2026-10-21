@@ -65,24 +65,37 @@ public static partial class PowerShellIseWorkspaceCatalog
         foreach (var directory in Directory.EnumerateDirectories(workspaces).OrderByDescending(Directory.GetLastWriteTimeUtc))
         {
             if (!Guid.TryParseExact(Path.GetFileName(directory), "N", out var id)) continue;
-            var marker = Path.Combine(directory, "profile.json");
-            if (!File.Exists(marker)) continue;
-            var ownerProfile = await ReadProfileAsync(marker);
-            if (!string.Equals(ownerProfile, profileId, StringComparison.OrdinalIgnoreCase)) continue;
-            var settings = Path.Combine(directory, "settings.json");
-            var state = await new WorkbenchStateStore(settings + ".workbench.json").LoadAsync();
-            if (state is null) continue;
-            WorkbenchPersistenceLease lease;
-            try { lease = new(settings); }
-            catch (IOException error) when ((error.HResult & 0xffff) is 32 or 33 or 11 or 35)
+            try
             {
-                Trace.TraceInformation("ISE recovery workspace is still owned: {0}", directory);
-                continue;
+                if (await IsRecoverableAsync(directory, profileId)) return id;
             }
-            using (lease)
-                if ((await new ScriptRecovery(settings + ".recovery").ReadAsync()).Count > 0) return id;
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException or InvalidDataException)
+            {
+                // One unreadable workspace must not prevent opening new tabs for this profile; it stays on disk untouched.
+                Trace.TraceWarning("Skipping unreadable ISE recovery workspace {0}: {1}", directory, error.Message);
+            }
         }
         return null;
+    }
+
+    private static async Task<bool> IsRecoverableAsync(string directory, string profileId)
+    {
+        var marker = Path.Combine(directory, "profile.json");
+        if (!File.Exists(marker)) return false;
+        var ownerProfile = await ReadProfileAsync(marker);
+        if (!string.Equals(ownerProfile, profileId, StringComparison.OrdinalIgnoreCase)) return false;
+        var settings = Path.Combine(directory, "settings.json");
+        var state = await new WorkbenchStateStore(settings + ".workbench.json").LoadAsync();
+        if (state is null) return false;
+        WorkbenchPersistenceLease lease;
+        try { lease = new(settings); }
+        catch (IOException error) when ((error.HResult & 0xffff) is 32 or 33 or 11 or 35)
+        {
+            Trace.TraceInformation("ISE recovery workspace is still owned: {0}", directory);
+            return false;
+        }
+        using (lease)
+            return (await new ScriptRecovery(settings + ".recovery").ReadAsync()).Count > 0;
     }
 }
 #endif

@@ -334,7 +334,13 @@ public sealed class PowerShellIseTabTests
             var physicalKey = shortcut == Key.T ? PhysicalKey.T : PhysicalKey.W;
             host.Owner.KeyPress(shortcut, modifiers, physicalKey, null);
             host.Owner.KeyRelease(shortcut, modifiers, physicalKey, null);
-            await AssertBlockedAsync(2);
+            // The shortcut belongs to the host (DT tabs); the workbench neither acts on it nor reports an error.
+            for (var flush = 0; flush < 10; flush++)
+            {
+                Avalonia.Threading.Dispatcher.UIThread.RunJobs();
+                await Task.Delay(20);
+            }
+            await AssertBlockedAsync(1);
         }
         await ExecuteTokenAsync(tab, "'DT-SESSION-ACTION:' + $global:dtActionToken", "DT-SESSION-ACTION:retained");
 
@@ -734,6 +740,44 @@ public sealed class PowerShellIseTabTests
         await ExecuteTokenAsync(tab, "'DT-RECOVERY-CANCEL-ENGINE-RETAINED'", "DT-RECOVERY-CANCEL-ENGINE-RETAINED");
         Assert.Equal(snapshot, await File.ReadAllBytesAsync(snapshotPath));
         Assert.Empty(host.Errors);
+    }
+
+    [AvaloniaFact]
+    public async Task AutosaveAfterPreparedCloseCannotResurrectDiscardedRecovery()
+    {
+        await InitializeRuntimeAsync();
+        await PreparedCloseAutosaveCoreAsync();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static async Task PreparedCloseAutosaveCoreAsync()
+    {
+        using var environment = new IseTestEnvironment();
+        var tab = new PowerShellIseTab(environment.Profile(),
+            workspaceId: Guid.Parse("44444444-4444-4444-4444-444444444444"),
+            stateDirectory: Path.Combine(environment.DirectoryPath, "prepared-autosave"));
+        await DisableRecoveryAutosaveAsync(tab);
+        await using var host = new IseTestHost(tab);
+        await host.InitializeAsync();
+        var document = tab.Workbench.CreateDocument("discarded during a group close");
+        var recoveryDirectory = Path.Combine(tab.StateDirectory, "settings.json.recovery");
+        var snapshotPath = Path.Combine(recoveryDirectory, document.RecoveryId.ToString("N") + ".json");
+        await tab.Workbench.SaveRecoveryAsync();
+        Assert.True(File.Exists(snapshotPath));
+
+        // A group close: this tab is approved ("Don't Save") while other tabs are still being asked.
+        var before = host.Owner.OwnedWindows.ToArray();
+        var prepare = tab.Workbench.PrepareCloseAsync();
+        await ChooseDialogAsync(host.Owner, before, prepare, "Don't Save");
+        Assert.True(await prepare);
+
+        // The autosave timer fires in that window; it must not write a snapshot the close then misses.
+        typeof(Iseberg.WorkbenchControl).GetMethod("StartAutoSave",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(tab.Workbench, null);
+        Assert.True(await tab.RequestCloseAsync().WaitAsync(TimeSpan.FromSeconds(60)));
+        Assert.True(tab.IsDisposed);
+        Assert.False(File.Exists(snapshotPath));
+        Assert.Empty(Directory.Exists(recoveryDirectory) ? Directory.GetFiles(recoveryDirectory, "*.json") : []);
     }
 
     private static Task DisableRecoveryAutosaveAsync(PowerShellIseTab tab) =>

@@ -4289,15 +4289,20 @@ public partial class MainWindow :
             throw new InvalidOperationException("Cannot restore a tab while DT is closing.");
         if (descriptor.Root.Session is { Kind: ProfileKind.PowerShellIse } iseSession)
         {
+            // The live profile owns ISE options (including the profile-script opt-in); the layout's copies
+            // are only a fallback for a profile that no longer exists. Never adopt a same-named terminal profile.
             var profile = _settings.Profiles.FirstOrDefault(candidate =>
-                !string.IsNullOrEmpty(iseSession.ProfileId) && candidate.Guid == iseSession.ProfileId) ??
-                _settings.Profiles.FirstOrDefault(candidate => candidate.Name == iseSession.ProfileName) ??
+                    !string.IsNullOrEmpty(iseSession.ProfileId) && candidate.Guid == iseSession.ProfileId) ??
+                _settings.Profiles.FirstOrDefault(candidate =>
+                    candidate.Kind == ProfileKind.PowerShellIse && candidate.Name == iseSession.ProfileName) ??
                 new ProfileSettings
                 {
                     Guid = iseSession.ProfileId,
                     Name = iseSession.ProfileName,
                     Kind = ProfileKind.PowerShellIse,
                     Icon = "\uE943",
+                    IseLoadProfiles = iseSession.IseLoadProfiles,
+                    IseColorTheme = iseSession.IseColorTheme,
                 };
             profile = profile.WithOverrides(new NewTerminalArgs(
                 StartingDirectory: iseSession.StartingDirectory,
@@ -4306,8 +4311,6 @@ public partial class MainWindow :
                 Elevate: iseSession.Elevate));
             profile.Kind = ProfileKind.PowerShellIse;
             profile.Commandline = string.Empty;
-            profile.IseLoadProfiles = iseSession.IseLoadProfiles;
-            profile.IseColorTheme = iseSession.IseColorTheme;
             return await CreatePowerShellIseTabAsync(profile, descriptor, regenerateIdentities).ConfigureAwait(true);
         }
 
@@ -4972,7 +4975,7 @@ public partial class MainWindow :
         }
     }
 
-    private void SaveSettingsAndRefresh(AppSettings settings)
+    internal void SaveSettingsAndRefresh(AppSettings settings)
     {
         SettingsService.Save(settings);
         _settings = SettingsService.LoadWithDynamicProfiles(_dynamicProfileManager);

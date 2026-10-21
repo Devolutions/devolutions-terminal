@@ -54,8 +54,9 @@ as the script editor. Ctrl+C stops execution or cancels host input.
 
 **Native-program limitation:** this host is not a PTY. Redirected native output
 is displayed, but interactive native programs and raw-host ReadKey/cursor/buffer
-APIs are not fully supported. Use an ordinary terminal profile for interactive
-native applications.
+APIs are not fully supported. Native programs read end-of-input from standard
+input rather than a hidden or inherited console, so prompts fail instead of
+hanging. Use an ordinary terminal profile for interactive native applications.
 
 ## Color themes
 
@@ -108,8 +109,12 @@ separately from IPC. The module and wire contracts are DT-private and shipped in
 lockstep; protocol/build mismatches fail startup instead of guessing compatibility.
 The length-prefixed channel mutually authenticates a fresh challenge and the
 parent's process identity. Frames are limited to 8 MiB, outstanding requests to
-128, and queued outgoing frames to 512. Request overflow is reported explicitly;
-outgoing queue overflow disconnects rather than silently dropping notifications.
+128, and queued outgoing frames to 512. Each message is size-checked before it
+is queued: an oversized request, response or event fails only that operation
+(for example, analysis of an extremely large script) and the session stays
+usable. Editor tokens and extents use a compact positional encoding so typical
+large scripts fit. Request overflow is reported explicitly; outgoing queue
+overflow disconnects rather than silently dropping notifications.
 Independent readers keep reverse host/UI callbacks and cancellation available
 while a command, input prompt or debugger stop is waiting.
 Terminal-size updates are acknowledged before subsequent execution, so host
@@ -183,15 +188,21 @@ Changing an existing Terminal profile to ISE retains its identity and common
 fields. Terminal-only command, elevation, connection and environment settings
 move into inactive `ise.terminal` configuration and are restored if the type is
 changed back. They are not applied to the ISE runspace; explicit incompatible
-ISE launch overrides still fail. **Defaults** edits `profiles.defaults`, not the
-first or previously selected named profile.
+ISE launch overrides still fail. Command line, elevation, connection type and
+environment values inherited from `profiles.defaults` are ignored for ISE
+profiles rather than making them unlaunchable. **Defaults** edits
+`profiles.defaults`, not the first or previously selected named profile.
 
 DT persists profile and whole-tab layout descriptors. Version 2 layouts still
 accept version 1 terminal layouts. Duplicate, reopen and layout restoration
 create a **fresh runspace**; variables and live engine state are never serialized.
+They use the profile's current options (including **Load PowerShell profile
+scripts** and the color theme), not the copies captured with the layout; those
+copies apply only when the saved profile no longer exists.
 Workspace restoration can reopen saved documents and offer abandoned dirty
 document recovery. New launches offer recovery only for the same profile and
-never take over a live workspace. Iseberg tabs cannot split, zoom terminal panes
+never take over a live workspace. Unreadable workspaces are skipped (and left
+untouched) rather than blocking new tabs for the profile. Iseberg tabs cannot split, zoom terminal panes
 or tear off into other windows. Save scripts explicitly; recovery is not a
 replacement for saving or backups.
 Automatic same-profile recovery discovery requires a saved, nonempty profile
@@ -273,8 +284,8 @@ and module signatures. The separate `test-iseberg.yml` workflow tests Iseberg
 on Windows, Linux, and macOS using the pinned PowerShell 7.6.6 runtime. It runs
 `scripts/Test-IsebergCore.ps1` to select a fast core from the App, UI, Settings,
 and Settings.Editor projects, and checks terminal-only Windows x64/ARM64
-NativeAOT publishes. The core retains 220 of the 1,104 Iseberg cases in the
-original Windows run (80% fewer): inexpensive editor, installation, handshake,
+NativeAOT publishes. The core retains 232 of the 1,110 Iseberg cases in the
+original Windows run (79% fewer): inexpensive editor, installation, handshake,
 protocol, and child-process checks plus representative native-console execution,
 input, cancellation, recovery, profile, and settings-editor workflows. Exhaustive
 hosted workbench, theme, and native-input permutations are outside the CI core;
@@ -284,7 +295,9 @@ manual dispatch trigger it; the core suite does not gate release publication.
 Iseberg CI runs test projects sequentially (`-m:1`) to avoid concurrent test-host
 startup starving short broker deadlines. It retains TRX results and per-test
 hang diagnostics and a 20-minute test-step budget for the slower hosted Windows
-runner. A failed App test project stops the step before starting the UI suite.
+runner. Native libraries are restored in a preceding step, so a native-cache miss
+(Zig download and Ghostty build) does not consume that budget. A failed App test
+project stops the step before starting the UI suite.
 
 Run the same core locally after installing the test runtime:
 
