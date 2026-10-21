@@ -10,6 +10,10 @@ public sealed class BridgeRemoteException(BridgeFault fault) : InvalidOperationE
     public BridgeFault Fault { get; } = fault;
 }
 
+/// <summary>One oversized message fails its own request or event; the connection stays usable.</summary>
+public sealed class BridgeMessageTooLargeException(int bytes) : InvalidOperationException(
+    $"The PowerShell message ({bytes / (1024.0 * 1024):0.0} MiB) exceeds the {IseBridgeProtocol.MaximumFrameBytes / (1024 * 1024)} MiB private transport limit.");
+
 /// <summary>Persistent bidirectional correlation; handlers never execute on the frame reader.</summary>
 public sealed class BridgeConnection(Stream stream) : IAsyncDisposable
 {
@@ -17,7 +21,7 @@ public sealed class BridgeConnection(Stream stream) : IAsyncDisposable
     private readonly ConcurrentDictionary<long, TaskCompletionSource<JsonElement>> pending = new();
     private readonly ConcurrentDictionary<long, CancellationTokenSource> incoming = new();
     private readonly SemaphoreSlim requestSlots = new(IseBridgeProtocol.MaximumPendingRequests);
-    private readonly Channel<BridgeEnvelope> writes = Channel.CreateBounded<BridgeEnvelope>(
+    private readonly Channel<byte[]> writes = Channel.CreateBounded<byte[]>(
         new BoundedChannelOptions(IseBridgeProtocol.MaximumQueuedFrames)
         { SingleReader = true, FullMode = BoundedChannelFullMode.Wait });
     private long nextId;
@@ -73,7 +77,10 @@ public sealed class BridgeConnection(Stream stream) : IAsyncDisposable
 
     private void Send(BridgeEnvelope envelope)
     {
-        if (!writes.Writer.TryWrite(envelope))
+        // Serialize before queueing so the size limit is enforced per message, not on the shared writer.
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(envelope, IseBridgeJsonContext.Default.BridgeEnvelope);
+        if (bytes.Length > IseBridgeProtocol.MaximumFrameBytes) throw new BridgeMessageTooLargeException(bytes.Length);
+        if (!writes.Writer.TryWrite(bytes))
         {
             var error = new IOException("The private PowerShell transport queue overflowed. Session state was lost.");
             Fail(error);
@@ -85,11 +92,8 @@ public sealed class BridgeConnection(Stream stream) : IAsyncDisposable
     {
         try
         {
-            await foreach (var envelope in writes.Reader.ReadAllAsync(lifetime.Token).ConfigureAwait(false))
+            await foreach (var bytes in writes.Reader.ReadAllAsync(lifetime.Token).ConfigureAwait(false))
             {
-                var bytes = JsonSerializer.SerializeToUtf8Bytes(envelope, IseBridgeJsonContext.Default.BridgeEnvelope);
-                if (bytes.Length > IseBridgeProtocol.MaximumFrameBytes)
-                    throw new InvalidDataException("The private PowerShell frame exceeds its size limit.");
                 var prefix = new byte[4];
                 BinaryPrimitives.WriteInt32LittleEndian(prefix, bytes.Length);
                 await stream.WriteAsync(prefix, lifetime.Token).ConfigureAwait(false);

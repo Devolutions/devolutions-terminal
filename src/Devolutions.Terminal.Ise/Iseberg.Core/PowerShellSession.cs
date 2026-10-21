@@ -84,7 +84,7 @@ public sealed class PowerShellSession : IAsyncDisposable
             var start = new ProcessStartInfo(executable)
             {
                 UseShellExecute = false, CreateNoWindow = true,
-                RedirectStandardOutput = true, RedirectStandardError = true
+                RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true
             };
             using var parent = Process.GetCurrentProcess();
             var bootstrap = "Import-Module -Name '" + ModulePath.Replace("'", "''") +
@@ -95,6 +95,8 @@ public sealed class PowerShellSession : IAsyncDisposable
                 start.ArgumentList.Add(argument);
             start.Environment[IseBridgeProtocol.AuthenticationEnvironment] = authentication;
             child = Process.Start(start) ?? throw new InvalidOperationException("The PowerShell bridge did not start.");
+            // Native programs inherit this stdin: give them end-of-input rather than DT's (or a hidden) console.
+            child.StandardInput.Close();
             outputDrain = DrainAsync(child.StandardOutput);
             errorDrain = DrainAsync(child.StandardError);
             exitObservation = ObserveExitAsync(child);

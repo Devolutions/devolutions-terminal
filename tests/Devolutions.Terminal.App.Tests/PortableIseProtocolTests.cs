@@ -284,6 +284,33 @@ public sealed class PortableIseProtocolTests
         Assert.Equal(1, Volatile.Read(ref count));
     }
 
+    [Fact]
+    public async Task OversizedMessagesFailOnlyTheirOwnRequestAndKeepTheConnection()
+    {
+        var (server, client) = await ConnectAsync();
+        await using var receiver = new BridgeConnection(server);
+        await using var sender = new BridgeConnection(client);
+        var disconnected = 0;
+        receiver.Disconnected += _ => Interlocked.Increment(ref disconnected);
+        sender.Disconnected += _ => Interlocked.Increment(ref disconnected);
+        var oversized = new string('x', 8 * 1024 * 1024 + 1);
+        receiver.Request = (operation, payload, _) => Task.FromResult(operation == "large"
+            ? BridgeJson.Element(oversized) : payload.Clone());
+        receiver.Start();
+        sender.Start();
+
+        var response = await Assert.ThrowsAsync<BridgeRemoteException>(() => sender.CallAsync("large", BridgeJson.Empty).WaitAsync(Deadline));
+        Assert.Equal(nameof(BridgeMessageTooLargeException), response.Fault.Code);
+        await Assert.ThrowsAsync<BridgeMessageTooLargeException>(() => sender.CallAsync("echo", BridgeJson.Element(oversized)).WaitAsync(Deadline));
+        Assert.Throws<BridgeMessageTooLargeException>(() => sender.Publish("event", BridgeJson.Element(oversized)));
+
+        // Rejected requests release their slots, and both directions keep working.
+        for (var index = 0; index < 130; index++)
+            await Assert.ThrowsAsync<BridgeMessageTooLargeException>(() => sender.CallAsync("echo", BridgeJson.Element(oversized)));
+        Assert.Equal("still connected", (await sender.CallAsync("echo", BridgeJson.Element("still connected")).WaitAsync(Deadline)).GetString());
+        Assert.Equal(0, Volatile.Read(ref disconnected));
+    }
+
     private static async Task<(NamedPipeServerStream Server, NamedPipeClientStream Client)> ConnectAsync()
     {
         var name = "dt-p-" + Guid.NewGuid().ToString("N");

@@ -40,6 +40,9 @@ public partial class MainWindow
             throw new InvalidOperationException("Cannot open Iseberg while DT is closing.");
         PowerShellIseTab.ValidateProfile(profile);
         var session = restored?.Root.Session is { } saved ? CloneSession(saved) : CreateSessionDescriptor(profile);
+        // Persist what this tab actually runs with, not the options captured with an older layout.
+        session.IseLoadProfiles = profile.IseLoadProfiles;
+        session.IseColorTheme = profile.IseColorTheme;
         if (regenerateIdentities) session.SessionId = Guid.NewGuid();
         if (restored is null && !regenerateIdentities)
         {

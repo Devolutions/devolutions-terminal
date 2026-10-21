@@ -73,7 +73,8 @@ Do not point that tool at this repository.
 - Windows Explorer/toast helpers: `native/windows-shell` (MSVC, gitignored `bin/`)
 
 `dotnet build` restores Ghostty and `dt-pty-host` for the host RID (Zig is
-downloaded into `artifacts/tools` on first use). See
+downloaded into `artifacts/tools` on first use; a system `zig` of a different
+minor version than the pinned one is ignored, so it does not break the build). See
 [`native/ghostty/README.md`](native/ghostty/README.md). Pass
 `-p:SkipNativeRestore=true` to skip.
 
