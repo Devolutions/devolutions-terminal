@@ -17,10 +17,11 @@ public sealed partial class ManagedPowerShellSession
             throw new InvalidOperationException("The remote connection changed. Reopen the document before saving.");
         ScriptFile file;
         if (request.OriginalPath is { } original)
-            file = ScriptFile.FromRemoteBytes(original, request.Bytes, request.RunspaceId, RemoteComputerName!);
+            file = ScriptFile.FromRemoteBytes(original, request.Bytes, request.RunspaceId, RemoteComputerName!,
+                request.Encoding);
         else
         {
-            var decoded = ScriptFile.FromBytes(Path.GetFullPath("bridge-unsaved.ps1"), request.Bytes);
+            var decoded = ScriptFile.FromBytes(Path.GetFullPath("bridge-unsaved.ps1"), request.Bytes, request.Encoding);
             file = ScriptFile.CreateUntitled("Untitled.ps1", decoded.EncodingChoice);
             file.Text = decoded.Text;
         }

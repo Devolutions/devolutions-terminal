@@ -216,22 +216,28 @@ public sealed class AppSettings
 
     public ProfileSettings GetDefaultProfile()
     {
-        if (!string.IsNullOrWhiteSpace(DefaultProfile))
+        if (FindConfiguredDefaultProfile(includeHidden: false) is { } match)
         {
-            var hasDefaultGuid = Guid.TryParse(DefaultProfile, out var defaultGuid);
-            var match = Profiles.Find(p =>
-                !p.Hidden &&
-                !p.Orphaned &&
-                ((hasDefaultGuid && Guid.TryParse(p.Guid, out var profileGuid) && profileGuid == defaultGuid) ||
-                 string.Equals(p.Name, DefaultProfile, StringComparison.OrdinalIgnoreCase)));
-            if (match is not null)
-            {
-                return match;
-            }
+            return match;
         }
 
         return Profiles.Find(profile => !profile.Hidden && !profile.Orphaned)
             ?? ProfileSettings.CreatePowerShell();
+    }
+
+    internal ProfileSettings? FindConfiguredDefaultProfile(bool includeHidden)
+    {
+        if (string.IsNullOrWhiteSpace(DefaultProfile))
+        {
+            return null;
+        }
+
+        var hasDefaultGuid = Guid.TryParse(DefaultProfile, out var defaultGuid);
+        return Profiles.Find(p =>
+            (includeHidden || !p.Hidden) &&
+            !p.Orphaned &&
+            ((hasDefaultGuid && Guid.TryParse(p.Guid, out var profileGuid) && profileGuid == defaultGuid) ||
+             string.Equals(p.Name, DefaultProfile, StringComparison.OrdinalIgnoreCase)));
     }
 }
 

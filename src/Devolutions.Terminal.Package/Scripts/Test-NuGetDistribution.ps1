@@ -27,7 +27,7 @@ if ($PSBoundParameters.ContainsKey("ExpectedPublisher")) {
     $signatureArguments.ExpectedPublisher = $ExpectedPublisher
 }
 
-$packageSource = [IO.Path]::GetFullPath($PackageDirectory)
+$packageSource = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($PackageDirectory)
 $expectedPackageNames = @(
     "Devolutions.Terminal.App.$Version.nupkg"
     "Devolutions.Terminal.App.win-x64.$Version.nupkg"

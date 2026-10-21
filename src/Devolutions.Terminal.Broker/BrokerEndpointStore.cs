@@ -24,14 +24,20 @@ public sealed class BrokerEndpointStore
     {
         try
         {
-            using var stream = new FileStream(_endpointPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            // Allow the host to replace or delete the file while a client reads it.
+            using var stream = new FileStream(
+                _endpointPath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete);
             return JsonSerializer.Deserialize(stream, BrokerJsonContext.Default.BrokerEndpoint);
         }
-        catch (FileNotFoundException)
+        catch (IOException)
         {
+            // Missing, or briefly locked by a concurrent replace: no broker to use.
             return null;
         }
-        catch (DirectoryNotFoundException)
+        catch (UnauthorizedAccessException)
         {
             return null;
         }
@@ -64,7 +70,14 @@ public sealed class BrokerEndpointStore
         var current = Read();
         if (current == endpoint)
         {
-            File.Delete(_endpointPath);
+            try
+            {
+                File.Delete(_endpointPath);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // A stale endpoint is harmless: clients validate it before use.
+            }
         }
     }
 

@@ -120,6 +120,24 @@ public sealed class ActionMapTests
     }
 
     [Fact]
+    public void SuggestionsSourceArrayCombinesFlagsAndRoundTrips()
+    {
+        var parsed = ActionJson.Parse(
+            """{"action":"showSuggestions","source":["commandHistory","directoryHistory"],"useCommandline":true}""");
+        var suggestions = Assert.IsType<SuggestionsArgs>(parsed.Args);
+        Assert.Equal(SuggestionsSource.CommandHistory | SuggestionsSource.DirectoryHistory, suggestions.Source);
+
+        var serialized = ActionJson.Serialize(parsed);
+        Assert.DoesNotContain("\"all\"", serialized, StringComparison.Ordinal);
+        var reparsed = Assert.IsType<SuggestionsArgs>(ActionJson.Parse(serialized).Args);
+        Assert.Equal(suggestions.Source, reparsed.Source);
+        Assert.Equal(
+            SuggestionsSource.QuickFixes,
+            Assert.IsType<SuggestionsArgs>(ActionJson.Parse(
+                """{"action":"showSuggestions","source":"quickFix"}""").Args).Source);
+    }
+
+    [Fact]
     public void ArgumentFieldsAliasesAndDefaultsMatchNativeModel()
     {
         var split = Assert.IsType<SplitPaneArgs>(ActionJson.Parse(

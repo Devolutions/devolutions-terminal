@@ -738,6 +738,67 @@ public sealed class AdvancedProtocolEngineTests
     }
 
     [Fact]
+    public void SgrSemicolonUnderlineColorConsumesItsOperands()
+    {
+        var engine = new TerminalEngine(20, 2);
+        engine.Feed("\u001b[1;31m\u001b[58;2;255;100;7mA\u001b[58;5;0mB");
+
+        foreach (var column in new[] { 0, 1 })
+        {
+            var attributes = engine.Buffer.GetCell(column, 0).Attributes;
+            Assert.Equal(CellFlags.Bold, attributes.Flags);
+            Assert.Equal(TermColor.FromIndex(1), attributes.Foreground);
+            Assert.Equal(ColorKind.Default, attributes.Background.Kind);
+        }
+    }
+
+    [Fact]
+    public void DecSpecialGraphicsCharsetMapsLineDrawing()
+    {
+        var engine = new TerminalEngine(20, 2);
+        engine.Feed("\u001b(0lqk\u001b(Bq\u001b)0\u000ex\u000fx");
+
+        Assert.Equal("┌", engine.Buffer.GetCell(0, 0).Text);
+        Assert.Equal("─", engine.Buffer.GetCell(1, 0).Text);
+        Assert.Equal("┐", engine.Buffer.GetCell(2, 0).Text);
+        Assert.Equal("q", engine.Buffer.GetCell(3, 0).Text);
+        Assert.Equal("│", engine.Buffer.GetCell(4, 0).Text);
+        Assert.Equal("x", engine.Buffer.GetCell(5, 0).Text);
+    }
+
+    [Fact]
+    public void VpaInOriginModeKeepsColumnInsideLeftMargin()
+    {
+        var engine = new TerminalEngine(80, 24);
+        engine.Feed("\u001b[?69h\u001b[5;40s\u001b[?6h\u001b[1;3H");
+        var column = engine.Buffer.CursorX;
+
+        engine.Feed("\u001b[5d");
+
+        Assert.Equal(column, engine.Buffer.CursorX);
+        Assert.Equal(4, engine.Buffer.CursorY);
+    }
+
+    [Fact]
+    public void WideCharacterAtRightEdgeDoesNotWrapWithAutoWrapOff()
+    {
+        var engine = new TerminalEngine(10, 3);
+        engine.Feed("\u001b[?7l\u001b[3;10H\u4e2d");
+
+        Assert.Equal(2, engine.Buffer.CursorY);
+        Assert.Equal("\u4e2d", engine.Buffer.GetCell(8, 2).Text);
+    }
+
+    [Fact]
+    public void LeavingAlternateScreenWithoutCursorSaveKeepsCurrentSgr()
+    {
+        var engine = new TerminalEngine(20, 2);
+        engine.Feed("\u001b[?1047h\u001b[31m\u001b[?1047lR");
+
+        Assert.Equal(TermColor.FromIndex(1), engine.Buffer.GetCell(0, 0).Attributes.Foreground);
+    }
+
+    [Fact]
     public void WindowTitleStackPushesAndRestores()
     {
         var engine = new TerminalEngine();

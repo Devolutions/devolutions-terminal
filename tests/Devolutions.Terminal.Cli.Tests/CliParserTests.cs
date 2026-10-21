@@ -86,6 +86,20 @@ public sealed class CliParserTests
     }
 
     [Fact]
+    public void SplitPaneAcceptsTerminalOptionsBeforeSplitFlags()
+    {
+        var result = Parse("sp", "-p", "Ubuntu", "-H", "-d", "/tmp", "-s", "0.3", "htop");
+
+        var split = Assert.IsType<SplitPaneArgs>(result.Actions[^1].Args);
+        Assert.Equal(SplitDirection.Down, split.SplitDirection);
+        Assert.Equal(0.3f, split.SplitSize);
+        var terminal = Assert.IsType<NewTerminalArgs>(split.ContentArgs);
+        Assert.Equal("Ubuntu", terminal.Profile);
+        Assert.Equal("/tmp", terminal.StartingDirectory);
+        Assert.Equal("htop", terminal.Commandline);
+    }
+
+    [Fact]
     public void EscapedDelimiterRemainsInCommandTail()
     {
         var result = Parse("new-tab", "pwsh", @"one\;two");

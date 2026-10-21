@@ -364,6 +364,14 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
                 rune = glyph.PrivateUseRune;
             }
         }
+        else if (AnsiMode &&
+                 isGlCharacter &&
+                 string.Equals(_gsets[activeGset], "0", StringComparison.Ordinal) &&
+                 TryMapVt52Graphics(rune, out var lineDrawing))
+        {
+            // DEC Special Graphics shares its glyph table with VT52 graphics mode.
+            rune = lineDrawing;
+        }
 
         if (!AutoWrap && Buffer.WrapPending)
         {
@@ -376,7 +384,7 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
             Buffer.InsertCharacters(advance);
         }
 
-        Buffer.Print(rune);
+        Buffer.Print(rune, AutoWrap);
         if (advance > 0)
         {
             _lastPrintedRune = rune;
@@ -2506,7 +2514,11 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
                 RepeatLastCharacter(Count(parameters));
                 break;
             case 'd':
-                Buffer.SetCursor(OneBased(parameters, 0), Buffer.CursorX);
+                // SetCursor re-applies the origin-mode left margin to the column,
+                // so pass the current column relative to it.
+                Buffer.SetCursor(
+                    OneBased(parameters, 0),
+                    Buffer.OriginMode ? Buffer.CursorX - Buffer.LeftBound : Buffer.CursorX);
                 break;
             case 'g':
                 Buffer.ClearTabStop(Param(parameters, 0, 0) == 3);
@@ -2807,6 +2819,11 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
                 _primary.RestoreCursor();
                 _sgr = _primary.CurrentAttributes;
             }
+            else
+            {
+                // SGR state is global; keep the primary buffer in sync with it.
+                _primary.CurrentAttributes = _sgr;
+            }
         }
     }
 
@@ -2921,6 +2938,11 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
                 case 48:
                     i = ApplyExtendedColor(parameters, i, value == 38);
                     break;
+                case 58:
+                    // Underline colour is not rendered, but its colour operands must
+                    // still be consumed so "58;2;r;g;b" isn't applied as other SGRs.
+                    i = ApplyExtendedColor(parameters, i, foreground: null);
+                    break;
                 case 39:
                     _sgr.Foreground = TermColor.Default;
                     break;
@@ -2988,7 +3010,7 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
             : fallback;
     }
 
-    private int ApplyExtendedColor(ReadOnlySpan<int> parameters, int index, bool foreground)
+    private int ApplyExtendedColor(ReadOnlySpan<int> parameters, int index, bool? foreground)
     {
         var mode = Param(parameters, index + 1, 0);
         if (mode == 5 && index + 2 < parameters.Length)
@@ -3020,13 +3042,13 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         return Math.Min(index + 1, parameters.Length - 1);
     }
 
-    private void SetSgrColor(TermColor color, bool foreground)
+    private void SetSgrColor(TermColor color, bool? foreground)
     {
-        if (foreground)
+        if (foreground == true)
         {
             _sgr.Foreground = color;
         }
-        else
+        else if (foreground == false)
         {
             _sgr.Background = color;
         }

@@ -232,7 +232,9 @@ public sealed class PowerShellSession : IAsyncDisposable
     public async Task<ScriptFile> OpenRemoteFileAsync(string path, ScriptEncoding? choice)
     {
         var file = await CallAsync<RemoteOpenRequest, RemoteFileData>("openRemoteFile", new(path, choice)).ConfigureAwait(false);
-        return ScriptFile.FromRemoteBytes(file.Path, file.Bytes, file.RunspaceId, file.ComputerName, choice);
+        var document = ScriptFile.FromRemoteBytes(file.Path, file.Bytes, file.RunspaceId, file.ComputerName, choice);
+        if (file.Version is not null) document.SetSavedVersion(file.Version);
+        return document;
     }
     public Task SaveRemoteFileAsync(ScriptFile file, string? path = null) =>
         SaveRemoteFileCoreAsync(file, path, file.SavedVersion, true);
@@ -249,7 +251,8 @@ public sealed class PowerShellSession : IAsyncDisposable
         var encoding = file.EncodingChoice;
         var bytes = ScriptFile.Encode(snapshot, encoding);
         var result = await CallAsync<RemoteSaveRequest, RemoteSaveResult>("saveRemoteFile",
-            new(path ?? file.Path!, bytes, expectedVersion, file.IsRemote ? file.Path : null, useSavedVersion, RunspaceId)).ConfigureAwait(false);
+            new(path ?? file.Path!, bytes, expectedVersion, file.IsRemote ? file.Path : null, useSavedVersion, RunspaceId,
+                encoding)).ConfigureAwait(false);
         file.MarkRemoteSaved(result.Path, snapshot, encoding, ScriptFile.GetVersion(bytes), result.RunspaceId, result.ComputerName);
     }
     public Task<bool> RemoteFileExistsAsync(string path) => CallAsync<TextRequest, bool>("remoteFileExists", new(path));
@@ -295,6 +298,11 @@ public sealed class PowerShellSession : IAsyncDisposable
         catch (BridgeRemoteException exception) when (exception.Fault.Code == "ParseException")
         {
             throw new ArgumentException(exception.Message);
+        }
+        catch (BridgeRemoteException exception) when (exception.Fault.Code == "DecoderFallbackException")
+        {
+            // Callers offer the encoding picker for this type, as they do for local files.
+            throw new System.Text.DecoderFallbackException(exception.Message);
         }
         catch (BridgeRemoteException exception) when (exception.Fault.Code == "ObjectDisposedException")
         {

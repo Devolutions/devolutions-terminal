@@ -231,10 +231,16 @@ public static class KeyMapper
         KittyKeyboardFlags flags,
         TerminalKeyEventType eventType)
     {
-        if (eventType != TerminalKeyEventType.Press &&
-            !flags.HasFlag(KittyKeyboardFlags.ReportEventTypes))
+        if (!flags.HasFlag(KittyKeyboardFlags.ReportEventTypes))
         {
-            return null;
+            // Without event-type reporting, releases are not sent and repeats are
+            // reported exactly like presses (they must not fall back to legacy).
+            if (eventType == TerminalKeyEventType.Release)
+            {
+                return null;
+            }
+
+            eventType = TerminalKeyEventType.Press;
         }
 
         // Cursor/navigation/function keys already have a well-known legacy escape

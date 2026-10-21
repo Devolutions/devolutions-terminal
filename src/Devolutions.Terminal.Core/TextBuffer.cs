@@ -410,7 +410,7 @@ public sealed class TextBuffer
             : 0;
     }
 
-    public void Print(Rune rune)
+    public void Print(Rune rune, bool autoWrap = true)
     {
         if (IsPrepend(rune))
         {
@@ -442,7 +442,12 @@ public sealed class TextBuffer
         }
 
         var effectiveColumns = RightBound(GetLiveLine(CursorY)) + 1;
-        if (CursorX + width > effectiveColumns)
+        if (CursorX + width > effectiveColumns && !autoWrap)
+        {
+            // DECAWM reset: never wrap or scroll; overwrite at the right edge.
+            CursorX = Math.Max(0, effectiveColumns - width);
+        }
+        else if (CursorX + width > effectiveColumns)
         {
             var source = GetLiveLine(CursorY);
             source.Wrapped = true;
@@ -1365,7 +1370,7 @@ public sealed class TextBuffer
     private int EffectiveColumns(BufferLine line) =>
         line.Rendition == LineRendition.SingleWidth ? Columns : Math.Max(1, Columns / 2);
 
-    private int LeftBound => LeftRightMargins ? MarginLeft : 0;
+    internal int LeftBound => LeftRightMargins ? MarginLeft : 0;
 
     private int RightBound(BufferLine line) =>
         LeftRightMargins

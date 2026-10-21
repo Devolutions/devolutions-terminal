@@ -131,6 +131,32 @@ public sealed class KeyMapperTests
         Assert.Equal("\u001bOs", ansi);
     }
 
+    [Theory]
+    [InlineData(Key.Escape, KeyModifiers.None, "\u001b[27u")]
+    [InlineData(Key.W, KeyModifiers.Control, "\u001b[119;5u")]
+    public void KittyRepeatWithoutEventTypesIsReportedAsPress(
+        Key key,
+        KeyModifiers modifiers,
+        string expected)
+    {
+        var mode = new TerminalInputMode(
+            true,
+            false,
+            false,
+            KittyKeyboardFlags.DisambiguateEscapeCodes,
+            0,
+            false);
+
+        Assert.Equal(
+            expected,
+            KeyMapper.ToVt(key, modifiers, PhysicalKey.None, null, mode, TerminalKeyEventType.Press));
+        Assert.Equal(
+            expected,
+            KeyMapper.ToVt(key, modifiers, PhysicalKey.None, null, mode, TerminalKeyEventType.Repeat));
+        Assert.Null(
+            KeyMapper.ToVt(key, modifiers, PhysicalKey.None, null, mode, TerminalKeyEventType.Release));
+    }
+
     [Fact]
     public void KittyCsiUReportsPressRepeatAndRelease()
     {

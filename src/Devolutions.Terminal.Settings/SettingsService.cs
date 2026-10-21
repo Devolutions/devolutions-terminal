@@ -238,17 +238,28 @@ public static class SettingsService
                      profile.Commandline.Contains("%SystemRoot%", StringComparison.OrdinalIgnoreCase)))
         {
             profile.Hidden = true;
+            // Runtime-only: keep the snapshot in step so saving doesn't persist it.
+            if (Guid.TryParse(profile.Guid, out var id))
+            {
+                DynamicProfileGenerationResult.MarkSnapshotHidden(settings.ResolvedSnapshot, id);
+            }
         }
 
         var unixSource = OperatingSystem.IsMacOS()
             ? DynamicProfileSource.MacOS
             : DynamicProfileSource.Linux;
-        if (settings.GetDefaultProfile().Hidden &&
+        // GetDefaultProfile() never returns a hidden profile, so look at the
+        // configured default directly to detect that it was just hidden.
+        if (settings.FindConfiguredDefaultProfile(includeHidden: true) is { Hidden: true } &&
             settings.Profiles.FirstOrDefault(profile =>
                 !profile.Hidden &&
                 profile.Source == unixSource) is { } unixDefault)
         {
             settings.DefaultProfile = unixDefault.Guid;
+            if (settings.ResolvedSnapshot is { } snapshot)
+            {
+                snapshot["defaultProfile"] = settings.DefaultProfile;
+            }
         }
     }
 

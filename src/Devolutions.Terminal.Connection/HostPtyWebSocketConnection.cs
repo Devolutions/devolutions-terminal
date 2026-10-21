@@ -319,21 +319,30 @@ public sealed class HostPtyWebSocketConnection : IRestartableTerminalConnection
                 State = TerminalConnectionState.Connected;
             }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex)
         {
+            // A canceled connect must release the socket too, but it is not a fault.
+            var canceled = ex is OperationCanceledException;
             outbound.Writer.TryComplete();
             socket.Dispose();
             lock (_stateLock)
             {
                 IsRunning = false;
-                State = TerminalConnectionState.Failed;
+                State = canceled
+                    ? _hasStarted ? TerminalConnectionState.Closed : TerminalConnectionState.NotConnected
+                    : TerminalConnectionState.Failed;
                 _socket = null;
                 _outbound = null;
+                _lifetime = null;
             }
 
             await lifetime.CancelAsync().ConfigureAwait(false);
             lifetime.Dispose();
-            Faulted?.Invoke(this, ex);
+            if (!canceled)
+            {
+                Faulted?.Invoke(this, ex);
+            }
+
             throw;
         }
     }
@@ -347,13 +356,22 @@ public sealed class HostPtyWebSocketConnection : IRestartableTerminalConnection
         Task? receiveTask;
         lock (_stateLock)
         {
-            if (!IsRunning && State is not TerminalConnectionState.Connecting and not TerminalConnectionState.Connected)
+            var active = IsRunning ||
+                         State is TerminalConnectionState.Connecting or TerminalConnectionState.Connected;
+
+            // A remote exit (shell exit, server close or socket fault) publishes the
+            // exit from the receive loop, but the socket, send loop and lifetime
+            // token are still ours to release.
+            if (!active && _socket is null && _lifetime is null)
             {
                 return;
             }
 
-            IsRunning = false;
-            State = TerminalConnectionState.Closing;
+            if (active)
+            {
+                IsRunning = false;
+                State = TerminalConnectionState.Closing;
+            }
             socket = _socket;
             outbound = _outbound;
             lifetime = _lifetime;

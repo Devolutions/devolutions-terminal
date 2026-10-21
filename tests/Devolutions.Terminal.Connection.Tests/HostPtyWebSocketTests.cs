@@ -65,6 +65,76 @@ public sealed class HostPtyWebSocketTests
     }
 
     [Fact]
+    public async Task FailedConnectCanBeClosedAndDisposed()
+    {
+        int port;
+        using (var reserved = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0))
+        {
+            reserved.Start();
+            port = ((IPEndPoint)reserved.LocalEndpoint).Port;
+        }
+        var connection = new HostPtyWebSocketConnection(new Uri($"http://127.0.0.1:{port}/"));
+        Exception? fault = null;
+        connection.Faulted += (_, ex) => fault = ex;
+
+        await Assert.ThrowsAnyAsync<Exception>(
+            () => connection.StartAsync(BrowserShellConnection.ShellName, null, 80, 24));
+        Assert.NotNull(fault);
+        Assert.Equal(TerminalConnectionState.Failed, connection.State);
+
+        await connection.CloseAsync();
+        await connection.DisposeAsync();
+        Assert.Equal(TerminalConnectionState.Disposed, connection.State);
+    }
+
+    [Fact]
+    public async Task CanceledConnectIsNotAFault()
+    {
+        // Accepts the TCP connection but never answers the WebSocket upgrade.
+        using var silent = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
+        silent.Start();
+        await using var connection = new HostPtyWebSocketConnection(
+            new Uri($"http://127.0.0.1:{((IPEndPoint)silent.LocalEndpoint).Port}/"));
+        Exception? fault = null;
+        connection.Faulted += (_, ex) => fault = ex;
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => connection.StartAsync(new TerminalLaunchOptions
+            {
+                CommandLine = BrowserShellConnection.ShellName,
+                Columns = 80,
+                Rows = 24,
+            }, cancellation.Token));
+
+        Assert.Null(fault);
+        Assert.Equal(TerminalConnectionState.NotConnected, connection.State);
+    }
+
+    [Fact]
+    public async Task CloseAfterRemoteExitReleasesTheSocket()
+    {
+        await using var server = LoopbackPtyServer.Start(
+            () => new BrowserShellConnection(),
+            (columns, rows) => new TerminalLaunchOptions
+            {
+                CommandLine = BrowserShellConnection.ShellName,
+                Columns = columns,
+                Rows = rows,
+            });
+
+        await using var connection = new HostPtyWebSocketConnection(server.HttpBase);
+        await connection.StartAsync(BrowserShellConnection.ShellName, null, 80, 24);
+        connection.Write("exit\r");
+        await WaitForAsync(() => connection.State == TerminalConnectionState.Closed);
+
+        await connection.CloseAsync();
+
+        await WaitForAsync(() => server.CompletedSessions == 1);
+        Assert.Equal(TerminalConnectionState.Closed, connection.State);
+    }
+
+    [Fact]
     public async Task RealHostShellEchoesAcrossWebSocket()
     {
         await using var server = LoopbackPtyServer.Start(connectionFactory: null, launchOptions: null);
@@ -101,6 +171,7 @@ public sealed class HostPtyWebSocketTests
         private readonly Func<IRestartableTerminalConnection>? _connectionFactory;
         private readonly Func<int, int, TerminalLaunchOptions>? _launchOptions;
         private readonly Task _acceptLoop;
+        private int _completedSessions;
 
         private LoopbackPtyServer(
             HttpListener listener,
@@ -116,6 +187,8 @@ public sealed class HostPtyWebSocketTests
         }
 
         public Uri HttpBase { get; }
+
+        public int CompletedSessions => Volatile.Read(ref _completedSessions);
 
         public static LoopbackPtyServer Start(
             Func<IRestartableTerminalConnection>? connectionFactory,
@@ -206,6 +279,7 @@ public sealed class HostPtyWebSocketTests
                 finally
                 {
                     socket.Dispose();
+                    Interlocked.Increment(ref _completedSessions);
                 }
             }
             catch (Exception) when (_stop.IsCancellationRequested)

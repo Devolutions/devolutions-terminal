@@ -225,7 +225,7 @@ internal sealed class BridgeService(string authentication, int parentProcessId, 
                 var open = BridgeJson.Read<RemoteOpenRequest>(payload);
                 var file = await session.OpenRemoteFileAsync(open.Path, open.Encoding).ConfigureAwait(false);
                 return BridgeJson.Element(new RemoteFileData(file.Path!, ScriptFile.Encode(file.Text, file.EncodingChoice),
-                    file.RemoteRunspaceId!.Value, file.RemoteComputerName!));
+                    file.RemoteRunspaceId!.Value, file.RemoteComputerName!, file.SavedVersion));
             case "saveRemoteFile": return BridgeJson.Element(await session.SaveRemoteDataAsync(BridgeJson.Read<RemoteSaveRequest>(payload)).ConfigureAwait(false));
             case "remoteFileExists": return BridgeJson.Element(await session.RemoteFileExistsAsync(BridgeJson.Read<TextRequest>(payload).Text).ConfigureAwait(false));
             case "remoteFileVersion":
@@ -258,10 +258,14 @@ internal sealed class BridgeService(string authentication, int parentProcessId, 
     {
         session.Output += entry =>
         {
-            for (var offset = 0; offset < entry.Text.Length; offset += IseBridgeProtocol.MaximumOutputCharacters)
+            for (var offset = 0; offset < entry.Text.Length;)
             {
                 var length = Math.Min(entry.Text.Length - offset, IseBridgeProtocol.MaximumOutputCharacters);
+                // Never split a surrogate pair: JSON turns a lone surrogate into U+FFFD.
+                if (length > 1 && offset + length < entry.Text.Length && char.IsHighSurrogate(entry.Text[offset + length - 1]))
+                    length--;
                 Publish("output", entry with { Text = entry.Text.Substring(offset, length), CodeStart = Math.Clamp(entry.CodeStart - offset, 0, length) });
+                offset += length;
             }
         };
         session.StateChanged += _ => Publish("status", session.Status());

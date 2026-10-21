@@ -301,6 +301,18 @@ public sealed class CliParser
         }
     }
 
+    private static readonly HashSet<string> TerminalValueOptions = new(StringComparer.Ordinal)
+    {
+        "-p", "--profile", "--sessionId", "-d", "--startingDirectory",
+        "--title", "--tabColor", "--colorScheme",
+    };
+
+    private static readonly HashSet<string> TerminalFlagOptions = new(StringComparer.Ordinal)
+    {
+        "--suppressApplicationTitle", "--useApplicationTitle", "--appendCommandLine",
+        "--inheritEnvironment", "--reloadEnvironment",
+    };
+
     private static ActionAndArgs ParseSplitPane(IReadOnlyList<string> args)
     {
         var direction = SplitDirection.Automatic;
@@ -341,8 +353,23 @@ public sealed class CliParser
 
                     break;
                 default:
-                    commandStarted = true;
-                    terminalArgs.Add(args[index]);
+                    // Terminal options may be interleaved with split flags
+                    // (e.g. "sp -p Ubuntu -H"); only the command ends option parsing.
+                    if (TerminalValueOptions.Contains(args[index]))
+                    {
+                        terminalArgs.Add(args[index]);
+                        terminalArgs.Add(Next(args, ref index, args[index]));
+                    }
+                    else if (TerminalFlagOptions.Contains(args[index]))
+                    {
+                        terminalArgs.Add(args[index]);
+                    }
+                    else
+                    {
+                        commandStarted = true;
+                        terminalArgs.Add(args[index]);
+                    }
+
                     break;
             }
         }

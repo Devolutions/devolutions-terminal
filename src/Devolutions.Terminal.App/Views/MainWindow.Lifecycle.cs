@@ -177,25 +177,35 @@ public partial class MainWindow
             TryPersistCurrentLayout(CaptureLayout());
         }
 
-        foreach (var tab in _tabs.ToArray())
+        try
         {
-            if (tab.CustomContent is IHostedTabContent content)
+            foreach (var tab in _tabs.ToArray())
             {
-                try { await content.DisposeAsync().ConfigureAwait(true); }
-                catch (Exception error) { ReportHostedTabError("Unable to dispose workbench", error); }
+                if (tab.CustomContent is IHostedTabContent content)
+                {
+                    try { await content.DisposeAsync().ConfigureAwait(true); }
+                    catch (Exception error) { ReportHostedTabError("Unable to dispose workbench", error); }
+                }
+                foreach (var pane in tab.Panes.Leaves())
+                {
+                    // One failing pane must not leave the others' processes running.
+                    try { await pane.Control.CloseAsync().ConfigureAwait(true); }
+                    catch (Exception error) { System.Diagnostics.Trace.WriteLine($"Unable to close pane: {error}"); }
+                }
             }
-            foreach (var pane in tab.Panes.Leaves())
-            {
-                await pane.Control.CloseAsync().ConfigureAwait(true);
-            }
-        }
 
-        foreach (var bitmap in _tabIconCache.Values)
+            foreach (var bitmap in _tabIconCache.Values)
+            {
+                bitmap.Dispose();
+            }
+
+            _tabIconCache.Clear();
+        }
+        finally
         {
-            bitmap.Dispose();
+            // Raises Closed, which unregisters this window from the router; it must
+            // run even if teardown failed, or requests keep routing to a dead window.
+            base.OnClosed(e);
         }
-
-        _tabIconCache.Clear();
-        base.OnClosed(e);
     }
 }

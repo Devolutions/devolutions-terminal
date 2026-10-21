@@ -31,7 +31,7 @@ if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = Join-Path $repoRoot "artifacts\nuget"
 }
 
-$OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
+$OutputDirectory = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory)
 $layoutRoot = Join-Path $OutputDirectory "layout"
 $packageOutput = Join-Path $OutputDirectory "packages"
 New-Item -ItemType Directory -Force -Path $layoutRoot, $packageOutput | Out-Null

@@ -38,7 +38,7 @@ if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = Join-Path $dotnetRoot "artifacts\msix"
 }
 
-$OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
+$OutputDirectory = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory)
 $nativeOutput = Join-Path $OutputDirectory "native-shell"
 $layoutRoot = Join-Path $OutputDirectory "layout"
 $packageOutput = Join-Path $OutputDirectory "packages"
@@ -200,7 +200,7 @@ try {
             "--quiet"
         )
         if (-not [string]::IsNullOrWhiteSpace($CertificatePath)) {
-            $arguments += @("--cert", [IO.Path]::GetFullPath($CertificatePath))
+            $arguments += @("--cert", $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($CertificatePath))
             if ($null -ne $plainTextPassword) {
                 $arguments += @("--cert-password", $plainTextPassword)
             }

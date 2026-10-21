@@ -19,7 +19,7 @@ if ($existing.Count -gt 0 -and -not $ReplaceExisting) {
 }
 
 $installArguments = @{
-    Path = [IO.Path]::GetFullPath($PackagePath)
+    Path = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($PackagePath)
     ForceApplicationShutdown = $true
 }
 if ($ReplaceExisting) {

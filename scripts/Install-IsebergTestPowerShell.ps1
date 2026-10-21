@@ -48,7 +48,7 @@ $releases = @{
 }
 $hashes = $releases[$Version]
 if (-not $hashes.ContainsKey($rid)) { throw "No pinned PowerShell test runtime for $rid." }
-$root = [IO.Path]::GetFullPath($DestinationRoot)
+$root = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($DestinationRoot)
 $engineDirectory = Join-Path $root "$version-$rid"
 $executable = Join-Path $engineDirectory $(if ($IsWindows) { 'pwsh.exe' } else { 'pwsh' })
 if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {

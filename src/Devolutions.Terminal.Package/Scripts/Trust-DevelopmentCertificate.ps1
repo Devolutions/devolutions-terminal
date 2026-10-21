@@ -14,7 +14,7 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
     throw "Certificate trust installation requires an elevated Administrator terminal."
 }
 
-& winapp cert install ([IO.Path]::GetFullPath($CertificatePath))
+& winapp cert install ($ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($CertificatePath))
 if ($LASTEXITCODE -ne 0) {
     throw "Certificate trust installation failed with exit code $LASTEXITCODE."
 }

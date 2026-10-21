@@ -120,7 +120,7 @@ public sealed class DynamicProfileGenerationResult
         state.GeneratedProfiles.UnionWith(GeneratedProfileIds);
     }
 
-    private static void MarkSnapshotHidden(JsonObject? snapshot, Guid id)
+    internal static void MarkSnapshotHidden(JsonObject? snapshot, Guid id)
     {
         if (snapshot?["profiles"] is not JsonObject profiles ||
             profiles["list"] is not JsonArray list)

@@ -266,7 +266,7 @@ begin {
 
 process {
     foreach ($path in $PackagePath) {
-        $resolvedPath = [IO.Path]::GetFullPath($path)
+        $resolvedPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($path)
         switch ([IO.Path]::GetExtension($resolvedPath)) {
             ".msix" { Test-Msix $resolvedPath }
             ".msi" { Test-Msi $resolvedPath }
