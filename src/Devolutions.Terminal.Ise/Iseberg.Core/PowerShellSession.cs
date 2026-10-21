@@ -13,6 +13,7 @@ public sealed class PowerShellSession : IAsyncDisposable
     private readonly object sync = new();
     private readonly CancellationTokenSource lifetime = new();
     private readonly StringBuilder diagnostics = new();
+    private readonly TaskCompletionSource<string?> installationReport = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private BridgeConnection? connection;
     private NamedPipeServerStream? pipe;
     private Process? child;
@@ -75,7 +76,9 @@ public sealed class PowerShellSession : IAsyncDisposable
         {
             if (!Path.IsPathFullyQualified(ModulePath) || !File.Exists(ModulePath))
                 throw new FileNotFoundException("The DT-owned Iseberg PowerShell bridge module is missing.", ModulePath);
-            var executable = ExecutablePath ?? PowerShellProcessDiscovery.FindExecutable();
+            string executable;
+            try { executable = ExecutablePath ?? PowerShellProcessDiscovery.FindExecutable(); }
+            catch (FileNotFoundException exception) { throw new InvalidOperationException(PowerShellInstallation.MissingMessage, exception); }
             var endpoint = "dt-iseberg-" + Guid.NewGuid().ToString("N");
             var authentication = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
             var challenge = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
@@ -87,17 +90,20 @@ public sealed class PowerShellSession : IAsyncDisposable
                 RedirectStandardOutput = true, RedirectStandardError = true
             };
             using var parent = Process.GetCurrentProcess();
-            var bootstrap = "Import-Module -Name '" + ModulePath.Replace("'", "''") +
+            var bootstrap = PowerShellInstallation.ReportScript + "; Import-Module -Name '" + ModulePath.Replace("'", "''") +
                 "' -ErrorAction Stop; Start-IsebergBridge -PipeName '" + endpoint +
                 "' -ParentProcessId " + Environment.ProcessId +
                 " -ParentStartTimeUtcTicks " + parent.StartTime.ToUniversalTime().Ticks;
             foreach (var argument in new[] { "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", bootstrap })
                 start.ArgumentList.Add(argument);
             start.Environment[IseBridgeProtocol.AuthenticationEnvironment] = authentication;
-            child = Process.Start(start) ?? throw new InvalidOperationException("The PowerShell bridge did not start.");
-            outputDrain = DrainAsync(child.StandardOutput);
+            try { child = Process.Start(start) ?? throw new InvalidOperationException("The PowerShell bridge did not start."); }
+            catch (System.ComponentModel.Win32Exception exception) { throw new InvalidOperationException(PowerShellInstallation.MissingMessage, exception); }
+            outputDrain = DrainOutputAsync(child.StandardOutput);
             errorDrain = DrainAsync(child.StandardError);
             exitObservation = ObserveExitAsync(child);
+            // The bootstrap describes pwsh before importing the module, so this overlaps the module load.
+            (await ReadInstallationAsync().ConfigureAwait(false)).Validate();
             await pipe.WaitForConnectionAsync(lifetime.Token).WaitAsync(TimeSpan.FromSeconds(30), lifetime.Token).ConfigureAwait(false);
             connection = new(pipe) { Request = HandleRequestAsync, Event = HandleEvent };
             connection.Disconnected += OnDisconnected;
@@ -397,6 +403,37 @@ public sealed class PowerShellSession : IAsyncDisposable
         }
     }
 
+    private async Task<PowerShellInstallation> ReadInstallationAsync()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        string? report;
+        try { report = await installationReport.Task.WaitAsync(timeout.Token).ConfigureAwait(false); }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+        {
+            throw new InvalidOperationException("PowerShell did not respond to the installation check within 15 seconds.");
+        }
+        // Without a report, pwsh failed before it could describe itself.
+        return report is null
+            ? throw new InvalidOperationException($"PowerShell installation check failed: {StartupDiagnostics()}")
+            : PowerShellInstallation.Parse(report);
+    }
+    private async Task DrainOutputAsync(StreamReader reader)
+    {
+        try
+        {
+            while (await reader.ReadLineAsync(lifetime.Token).ConfigureAwait(false) is { } line)
+            {
+                // The bootstrap's installation report is the only stdout line with meaning.
+                if (!installationReport.Task.IsCompleted &&
+                    line.StartsWith(PowerShellInstallation.ReportPrefix, StringComparison.Ordinal))
+                    installationReport.TrySetResult(line[PowerShellInstallation.ReportPrefix.Length..]);
+                else
+                    AppendDiagnostics(line + Environment.NewLine);
+            }
+        }
+        catch (Exception exception) when (exception is IOException or OperationCanceledException or ObjectDisposedException) { }
+        finally { installationReport.TrySetResult(null); }
+    }
     private async Task DrainAsync(StreamReader reader)
     {
         try
@@ -404,16 +441,18 @@ public sealed class PowerShellSession : IAsyncDisposable
             var buffer = new char[4096];
             int read;
             while ((read = await reader.ReadAsync(buffer, lifetime.Token).ConfigureAwait(false)) != 0)
-            {
-                // Raw stdout/stderr is diagnostics, never a second script-output transport.
-                lock (sync)
-                {
-                    if (diagnostics.Length + read > 16384) diagnostics.Remove(0, Math.Min(diagnostics.Length, read));
-                    diagnostics.Append(buffer, 0, read);
-                }
-            }
+                AppendDiagnostics(buffer.AsSpan(0, read));
         }
         catch (Exception exception) when (exception is IOException or OperationCanceledException or ObjectDisposedException) { }
+    }
+    // Raw stdout/stderr is diagnostics, never a second script-output transport.
+    private void AppendDiagnostics(ReadOnlySpan<char> text)
+    {
+        lock (sync)
+        {
+            if (diagnostics.Length + text.Length > 16384) diagnostics.Remove(0, Math.Min(diagnostics.Length, text.Length));
+            diagnostics.Append(text);
+        }
     }
     private async Task ObserveExitAsync(Process process)
     {

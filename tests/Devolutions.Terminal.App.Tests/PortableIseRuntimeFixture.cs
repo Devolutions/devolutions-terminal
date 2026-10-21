@@ -1,4 +1,3 @@
-using Devolutions.Terminal.App.Connections;
 using Iseberg.Core;
 using Xunit;
 
@@ -10,7 +9,6 @@ public sealed class PortableIseRuntimeFixture : IAsyncLifetime
 
     public async ValueTask InitializeAsync()
     {
-        await PowerShellIseRuntime.InitializeAsync().WaitAsync(TimeSpan.FromSeconds(60));
         await Analysis.InitializeAsync().WaitAsync(TimeSpan.FromSeconds(60));
     }
 

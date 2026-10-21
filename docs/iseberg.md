@@ -91,11 +91,14 @@ PowerShell 7.4.0 through 7.4.5 cannot load the patched SDK's
 `System.Management.Automation` 7.4.6.500 assembly reference and are rejected up front.
 The child architecture does not need to match DT. Make `pwsh` available on PATH, or set
 `DT_ISEBERG_PSHOME` to its absolute installation directory before starting DT.
-DT checks its version and child-runtime compatibility. A short noninteractive
-`pwsh -NoProfile` probe discovers and validates the installation. DT then starts
-an owned `pwsh -NoLogo -NoProfile` child and imports the absolute path to its
-`Devolutions.Iseberg.PowerShell.dll` binary module. The module creates a custom-host execution
-runspace; it does not replace PowerShell's bootstrap console host.
+DT checks its version and child-runtime compatibility without a separate probe
+process: DT starts an owned `pwsh -NoLogo -NoProfile` child whose bootstrap first
+prints one line describing `$PSHOME`, its version, .NET runtime and architecture,
+then imports the absolute path to its `Devolutions.Iseberg.PowerShell.dll` binary
+module. DT validates that description while the module loads, so an installation
+too old to load the module still fails with the version it found. The module
+creates a custom-host execution runspace; it does not replace PowerShell's
+bootstrap console host.
 
 Parser analysis, completion, execution, host input, debugging and portable
 `$psISE` proxies run in that child. The NativeAOT parent uses typed, source-generated

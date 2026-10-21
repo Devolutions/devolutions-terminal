@@ -23,7 +23,7 @@ public partial class MainWindow
 #if POWERSHELL_ISE
         if (_isClosed || _closeConfirmationPending || _applicationClosePending)
             throw new InvalidOperationException("Cannot open Iseberg while DT is closing.");
-        await PowerShellIseRuntime.InitializeAsync().ConfigureAwait(true);
+        // The session's own pwsh reports and validates its installation during startup.
         return await CreatePowerShellIseTabCoreAsync(profile, restored, regenerateIdentities).ConfigureAwait(true);
 #else
         await Task.CompletedTask;

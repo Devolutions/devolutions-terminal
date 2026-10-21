@@ -8,9 +8,6 @@
   <PropertyGroup Condition="'$(EnablePowerShellIse)' == 'true'">
     <DefineConstants>$(DefineConstants);POWERSHELL_ISE</DefineConstants>
   </PropertyGroup>
-  <ItemGroup Condition="'$(EnablePowerShellIse)' != 'true'">
-    <Compile Remove="Connections\PowerShellInstallation.cs" />
-  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Avalonia" />

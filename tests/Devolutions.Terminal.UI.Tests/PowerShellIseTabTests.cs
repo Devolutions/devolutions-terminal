@@ -17,16 +17,6 @@ namespace Devolutions.Terminal.UI.Tests;
 
 public sealed class PowerShellIseTabTests
 {
-    [AvaloniaFact]
-    public async Task RuntimeInitializationReturnsCachedSuccessfulTask()
-    {
-        await InitializeRuntimeAsync();
-        var first = PowerShellIseRuntime.InitializeAsync();
-        await first.WaitAsync(TimeSpan.FromSeconds(60));
-        Assert.True(first.IsCompletedSuccessfully);
-        Assert.Same(first, PowerShellIseRuntime.InitializeAsync());
-    }
-
     [AvaloniaTheory]
     [InlineData(false)]
     [InlineData(true)]
