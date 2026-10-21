@@ -111,6 +111,50 @@ function Install-Zig {
     return $found.FullName
 }
 
+function Get-ZigVersion {
+    param(
+        [Parameter(Mandatory)]
+        [string] $ZigPath
+    )
+
+    try {
+        $output = & $ZigPath version 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            return $null
+        }
+
+        return ([string]$output).Trim()
+    }
+    catch {
+        return $null
+    }
+}
+
+# Zig's build API changes between minor releases, so only the pinned major.minor can build the
+# pinned sources; patch releases (and dev builds of that minor) are accepted.
+function Test-ZigVersionCompatible {
+    param(
+        [string] $Actual,
+        [Parameter(Mandatory)]
+        [string] $Required
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Actual)) {
+        return $false
+    }
+
+    $actualCore = ($Actual -split '[-+]', 2)[0]
+    $requiredCore = ($Required -split '[-+]', 2)[0]
+    $actualVersion = $null
+    $requiredVersion = $null
+    if (-not [version]::TryParse($actualCore, [ref]$actualVersion) -or
+        -not [version]::TryParse($requiredCore, [ref]$requiredVersion)) {
+        return $false
+    }
+
+    return $actualVersion.Major -eq $requiredVersion.Major -and $actualVersion.Minor -eq $requiredVersion.Minor
+}
+
 function Resolve-ZigPath {
     param(
         [string] $ZigPath,
@@ -122,12 +166,24 @@ function Resolve-ZigPath {
     )
 
     if (-not [string]::IsNullOrWhiteSpace($ZigPath) -and (Test-Path -LiteralPath $ZigPath)) {
+        $explicitVersion = Get-ZigVersion -ZigPath $ZigPath
+        if (-not (Test-ZigVersionCompatible -Actual $explicitVersion -Required $Version)) {
+            Write-Warning "Using explicit Zig '$ZigPath' ($explicitVersion); the pinned sources expect Zig $Version."
+        }
+
         return $ZigPath
     }
 
+    # A different system Zig (for example a newer release on PATH) is ignored rather than failing
+    # the build: the pinned version is used from, or downloaded into, artifacts/tools instead.
     $command = Get-Command zig -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($null -ne $command) {
-        return $command.Source
+        $pathVersion = Get-ZigVersion -ZigPath $command.Source
+        if (Test-ZigVersionCompatible -Actual $pathVersion -Required $Version) {
+            return $command.Source
+        }
+
+        Write-Host "Ignoring Zig $pathVersion at '$($command.Source)'; native libraries require Zig $Version."
     }
 
     $zigName = if (Test-HostWindows) { "zig.exe" } else { "zig" }
