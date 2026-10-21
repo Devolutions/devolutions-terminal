@@ -125,9 +125,15 @@ function Resolve-ZigPath {
         return $ZigPath
     }
 
+    # Only use a zig on PATH if it matches the pinned version; Ghostty rejects other versions.
     $command = Get-Command zig -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($null -ne $command) {
-        return $command.Source
+        $pathVersion = (& $command.Source version 2>$null | Out-String).Trim()
+        if ($pathVersion -eq $Version) {
+            return $command.Source
+        }
+
+        Write-Host "Ignoring zig $pathVersion at '$($command.Source)'; Zig $Version is required."
     }
 
     $zigName = if (Test-HostWindows) { "zig.exe" } else { "zig" }
