@@ -323,6 +323,48 @@ public sealed class PowerShellIseProfileTests
         Assert.Equal(Guid.Parse(Id), Guid.Parse(restored.Guid!));
     }
 
+    [Fact]
+    public void TerminalLaunchDefaultsDoNotInvalidateIseProfilesButStillApplyToTerminals()
+    {
+        var defaults = new JsonObject
+        {
+            ["commandline"] = "pwsh.exe", ["elevate"] = true,
+            ["connectionType"] = "{2ece5bfe-50ed-5f3a-ab87-5cd4baafed2b}",
+            ["environment"] = new JsonObject { ["DT_DEFAULT"] = "1" }, ["historySize"] = 1234,
+        };
+        var minimalIse = new JsonObject { ["guid"] = Id, ["name"] = "Iseberg", ["type"] = "powershellIse" };
+        var explicitIse = new JsonObject
+        {
+            ["guid"] = UnknownId, ["name"] = "Explicit", ["type"] = "powershellIse",
+            ["environment"] = new JsonObject { ["DT_EXPLICIT"] = "1" },
+        };
+        var terminal = new JsonObject { ["guid"] = "{11111111-2222-3333-4444-555555555555}", ["name"] = "Terminal" };
+        var document = new JsonObject
+        {
+            ["profiles"] = new JsonObject
+            {
+                ["defaults"] = defaults,
+                ["list"] = new JsonArray(minimalIse, explicitIse, terminal),
+            },
+        }.ToJsonString();
+        var profiles = SettingsLoader.Load(Defaults, document).Profiles;
+
+        var ise = profiles.Single(profile => profile.Name == "Iseberg");
+        Assert.Equal(ProfileKind.PowerShellIse, ise.Kind);
+        Assert.Empty(ise.Commandline);
+        Assert.False(ise.Elevate);
+        Assert.Null(ise.ConnectionType);
+        Assert.Empty(ise.Environment);
+        Assert.Equal(1234, ise.HistorySize);
+        // An explicit ISE override is kept so the launch can reject it instead of ignoring it.
+        Assert.Equal("1", profiles.Single(profile => profile.Name == "Explicit").Environment["DT_EXPLICIT"]);
+        var ordinary = profiles.Single(profile => profile.Name == "Terminal");
+        Assert.Equal(ProfileKind.Terminal, ordinary.Kind);
+        Assert.True(ordinary.Elevate);
+        Assert.Equal("1", ordinary.Environment["DT_DEFAULT"]);
+        Assert.NotNull(ordinary.ConnectionType);
+    }
+
     private static JsonObject IseNode() => new()
     {
         ["guid"] = Id, ["name"] = "Iseberg", ["type"] = "powershellIse", ["commandline"] = "",

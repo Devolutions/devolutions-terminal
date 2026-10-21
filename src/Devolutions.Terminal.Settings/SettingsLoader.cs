@@ -19,6 +19,7 @@ public static class SettingsLoader
 {
     private const string OriginKey = "$terminalOrigin";
     private const string SourceKey = "$terminalSource";
+    private static readonly string[] IseInapplicableDefaults = ["commandline", "connectionType", "elevate", "environment"];
 
     private static readonly JsonDocumentOptions DocumentOptions = new()
     {
@@ -412,6 +413,16 @@ public static class SettingsLoader
                     MergeObject(effective, userProfile);
                 }
 
+                if (String(effective, "type") == "powershellIse")
+                {
+                    // Terminal launch defaults would make every ISE profile invalid; only the ISE profile's own
+                    // explicit values apply (and are then rejected as unsupported overrides).
+                    foreach (var key in IseInapplicableDefaults)
+                    {
+                        if (profileNode[key] is null && userProfile?[key] is null) effective.Remove(key);
+                    }
+                }
+
                 var profile = ResolveProfile(effective);
                 var profileId = EffectiveProfileGuid(profileNode);
                 profile.Origin = profileId is not null && inheritedProfileIds.Contains(profileId)
@@ -499,7 +510,8 @@ public static class SettingsLoader
             Name = name,
             Source = source,
             Hidden = Bool(profile, "hidden"),
-            Commandline = String(profile, "commandline") ?? @"%SystemRoot%\System32\cmd.exe",
+            Commandline = String(profile, "commandline")
+                ?? (String(profile, "type") == "powershellIse" ? "" : @"%SystemRoot%\System32\cmd.exe"),
             StartingDirectory = String(profile, "startingDirectory") ?? "%USERPROFILE%",
             Icon = String(profile, "icon"),
             ConnectionType = CanonicalGuid(String(profile, "connectionType")),

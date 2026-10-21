@@ -95,6 +95,63 @@ public sealed class PortableIseProcessTests(ITestOutputHelper testOutput)
     }
 
     [Fact]
+    public async Task LargeScriptAnalysisAndOversizedRequestsKeepTheSessionUsable()
+    {
+        await using var session = new PowerShellSession();
+        await session.InitializeAsync();
+        var childId = Assert.IsType<int>(session.ChildProcessId);
+        // Token-dense code: roughly one token per four characters.
+        static string Script(int length)
+        {
+            var script = new System.Text.StringBuilder();
+            for (var index = 0; script.Length < length; index++)
+                script.Append($$"""
+                    function Invoke-Sample{{index}} {
+                        param([string] $Name = 'café {{index}}')
+                        if ($Name) { foreach ($item in 1..3) { if ($item -gt 1) { Write-Output "$Name $item" } } }
+                    }
+
+                    """);
+            return script.ToString();
+        }
+        var analysis = await session.AnalyzeAsync(Script(300 * 1024)).WaitAsync(TimeSpan.FromSeconds(60));
+        Assert.Empty(analysis.Errors);
+        Assert.NotEmpty(analysis.Statements);
+        var name = Assert.Single(analysis.Tokens, token => token.Text == "Invoke-Sample0");
+        Assert.Equal((1, 10), (name.Extent.StartLineNumber, name.Extent.StartColumnNumber));
+        var variable = analysis.Tokens.First(token => token.VariablePath is not null);
+        Assert.Equal("Name", variable.VariablePath!.UserPath);
+        Assert.Contains(analysis.Tokens, token => token.NestedTokens is { Length: > 0 });
+
+        // An oversized child response and an oversized parent request each fail alone.
+        var response = await Assert.ThrowsAsync<BridgeRemoteException>(() => session.AnalyzeAsync(Script(2 * 1024 * 1024)));
+        Assert.Equal(nameof(BridgeMessageTooLargeException), response.Fault.Code);
+        await Assert.ThrowsAsync<BridgeMessageTooLargeException>(() => session.AnalyzeAsync(new string('x', 9 * 1024 * 1024)));
+        var output = new List<OutputEntry>();
+        session.Output += output.Add;
+        await session.ExecuteAsync("'DT-AFTER-LARGE:' + $PID");
+        Assert.Equal($"DT-AFTER-LARGE:{childId}",
+            Assert.Single(output, entry => entry.Kind == OutputKind.Output).Text.TrimEnd('\r', '\n'));
+        Assert.Equal(SessionState.Ready, session.State);
+    }
+
+    [Fact]
+    public async Task NativeProgramsReadEndOfInputInsteadOfAnInheritedConsole()
+    {
+        await using var session = new PowerShellSession();
+        await session.InitializeAsync();
+        var output = new List<OutputEntry>();
+        session.Output += output.Add;
+        await session.ExecuteAsync("""
+            $pwsh = [Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+            'DT-STDIN-LENGTH:' + (& $pwsh -NoProfile -NonInteractive -Command '[Console]::In.ReadToEnd().Length')
+            """).WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.Equal("DT-STDIN-LENGTH:0",
+            Assert.Single(output, entry => entry.Kind == OutputKind.Output).Text.TrimEnd('\r', '\n'));
+        Assert.Equal(SessionState.Ready, session.State);
+    }
+
+    [Fact]
     public async Task ResizingDuringInitializationDefersIpcUntilTheSessionIsReady()
     {
         await using var session = new PowerShellSession();
