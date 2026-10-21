@@ -1,7 +1,11 @@
+using Avalonia;
+using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Automation;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using Devolutions.Terminal.Settings;
 using Devolutions.Terminal.App.Routing;
 using Devolutions.Terminal.App.Views;
@@ -108,6 +112,51 @@ public sealed class WindowActionRegistrationTests
         Assert.True(second.Succeeded);
         Assert.Same(settingsTab, Assert.Single(window.Tabs, static tab => tab.IsSettingsTab));
         Assert.DoesNotContain(window.CaptureLayout().Tabs, tab => tab.Title == "Settings");
+    }
+
+    [AvaloniaFact]
+    public async Task ClickingTabCloseButtonClosesTheTab()
+    {
+        var window = new MainWindow(0, string.Empty, SettingsOnlyStartup);
+        window.Show();
+        try
+        {
+            await window.ActivateAsync(new TerminalWindowActivation(
+                null,
+                null,
+                null,
+                null,
+                TerminalWindowLaunchMode.Default,
+                [new ActionAndArgs(
+                    ShortcutAction.OpenSettings,
+                    new OpenSettingsArgs(SettingsTarget.SettingsUI))]));
+            window.UpdateLayout();
+            Dispatcher.UIThread.RunJobs();
+            Assert.Contains(window.Tabs, static tab => tab.IsSettingsTab);
+
+            // The close X is a Button nested in the tab header Button. Drive it with real
+            // pointer input so the press bubbles through the header's drag tracking.
+            var header = window.GetVisualDescendants().OfType<Button>().Single(button =>
+                button.GetVisualDescendants().OfType<TextBlock>().Any(text => text.Text == "Settings"));
+            var close = header.GetVisualDescendants().OfType<Button>()
+                .Single(button => button.Content is Avalonia.Controls.Shapes.Path);
+            var center = close.TranslatePoint(new Point(close.Bounds.Width / 2, close.Bounds.Height / 2), window);
+            Assert.NotNull(center);
+            Assert.Same(close, (window.InputHitTest(center.Value) as Visual)?.FindAncestorOfType<Button>(includeSelf: true));
+            var clicked = false;
+            close.Click += (_, _) => clicked = true;
+            window.MouseDown(center.Value, MouseButton.Left);
+            window.MouseUp(center.Value, MouseButton.Left);
+
+            // Closing is asynchronous (confirmation and hosted-content preparation).
+            await PowerShellIseTestHarness.WaitForAsync(
+                () => !window.Tabs.Any(static tab => tab.IsSettingsTab),
+                () => $"Clicking the close button did not close the Settings tab (Click raised: {clicked}).");
+        }
+        finally
+        {
+            window.Close();
+        }
     }
 
     [AvaloniaFact]
