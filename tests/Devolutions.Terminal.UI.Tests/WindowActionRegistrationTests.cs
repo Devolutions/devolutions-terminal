@@ -149,7 +149,7 @@ public sealed class WindowActionRegistrationTests
             window.MouseUp(center.Value, MouseButton.Left);
 
             // Closing is asynchronous (confirmation and hosted-content preparation).
-            await PowerShellIseTestHarness.WaitForAsync(
+            await DispatcherWait.UntilAsync(
                 () => !window.Tabs.Any(static tab => tab.IsSettingsTab),
                 () => $"Clicking the close button did not close the Settings tab (Click raised: {clicked}).");
         }

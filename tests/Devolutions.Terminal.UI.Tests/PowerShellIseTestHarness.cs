@@ -80,17 +80,8 @@ internal static class PowerShellIseTestHarness
         await PowerShellPreflight.Value.WaitAsync(TimeSpan.FromSeconds(60));
     }
 
-    public static async Task WaitForAsync(Func<bool> condition, Func<string> diagnostic)
-    {
-        var elapsed = Stopwatch.StartNew();
-        while (!condition())
-        {
-            if (elapsed.Elapsed > TimeSpan.FromSeconds(30))
-                throw new TimeoutException(diagnostic());
-            // Yield to dispatcher work, not wall-clock timing or an arbitrary sleep.
-            await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
-        }
-    }
+    public static Task WaitForAsync(Func<bool> condition, Func<string> diagnostic) =>
+        DispatcherWait.UntilAsync(condition, diagnostic);
 
     public static async Task<Window> NewDialogAsync(Window owner, IReadOnlyCollection<Window> before, Task request)
     {

@@ -55,7 +55,9 @@ if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
     New-Item -ItemType Directory -Path $engineDirectory -Force | Out-Null
     $asset = if ($IsWindows) { "PowerShell-$version-$rid.zip" } else { "powershell-$version-$rid.tar.gz" }
     $archive = Join-Path $root $asset
-    Invoke-WebRequest "https://github.com/PowerShell/PowerShell/releases/download/v$version/$asset" -OutFile $archive
+    # GitHub release downloads intermittently return 5xx pages; retry before failing the job.
+    Invoke-WebRequest "https://github.com/PowerShell/PowerShell/releases/download/v$version/$asset" -OutFile $archive `
+        -MaximumRetryCount 4 -RetryIntervalSec 15
     if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $hashes[$rid]) {
         throw "PowerShell test runtime checksum mismatch: $archive"
     }
