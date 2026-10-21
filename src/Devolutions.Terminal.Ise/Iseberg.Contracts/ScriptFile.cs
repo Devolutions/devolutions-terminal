@@ -181,6 +181,8 @@ public sealed class ScriptFile : INotifyPropertyChanged
         Changed(nameof(SavedEncodingChoice));
     }
 
+    internal void SetSavedVersion(string version) => SavedVersion = version;
+
     internal static string GetVersion(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes));
 
     internal static bool VersionsMatch(string? expected, string? actual) =>

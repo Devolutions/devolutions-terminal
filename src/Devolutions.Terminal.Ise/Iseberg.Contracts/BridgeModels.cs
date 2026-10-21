@@ -50,9 +50,11 @@ public sealed record HostShowCommand(CommandFormDescription? Command, IReadOnlyL
     string HelpText, CommandHelpDocument? HelpDocument, Uri? HelpUri, bool PassThru, double Width, double Height);
 public sealed record HostResponse(string? Text);
 public sealed record RemoteOpenRequest(string Path, ScriptEncoding? Encoding = null);
-public sealed record RemoteFileData(string Path, byte[] Bytes, Guid RunspaceId, string ComputerName);
+// Version is the hash of the bytes on disk; Bytes are re-encoded with the chosen encoding.
+public sealed record RemoteFileData(string Path, byte[] Bytes, Guid RunspaceId, string ComputerName,
+    string? Version = null);
 public sealed record RemoteSaveRequest(string Path, byte[] Bytes, string? ExpectedVersion, string? OriginalPath,
-    bool UseSavedVersion, Guid RunspaceId);
+    bool UseSavedVersion, Guid RunspaceId, ScriptEncoding? Encoding = null);
 public sealed record RemoteSaveResult(string Path, Guid RunspaceId, string ComputerName);
 public enum RemoteConnectionKind { Ssh, WSMan }
 public sealed record RemoteConnectionInfo(RemoteConnectionKind Kind, string ComputerName,

@@ -125,17 +125,25 @@ extract_appimage() {
     fi
     python3 - "$package" "$work/appimage-offset" <<'PY'
 import pathlib
+import struct
 import sys
 data = pathlib.Path(sys.argv[1]).read_bytes()
-offset = data.rfind(b"hsqs")
-if offset < 0:
-    raise SystemExit("AppImage has no embedded SquashFS filesystem")
+# The SquashFS image is appended right after the ELF runtime, which ends with
+# its section header table. Searching for the "hsqs" magic is unreliable:
+# compressed payload bytes can contain it, which yields a bogus offset.
+if data[:4] != b"\x7fELF" or data[4] != 2 or data[5] != 1:
+    raise SystemExit("AppImage runtime is not a little-endian ELF64 executable")
+section_offset, = struct.unpack_from("<Q", data, 0x28)
+entry_size, entry_count = struct.unpack_from("<HH", data, 0x3A)
+offset = section_offset + entry_size * entry_count
+if data[offset:offset + 4] != b"hsqs":
+    raise SystemExit("AppImage has no SquashFS filesystem after its ELF runtime")
 pathlib.Path(sys.argv[2]).write_text(str(offset), encoding="ascii")
 PY
     command -v unsquashfs >/dev/null 2>&1 ||
         { echo "unsquashfs is required for architecture-independent AppImage validation (Ubuntu: sudo apt-get install squashfs-tools)." >&2; exit 69; }
     local listing="$work/appimage-listing"
-    unsquashfs -lln -o "$(cat "$work/appimage-offset")" "$package" > "$listing" 2>/dev/null
+    unsquashfs -lln -o "$(cat "$work/appimage-offset")" "$package" > "$listing"
     grep -E -- '^-rwxr-xr-x .* squashfs-root/opt/devolutions-terminal/(Devolutions.Terminal|dt|dt-pty-host)$' "$listing" >/dev/null
     grep -E -- '^-rw-r--r-- .* squashfs-root/opt/devolutions-terminal/lib(SkiaSharp|HarfBuzzSharp|ghostty-vt)\.so$' "$listing" >/dev/null
     unsquashfs -no-progress -o "$(cat "$work/appimage-offset")" -d "$root" "$package" >/dev/null

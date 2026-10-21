@@ -1317,6 +1317,16 @@ public static class SettingsLoader
                 };
                 targetList.Add(targetProfile);
             }
+            else if (targetProfile["guid"] is null &&
+                     currentProfile["guid"] is not null &&
+                     baselineProfile is not null &&
+                     (!JsonNode.DeepEquals(baselineProfile["name"], currentProfile["name"]) ||
+                      !JsonNode.DeepEquals(baselineProfile["source"], currentProfile["source"])))
+            {
+                // A guid-less entry's identity is derived from its name and source;
+                // pin it before renaming so references to the profile survive.
+                targetProfile["guid"] = currentProfile["guid"]!.DeepClone();
+            }
 
             ApplyObjectChanges(targetProfile, baselineProfile, currentProfile);
             foreach (var legacyKey in new[] { "ise.loadProfiles", "ise.colorTheme" })

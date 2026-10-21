@@ -1337,6 +1337,19 @@ public partial class MainWindow :
         TerminalHost.Children.Add(visual);
     }
 
+    // GridSplitter (a Thumb) handles PointerReleased itself, so commit on
+    // DragCompleted. SetSplitRatio replaces the split records, so rebuild to
+    // give every splitter a reference to the current tree.
+    private void CommitSplitRatio(TerminalTab tab, PaneSplit<TerminalPane> split, double first, double second)
+    {
+        var total = first + second;
+        if (total > 0 && tab.Panes.SetSplitRatio(split, first / total))
+        {
+            RebuildTerminalHost();
+            ActiveControl?.Focus();
+        }
+    }
+
     private Control BuildPaneNode(TerminalTab tab, PaneNode<TerminalPane> node)
     {
         if (node is PaneLeaf<TerminalPane> leaf)
@@ -1367,14 +1380,11 @@ public partial class MainWindow :
             Grid.SetColumn(second, 2);
             splitter.ResizeDirection = GridResizeDirection.Columns;
             splitter.Cursor = new Cursor(StandardCursorType.SizeWestEast);
-            splitter.PointerReleased += (_, _) =>
-            {
-                var total = grid.ColumnDefinitions[0].ActualWidth + grid.ColumnDefinitions[2].ActualWidth;
-                if (total > 0)
-                {
-                    tab.Panes.SetSplitRatio(split, grid.ColumnDefinitions[0].ActualWidth / total);
-                }
-            };
+            splitter.DragCompleted += (_, _) => CommitSplitRatio(
+                tab,
+                split,
+                grid.ColumnDefinitions[0].ActualWidth,
+                grid.ColumnDefinitions[2].ActualWidth);
         }
         else
         {
@@ -1389,14 +1399,11 @@ public partial class MainWindow :
             Grid.SetRow(second, 2);
             splitter.ResizeDirection = GridResizeDirection.Rows;
             splitter.Cursor = new Cursor(StandardCursorType.SizeNorthSouth);
-            splitter.PointerReleased += (_, _) =>
-            {
-                var total = grid.RowDefinitions[0].ActualHeight + grid.RowDefinitions[2].ActualHeight;
-                if (total > 0)
-                {
-                    tab.Panes.SetSplitRatio(split, grid.RowDefinitions[0].ActualHeight / total);
-                }
-            };
+            splitter.DragCompleted += (_, _) => CommitSplitRatio(
+                tab,
+                split,
+                grid.RowDefinitions[0].ActualHeight,
+                grid.RowDefinitions[2].ActualHeight);
         }
 
         grid.Children.Add(first);
@@ -1592,8 +1599,18 @@ public partial class MainWindow :
             }
 
             button.Click += (_, _) => ActivateTab(tab);
-            button.PointerPressed += (_, e) => BeginTabDrag(tab, button, e);
-            button.PointerReleased += (_, e) => EndTabDrag(tab, button, e);
+            // Button marks left-button press/release handled before instance
+            // handlers run, so drag tracking must opt into handled events.
+            button.AddHandler(
+                PointerPressedEvent,
+                (_, e) => BeginTabDrag(tab, button, e),
+                RoutingStrategies.Bubble,
+                handledEventsToo: true);
+            button.AddHandler(
+                PointerReleasedEvent,
+                (_, e) => EndTabDrag(tab, button, e),
+                RoutingStrategies.Bubble,
+                handledEventsToo: true);
             TabStrip.Children.Add(button);
         }
 

@@ -142,6 +142,12 @@ int main(int argc, char **argv) {
             if (count > 0) {
                 input_offset += (size_t)count;
                 input_length -= (size_t)count;
+            } else if (count < 0 && errno == EIO) {
+                /* The slave side closed (shell exited): drop the input and keep
+                   draining output so the shell's own exit status is reported. */
+                master_hungup = true;
+                input_length = 0;
+                input_offset = 0;
             } else if (count == 0 || !retryable()) {
                 perror("write pty");
                 failed = true;

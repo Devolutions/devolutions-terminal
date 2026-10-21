@@ -31,6 +31,20 @@ public sealed class TerminalFrameDifferTests
     }
 
     [Fact]
+    public void LineRenditionChangeMarksRowDirty()
+    {
+        var engine = new TerminalEngine(10, 3);
+        engine.Feed("Hello\u001b[3;1H");
+        var before = TerminalRenderPlanner.Create(engine.CreateSnapshot(), engine.Scheme);
+
+        engine.Feed("\u001b[1;1H\u001b#6\u001b[3;1H");
+        var after = TerminalRenderPlanner.Create(engine.CreateSnapshot(), engine.Scheme);
+
+        Assert.Equal(LineRendition.DoubleWidth, after.RowsData[0].Rendition);
+        Assert.Equal([0], TerminalFrameDiffer.GetDirtyRows(before, after));
+    }
+
+    [Fact]
     public void SelectionPlannerNormalizesMultilineRanges()
     {
         var ranges = TerminalOverlayPlanner.CreateSelection(4, 2, 1, 0, 6, 3, 0x80FFFFFF);

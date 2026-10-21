@@ -75,6 +75,22 @@ public sealed class BrowserShellConnectionTests
     }
 
     [Fact]
+    public async Task QuoteOnlyCommandIsIgnored()
+    {
+        await using var connection = new BrowserShellConnection();
+        var output = Capture(connection);
+        Exception? fault = null;
+        connection.Faulted += (_, ex) => fault = ex;
+        await connection.StartAsync("dt-wasm", null, 80, 24);
+
+        connection.Write("\"\"\r");
+        connection.Write("echo still-alive\r");
+        await WaitForOutputAsync(output, "still-alive");
+
+        Assert.Null(fault);
+    }
+
+    [Fact]
     public async Task ListsAndReadsVirtualFiles()
     {
         await using var connection = new BrowserShellConnection();

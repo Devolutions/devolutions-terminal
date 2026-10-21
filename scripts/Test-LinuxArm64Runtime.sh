@@ -63,12 +63,19 @@ extract_appimage() {
     local offset
     offset="$(python3 - "$package" <<'PY'
 import pathlib
+import struct
 import sys
 
 data = pathlib.Path(sys.argv[1]).read_bytes()
-offset = data.rfind(b"hsqs")
-if offset < 0:
-    raise SystemExit("AppImage has no embedded SquashFS filesystem")
+# The SquashFS image starts where the ELF runtime (ending with its section
+# header table) ends; the "hsqs" magic can also occur inside compressed data.
+if data[:4] != b"\x7fELF" or data[4] != 2 or data[5] != 1:
+    raise SystemExit("AppImage runtime is not a little-endian ELF64 executable")
+section_offset, = struct.unpack_from("<Q", data, 0x28)
+entry_size, entry_count = struct.unpack_from("<HH", data, 0x3A)
+offset = section_offset + entry_size * entry_count
+if data[offset:offset + 4] != b"hsqs":
+    raise SystemExit("AppImage has no SquashFS filesystem after its ELF runtime")
 print(offset)
 PY
 )"

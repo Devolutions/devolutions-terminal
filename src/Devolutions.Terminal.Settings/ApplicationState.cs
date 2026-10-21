@@ -67,8 +67,7 @@ public sealed class ApplicationStateStore
 
         Directory.CreateDirectory(Path.GetDirectoryName(StatePath)!);
         using var stateLock = AcquireStateLock();
-        Data = Load(StatePath, out var diagnostic);
-        LastDiagnostic = diagnostic;
+        ReloadForWrite();
         update(Data);
         SaveUnlocked();
     }
@@ -129,8 +128,7 @@ public sealed class ApplicationStateStore
 
         Directory.CreateDirectory(Path.GetDirectoryName(StatePath)!);
         using var stateLock = AcquireStateLock();
-        Data = Load(StatePath, out var diagnostic);
-        LastDiagnostic = diagnostic;
+        ReloadForWrite();
         while (Data.PersistedWindowLayouts.Count <= index)
         {
             Data.PersistedWindowLayouts.Add(new WindowLayoutState());
@@ -178,8 +176,7 @@ public sealed class ApplicationStateStore
         using var stateLock = AcquireStateLock();
         if (File.Exists(StatePath))
         {
-            Data = Load(StatePath, out var diagnostic);
-            LastDiagnostic = diagnostic;
+            ReloadForWrite();
         }
 
         Data.PersistedWorkspaces[name] = layout;
@@ -244,8 +241,7 @@ public sealed class ApplicationStateStore
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         Directory.CreateDirectory(Path.GetDirectoryName(StatePath)!);
         using var stateLock = AcquireStateLock();
-        Data = Load(StatePath, out var diagnostic);
-        LastDiagnostic = diagnostic;
+        ReloadForWrite();
         if (!Data.PersistedWorkspaces.TryGetValue(name, out var layout) ||
             (canConsume is not null && !canConsume(layout)))
         {
@@ -261,8 +257,7 @@ public sealed class ApplicationStateStore
     {
         Directory.CreateDirectory(Path.GetDirectoryName(StatePath)!);
         using var stateLock = AcquireStateLock();
-        Data = Load(StatePath, out var diagnostic);
-        LastDiagnostic = diagnostic;
+        ReloadForWrite();
         if (!update(Data))
         {
             return false;
@@ -272,9 +267,32 @@ public sealed class ApplicationStateStore
         return true;
     }
 
-    private static ApplicationStateData Load(string path, out SettingsDiagnostic? diagnostic)
+    // Read-modify-write paths must not save after a failed read: the file may
+    // only be locked transiently, and saving would replace it with empty state.
+    private void ReloadForWrite()
+    {
+        var data = Load(StatePath, out var diagnostic, out var readError);
+        LastDiagnostic = diagnostic;
+        if (readError is not null)
+        {
+            throw new IOException(
+                $"Could not read application state from '{StatePath}'; it was not overwritten.",
+                readError);
+        }
+
+        Data = data;
+    }
+
+    private static ApplicationStateData Load(string path, out SettingsDiagnostic? diagnostic) =>
+        Load(path, out diagnostic, out _);
+
+    private static ApplicationStateData Load(
+        string path,
+        out SettingsDiagnostic? diagnostic,
+        out Exception? readError)
     {
         diagnostic = null;
+        readError = null;
         if (!File.Exists(path))
         {
             return new();
@@ -312,11 +330,13 @@ public sealed class ApplicationStateStore
         catch (IOException ex)
         {
             diagnostic = ReadDiagnostic(path, ex);
+            readError = ex;
             return new();
         }
         catch (UnauthorizedAccessException ex)
         {
             diagnostic = ReadDiagnostic(path, ex);
+            readError = ex;
             return new();
         }
     }

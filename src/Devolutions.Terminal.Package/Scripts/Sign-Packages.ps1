@@ -60,7 +60,7 @@ if ([string]::IsNullOrWhiteSpace($PackageDirectory) -and (-not $BinaryDirectory 
 }
 
 if (-not [string]::IsNullOrWhiteSpace($PackageDirectory)) {
-    $PackageDirectory = [IO.Path]::GetFullPath($PackageDirectory)
+    $PackageDirectory = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($PackageDirectory)
 }
 
 $useArtifactSigning = $PSCmdlet.ParameterSetName -in @("ArtifactSigningClientSecret", "ArtifactSigningAccessToken")
@@ -72,7 +72,7 @@ function Get-BinaryFiles {
 
     $binaries = @()
     foreach ($directory in @($Directories | Where-Object { $_ })) {
-        $fullDirectory = [IO.Path]::GetFullPath($directory)
+        $fullDirectory = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($directory)
         if (-not (Test-Path -LiteralPath $fullDirectory -PathType Container)) {
             throw "Binary directory '$fullDirectory' does not exist."
         }
@@ -197,7 +197,7 @@ function Invoke-LocalSign {
             throw "signtool.exe is required to sign MSI packages with a local certificate."
         }
 
-        & signtool sign /fd SHA256 /td SHA256 /v /tr http://timestamp.digicert.com /n "Devolutions Inc." /a /f $CertificatePath /p $PlainTextPassword $Package.FullName
+        & signtool sign /fd SHA256 /td SHA256 /v /tr http://timestamp.digicert.com /f $CertificatePath /p $PlainTextPassword $Package.FullName
         if ($LASTEXITCODE -ne 0) {
             throw "Signing '$($Package.Name)' failed with exit code $LASTEXITCODE."
         }
@@ -223,7 +223,7 @@ else {
         $Password = Read-Host "Signing certificate password" -AsSecureString
     }
 
-    $CertificatePath = [IO.Path]::GetFullPath($CertificatePath)
+    $CertificatePath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($CertificatePath)
     if (-not (Get-Command winapp -ErrorAction SilentlyContinue) -and -not (Get-Command signtool -ErrorAction SilentlyContinue)) {
         throw "Local certificate signing requires either WinApp CLI or signtool on PATH."
     }

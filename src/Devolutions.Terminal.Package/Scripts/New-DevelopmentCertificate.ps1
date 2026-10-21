@@ -20,7 +20,7 @@ if ($null -eq $Password) {
 }
 
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
-$certificatePath = [IO.Path]::GetFullPath(
+$certificatePath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath(
     (Join-Path $OutputDirectory "Devolutions.Terminal.pfx"))
 $publicCertificatePath = [IO.Path]::ChangeExtension($certificatePath, ".cer")
 

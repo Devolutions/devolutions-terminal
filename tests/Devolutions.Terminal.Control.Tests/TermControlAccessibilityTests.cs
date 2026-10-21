@@ -170,6 +170,28 @@ public sealed class TermControlAccessibilityTests
     }
 
     [Fact]
+    public void UserMarkTargetsCursorLineWhileScrolledBack()
+    {
+        var control = new TermControl();
+        control.Engine.Resize(10, 2);
+        control.Engine.Feed("1\r\n2\r\n3\r\n4\r\n5\r\n6");
+        var cursorLine = control.Engine.HistoryCount + control.Engine.CursorY;
+
+        control.SetScrollOffset(control.Engine.HistoryCount);
+        control.AddMark();
+
+        var mark = Assert.Single(
+            control.GetScrollMarks(),
+            candidate => candidate.Kind == TerminalScrollMarkKind.User);
+        Assert.Equal(cursorLine, mark.Line);
+
+        control.ClearMark();
+        Assert.DoesNotContain(
+            control.GetScrollMarks(),
+            candidate => candidate.Kind == TerminalScrollMarkKind.User);
+    }
+
+    [Fact]
     public void ColorSelectionAppliesColorsAndCanTargetAllMatches()
     {
         var control = new TermControl();

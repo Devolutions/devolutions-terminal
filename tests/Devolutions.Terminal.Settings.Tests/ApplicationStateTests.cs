@@ -114,6 +114,23 @@ public sealed class ApplicationStateTests
     }
 
     [Fact]
+    public void UnreadableStateIsNotOverwrittenByUpdate()
+    {
+        using var temporary = new TemporaryDirectory();
+        var store = new ApplicationStateStore(temporary.Path);
+        store.Update(data => data.RecentCommands.Add("keep-me"));
+        var original = File.ReadAllText(store.StatePath);
+
+        using (new FileStream(store.StatePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            Assert.ThrowsAny<IOException>(() => store.Update(data => data.DismissedMessages.Add("new")));
+        }
+
+        Assert.Equal(original, File.ReadAllText(store.StatePath));
+        Assert.Equal(["keep-me"], new ApplicationStateStore(temporary.Path).Data.RecentCommands);
+    }
+
+    [Fact]
     public void WindowLayoutSlotSaveMergesLatestFile()
     {
         using var temporary = new TemporaryDirectory();

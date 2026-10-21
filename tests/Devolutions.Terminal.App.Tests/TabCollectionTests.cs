@@ -43,6 +43,25 @@ public sealed class TabCollectionTests
     }
 
     [Fact]
+    public void SearchIgnoresCaseIndependentlyOfCulture()
+    {
+        var culture = System.Globalization.CultureInfo.CurrentCulture;
+        try
+        {
+            System.Globalization.CultureInfo.CurrentCulture = new System.Globalization.CultureInfo("tr-TR");
+            var tabs = new TabCollection<Tab, Snapshot>();
+            tabs.Add(new Tab("Windows PowerShell"));
+            tabs.Add(new Tab("PowerShell ISE"));
+
+            Assert.Equal(["PowerShell ISE"], tabs.Search("ise", static tab => tab.Title).Select(static tab => tab.Title));
+        }
+        finally
+        {
+            System.Globalization.CultureInfo.CurrentCulture = culture;
+        }
+    }
+
+    [Fact]
     public void MruSwitcherAndSearchUseActivationHistory()
     {
         var tabs = CreateFour();

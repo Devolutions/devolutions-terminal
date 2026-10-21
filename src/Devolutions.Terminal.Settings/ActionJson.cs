@@ -354,7 +354,7 @@ public static class ActionJson
                 writer.WriteEndArray();
                 break;
             case AdjustOpacityArgs value: writer.WriteNumber("opacity", value.Opacity); writer.WriteBoolean("relative", value.Relative); break;
-            case SuggestionsArgs value: writer.WriteString("source", SuggestionsString(value.Source)); writer.WriteBoolean("useCommandline", value.UseCommandline); break;
+            case SuggestionsArgs value: WriteSuggestionsSource(writer, value.Source); writer.WriteBoolean("useCommandline", value.UseCommandline); break;
             case SelectCommandArgs value: writer.WriteString("direction", value.Direction == SelectOutputDirection.Previous ? "prev" : "next"); break;
             case SelectOutputArgs value: writer.WriteString("direction", value.Direction == SelectOutputDirection.Previous ? "prev" : "next"); break;
             case ColorSelectionArgs value:
@@ -554,18 +554,35 @@ public static class ActionJson
 
     private static SuggestionsSource Suggestions(JsonElement json, string name)
     {
-        var text = String(json, name);
-        return text?.ToLowerInvariant() switch
+        // "source" is a flag set: a single name, or an array of names to combine.
+        if (Property(json, name, out var value) && value.ValueKind == JsonValueKind.Array)
         {
-            "none" => SuggestionsSource.None,
-            "tasks" or "snippets" => SuggestionsSource.Tasks,
-            "commandhistory" => SuggestionsSource.CommandHistory,
-            "directoryhistory" => SuggestionsSource.DirectoryHistory,
-            "quickfix" => SuggestionsSource.QuickFixes,
-            "all" => SuggestionsSource.All,
-            _ => SuggestionsSource.Tasks,
-        };
+            var combined = SuggestionsSource.None;
+            foreach (var item in value.EnumerateArray())
+            {
+                if (item.ValueKind == JsonValueKind.String &&
+                    SuggestionsFlag(item.GetString()) is { } flag)
+                {
+                    combined |= flag;
+                }
+            }
+
+            return combined;
+        }
+
+        return SuggestionsFlag(String(json, name)) ?? SuggestionsSource.Tasks;
     }
+
+    private static SuggestionsSource? SuggestionsFlag(string? text) => text?.ToLowerInvariant() switch
+    {
+        "none" => SuggestionsSource.None,
+        "tasks" or "snippets" => SuggestionsSource.Tasks,
+        "commandhistory" => SuggestionsSource.CommandHistory,
+        "directoryhistory" => SuggestionsSource.DirectoryHistory,
+        "quickfix" => SuggestionsSource.QuickFixes,
+        "all" => SuggestionsSource.All,
+        _ => null,
+    };
 
     private static SelectionColor? SelectionColor(JsonElement json, string name)
     {
@@ -594,15 +611,43 @@ public static class ActionJson
         _ => "all",
     };
 
-    private static string SuggestionsString(SuggestionsSource value) => value switch
+    private static string? SuggestionsString(SuggestionsSource value) => value switch
     {
         SuggestionsSource.None => "none",
         SuggestionsSource.Tasks => "tasks",
         SuggestionsSource.CommandHistory => "commandHistory",
         SuggestionsSource.DirectoryHistory => "directoryHistory",
         SuggestionsSource.QuickFixes => "quickFix",
-        _ => "all",
+        SuggestionsSource.All => "all",
+        _ => null,
     };
+
+    private static void WriteSuggestionsSource(Utf8JsonWriter writer, SuggestionsSource value)
+    {
+        if (SuggestionsString(value) is { } single)
+        {
+            writer.WriteString("source", single);
+            return;
+        }
+
+        // A combination (e.g. history sources only) must not widen to "all".
+        writer.WriteStartArray("source");
+        foreach (var flag in new[]
+                 {
+                     SuggestionsSource.Tasks,
+                     SuggestionsSource.CommandHistory,
+                     SuggestionsSource.DirectoryHistory,
+                     SuggestionsSource.QuickFixes,
+                 })
+        {
+            if (value.HasFlag(flag))
+            {
+                writer.WriteStringValue(SuggestionsString(flag));
+            }
+        }
+
+        writer.WriteEndArray();
+    }
 
     private static void String(Utf8JsonWriter writer, string name, string? value)
     {

@@ -3463,6 +3463,7 @@ public sealed class PortableIseWorkbenchTests
     [InlineData("delete-anchor-line")]
     [InlineData("delete-characters-only")]
     [InlineData("toggle")]
+    [InlineData("merge-then-toggle")]
     [InlineData("change-after-move")]
     [InlineData("stale-change-after-acknowledge")]
     [InlineData("replace")]
@@ -3515,6 +3516,15 @@ public sealed class PortableIseWorkbenchTests
             Assert.Equal(new[] { 4 }, file.Breakpoints.ToArray());
             tab.ToggleBreakpoint(2);
             expected = [second, new(BreakpointKind.Line, Line: 2)];
+        }
+        else if (action == "merge-then-toggle")
+        {
+            tab.SetBreakpoint(new(BreakpointKind.Line, Line: 3));
+            tab.Document.Remove(7, 1);
+            Assert.Equal(new[] { 2, 3 }, file.Breakpoints.Order().ToArray());
+            tab.ToggleBreakpoint(2);
+            expectedText = "one\ntwothree\nfour\nfive";
+            expected = [second with { Line = 3 }];
         }
         else if (action == "change-after-move")
         {

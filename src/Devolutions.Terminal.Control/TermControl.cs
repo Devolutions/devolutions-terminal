@@ -142,6 +142,9 @@ public sealed class TermControl : Avalonia.Controls.Control
         GotFocus += (_, _) => SendFocusChanged(focused: true);
         LostFocus += (_, _) =>
         {
+            // KeyUp for keys held while focus leaves goes elsewhere; forget them so
+            // the next press isn't reported as an auto-repeat.
+            _pressedKeys.Clear();
             SendFocusChanged(focused: false);
             if (!_cursorOn)
             {
@@ -461,7 +464,9 @@ public sealed class TermControl : Avalonia.Controls.Control
         {
             try
             {
-                await recordingStreamCompletion.ConfigureAwait(false);
+                // Stay on the UI thread: the error notification and the disposal
+                // below touch state the renderer reads during Render().
+                await recordingStreamCompletion.ConfigureAwait(true);
             }
             catch (Exception exception)
             {
@@ -481,13 +486,13 @@ public sealed class TermControl : Avalonia.Controls.Control
                 _acceptOutput = false;
             }
 
-            await connection.DisposeAsync().ConfigureAwait(false);
+            await connection.DisposeAsync().ConfigureAwait(true);
         }
 
+        _rendererDisposed = true;
         _renderer.Dispose();
         _search.Dispose();
         Engine.Dispose();
-        _rendererDisposed = true;
     }
 
     public async Task CopyAsync(bool singleLine = false)
@@ -2556,7 +2561,7 @@ public sealed class TermControl : Avalonia.Controls.Control
     {
         var snapshot = Engine.CreateSnapshot(includeHistory: true).Buffer;
         var line = _selection?.Anchor.Line ??
-                   snapshot.HistoryCount - Engine.ScrollOffset + Engine.CursorY;
+                   snapshot.HistoryCount + snapshot.CursorY;
         line = Math.Clamp(line, 0, Math.Max(0, snapshot.Lines.Count - 1));
         _userScrollMarks.RemoveAll(mark => mark.Line == line);
         _userScrollMarks.Add(new TerminalScrollMark(
@@ -2571,7 +2576,7 @@ public sealed class TermControl : Avalonia.Controls.Control
     {
         var snapshot = Engine.CreateSnapshot(includeHistory: true).Buffer;
         var start = _selection is null
-            ? snapshot.HistoryCount - Engine.ScrollOffset + Engine.CursorY
+            ? snapshot.HistoryCount + snapshot.CursorY
             : Math.Min(_selection.Anchor.Line, _selection.Active.Line);
         var end = _selection is null
             ? start
@@ -3005,7 +3010,7 @@ public sealed class TermControl : Avalonia.Controls.Control
             return false;
         }
 
-        var extend = (e.KeyModifiers & KeyModifiers.Shift) != 0 || _selection is not null;
+        var extend = (e.KeyModifiers & KeyModifiers.Shift) != 0;
         switch (e.Key)
         {
             case Key.Left:

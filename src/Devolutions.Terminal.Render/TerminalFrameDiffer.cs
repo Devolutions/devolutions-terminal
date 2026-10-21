@@ -84,7 +84,9 @@ public static class TerminalFrameDiffer
 
     private static bool RowsEqual(TerminalRenderRow left, TerminalRenderRow right)
     {
-        if (left.Runs.Count != right.Runs.Count)
+        // DECDWL/DECDHL change how identical runs are drawn.
+        if (left.Rendition != right.Rendition ||
+            left.Runs.Count != right.Runs.Count)
         {
             return false;
         }

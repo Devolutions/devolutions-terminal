@@ -115,9 +115,13 @@ public sealed class VtParser
             }
             else
             {
-                AppendOsc(0x1B);
-                _state = State.OscString;
-                ProcessOsc(value);
+                // ESC not followed by '\' aborts the string and starts a new
+                // sequence (VT500 parser), as DCS does; otherwise an unterminated
+                // string would swallow all following output.
+                _osc.Clear();
+                _state = State.Escape;
+                ClearSequence();
+                ProcessByte(value);
             }
 
             return;
@@ -143,9 +147,13 @@ public sealed class VtParser
             }
             else
             {
-                AppendApc(0x1B);
-                _state = State.ApcString;
-                ProcessApc(value);
+                // ESC not followed by '\' aborts the string and starts a new
+                // sequence (VT500 parser), as DCS does; otherwise an unterminated
+                // string would swallow all following output.
+                _apc.Clear();
+                _state = State.Escape;
+                ClearSequence();
+                ProcessByte(value);
             }
 
             return;

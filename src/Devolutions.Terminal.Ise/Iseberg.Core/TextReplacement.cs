@@ -16,13 +16,50 @@ public static class ReplacementSearch
         ArgumentOutOfRangeException.ThrowIfNegative(start);
         ArgumentOutOfRangeException.ThrowIfNegative(count);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(start + count, text.Length);
-        var expression = options.RegularExpression ? pattern : Regex.Escape(pattern);
+        var expression = options.RegularExpression ? CrLfAwareLineEnds(pattern) : Regex.Escape(pattern);
         if (options.WholeWord) expression = @"(?<!\w)(?:" + expression + @")(?!\w)";
         var flags = RegexOptions.CultureInvariant | RegexOptions.Multiline;
         if (!options.MatchCase) flags |= RegexOptions.IgnoreCase;
         var regex = new Regex(expression, flags, TimeSpan.FromMilliseconds(500));
-        return regex.Matches(text).Cast<Match>().Where(m => m.Index >= start && m.Index + m.Length <= start + count)
-            .Select(m => new TextReplacement(m.Index, m.Length, options.RegularExpression ? m.Result(replacement) : replacement)).ToArray();
+        // Scan from the selection start (lookbehinds still see earlier text) so a
+        // match straddling the start can't consume text inside the selection.
+        var results = new List<TextReplacement>();
+        for (var m = regex.Match(text, start); m.Success && m.Index <= start + count; m = m.NextMatch())
+        {
+            if (m.Index + m.Length <= start + count)
+                results.Add(new TextReplacement(m.Index, m.Length, options.RegularExpression ? m.Result(replacement) : replacement));
+        }
+        return results;
+    }
+
+    // Multiline '$' only matches before '\n', so on CRLF text "x$" never matches and
+    // "\s+$" eats the '\r'. Rewrite unescaped '$' outside character classes to end
+    // before a line break of either style.
+    private static string CrLfAwareLineEnds(string pattern)
+    {
+        const string lineEnd = @"(?=\r\n|(?<!\r)\n|\z)";
+        var builder = new System.Text.StringBuilder(pattern.Length + 16);
+        var inClass = false;
+        for (var index = 0; index < pattern.Length; index++)
+        {
+            var ch = pattern[index];
+            if (ch == '\\' && index + 1 < pattern.Length)
+            {
+                builder.Append(ch).Append(pattern[++index]);
+                continue;
+            }
+            if (inClass)
+                inClass = ch != ']';
+            else if (ch == '[')
+                inClass = true;
+            else if (ch == '$')
+            {
+                builder.Append(lineEnd);
+                continue;
+            }
+            builder.Append(ch);
+        }
+        return builder.ToString();
     }
 
     public static TextReplacement? Next(IReadOnlyList<TextReplacement> matches, int offset, ReplacementOptions options)

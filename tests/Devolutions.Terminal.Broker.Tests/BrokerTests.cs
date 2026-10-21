@@ -27,6 +27,24 @@ public sealed class BrokerTests
     }
 
     [Fact]
+    public async Task LockedEndpointFileReadsAsUnavailable()
+    {
+        using var fixture = new BrokerFixture();
+        await using var host = Assert.IsType<BrokerHost>(
+            BrokerHost.TryCreate(new EchoHandler(), fixture.Key, fixture.Directory));
+        var store = new BrokerEndpointStore(fixture.Directory, fixture.Key);
+
+        using (new FileStream(store.EndpointPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            Assert.Null(store.Read());
+            var response = await new BrokerClient(fixture.Key, fixture.Directory).SendAsync("use-any", "payload");
+            Assert.NotEqual(BrokerStatus.Success, response.Status);
+        }
+
+        Assert.Equal(host.Endpoint, store.Read());
+    }
+
+    [Fact]
     public async Task AuthenticationTokenMismatchIsRejected()
     {
         using var fixture = new BrokerFixture();

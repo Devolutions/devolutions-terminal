@@ -26,7 +26,7 @@ if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = Join-Path $dotnetRoot "artifacts\msi"
 }
 
-$OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
+$OutputDirectory = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory)
 $versionParts = $Version.Split('.')
 $publicVersion = ($versionParts[0..2] -join '.')
 $msiVersion = "{0}.{1}.{2}.0" -f ([int]$versionParts[0] % 100), $versionParts[1], $versionParts[2]

@@ -353,9 +353,12 @@ internal sealed class BrokerElection : IDisposable
 
     private void HoldMutex(string name)
     {
-        using var mutex = new Mutex(initiallyOwned: false, name);
         try
         {
+            // Opening the mutex can fail (e.g. an elevated instance created it with
+            // a DACL this process cannot use); an exception on this raw thread would
+            // terminate the process, so treat it as "not acquired" instead.
+            using var mutex = new Mutex(initiallyOwned: false, name);
             try
             {
                 _acquired = mutex.WaitOne(0);
@@ -371,6 +374,10 @@ internal sealed class BrokerElection : IDisposable
                 _release.Wait();
                 mutex.ReleaseMutex();
             }
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or WaitHandleCannotBeOpenedException)
+        {
+            _acquired = false;
         }
         finally
         {

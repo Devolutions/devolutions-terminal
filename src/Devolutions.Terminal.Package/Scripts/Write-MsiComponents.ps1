@@ -10,7 +10,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$publishRoot = [IO.Path]::GetFullPath($PublishDir)
+$publishRoot = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($PublishDir)
 if (-not (Test-Path -LiteralPath $publishRoot -PathType Container)) {
     throw "Publish directory '$publishRoot' does not exist."
 }

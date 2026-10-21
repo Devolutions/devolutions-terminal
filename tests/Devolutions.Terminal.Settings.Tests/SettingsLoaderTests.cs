@@ -421,6 +421,27 @@ public sealed class SettingsLoaderTests
     }
 
     [Fact]
+    public void RenamingGuidlessProfileKeepsItsIdentity()
+    {
+        const string user = """
+            {
+                "profiles": { "list": [{ "name": "Foo", "commandline": "bash" }] }
+            }
+            """;
+        var settings = SettingsLoader.Load(Defaults, user);
+        var profile = settings.Profiles.Single(candidate => candidate.Name == "Foo");
+        var identity = profile.Guid;
+        settings.DefaultProfile = identity;
+        profile.Name = "Bar";
+
+        var reloaded = SettingsLoader.Load(Defaults, SettingsLoader.SerializeUserDocument(settings));
+
+        var renamed = reloaded.Profiles.Single(candidate => candidate.Name == "Bar");
+        Assert.Equal(Guid.Parse(identity!), Guid.Parse(renamed.Guid!));
+        Assert.Same(renamed, reloaded.GetDefaultProfile());
+    }
+
+    [Fact]
     public void SerializesTypedChanges()
     {
         var settings = SettingsLoader.Load(Defaults, """{ "futureSetting": true }""");

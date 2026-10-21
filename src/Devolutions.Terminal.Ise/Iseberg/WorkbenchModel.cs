@@ -44,10 +44,9 @@ public sealed class ScriptTab : ObservableModel
 
     public void ToggleBreakpoint(int line)
     {
-        var existing = breakpointAnchors.FindIndex(entry => !entry.Anchor.IsDeleted && entry.Anchor.Line == line);
-        if (existing >= 0)
+        // Joining lines can leave several anchors on one line; toggle clears them all.
+        if (breakpointAnchors.RemoveAll(entry => !entry.Anchor.IsDeleted && entry.Anchor.Line == line) > 0)
         {
-            breakpointAnchors.RemoveAt(existing);
             File.Breakpoints.Remove(line);
         }
         else

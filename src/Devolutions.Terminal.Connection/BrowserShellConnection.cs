@@ -428,6 +428,11 @@ public sealed class BrowserShellConnection : IRestartableTerminalConnection
         }
 
         var parts = SplitArgs(command);
+        if (parts.Length == 0)
+        {
+            return false;
+        }
+
         var name = parts[0];
         var args = parts.Length > 1 ? parts[1..] : [];
         switch (name)
