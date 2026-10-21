@@ -302,15 +302,10 @@ public sealed partial class ManagedPowerShellSession : IAsyncDisposable
 
     /// <summary>Completes text at a zero-based cursor offset in the current runspace or paused debugger context.</summary>
     public Task<CompletionSet> CompleteAsync(string text, int cursor, CancellationToken cancellationToken = default) =>
-        State == SessionState.NestedPrompt ? NestedQueryAsync(shell =>
-        {
-            var result = CommandCompletion.CompleteInput(text, cursor, null, shell);
-            return new CompletionSet(result.ReplacementIndex, result.ReplacementLength, result.CompletionMatches.Select(ToCompletion).ToArray());
-        }, cancellationToken) : State == SessionState.Debugging ? CompletePausedAsync(text, cursor, cancellationToken) : QueryAsync(shell =>
-        {
-            var result = CommandCompletion.CompleteInput(text, cursor, null, shell);
-            return new CompletionSet(result.ReplacementIndex, result.ReplacementLength, result.CompletionMatches.Select(ToCompletion).ToArray());
-        }, cancellationToken);
+        State == SessionState.NestedPrompt
+            ? NestedQueryAsync(shell => ToCompletionSet(CommandCompletion.CompleteInput(text, cursor, null, shell), cursor), cancellationToken)
+            : State == SessionState.Debugging ? CompletePausedAsync(text, cursor, cancellationToken)
+            : QueryAsync(shell => ToCompletionSet(CommandCompletion.CompleteInput(text, cursor, null, shell), cursor), cancellationToken);
 
     public Task<IReadOnlyList<CommandDescription>> GetCommandsAsync(CancellationToken cancellationToken = default) =>
         QueryAsync<IReadOnlyList<CommandDescription>>(shell =>

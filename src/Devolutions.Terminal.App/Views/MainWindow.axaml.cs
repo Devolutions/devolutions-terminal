@@ -1801,6 +1801,16 @@ public partial class MainWindow :
             return;
         }
 
+        // A press on a nested button (the close X) belongs to that button. This
+        // handler also sees handled events, so capturing here would steal the
+        // nested button's pointer capture and it would never raise Click.
+        if (e.Source is Visual source &&
+            Avalonia.VisualTree.VisualExtensions.FindAncestorOfType<Button>(source, includeSelf: true) is { } pressed &&
+            !ReferenceEquals(pressed, control))
+        {
+            return;
+        }
+
         _draggedTab = tab;
         _dragStart = e.GetPosition(TabStrip);
         e.Pointer.Capture(control);

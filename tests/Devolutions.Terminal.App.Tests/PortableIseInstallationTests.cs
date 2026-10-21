@@ -1,4 +1,4 @@
-using Devolutions.Terminal.App.Connections;
+using System.Diagnostics;
 using Iseberg.Core;
 using Xunit;
 
@@ -94,10 +94,100 @@ public sealed class PortableIseInstallationTests : IDisposable
         Assert.Contains("incomplete", error.Message);
     }
 
+    [Fact]
+    public async Task ReportScriptOutputFromInstalledPowerShellParsesAndValidates()
+    {
+        var info = new ProcessStartInfo(PowerShellProcessDiscovery.FindExecutable())
+        {
+            UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true
+        };
+        foreach (var argument in new[] { "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", PowerShellInstallation.ReportScript })
+            info.ArgumentList.Add(argument);
+        using var process = Process.Start(info)!;
+        var output = await process.StandardOutput.ReadToEndAsync().WaitAsync(TimeSpan.FromSeconds(30));
+        await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));
+
+        var report = Assert.Single(output.Split('\n', StringSplitOptions.TrimEntries),
+            line => line.StartsWith(PowerShellInstallation.ReportPrefix, StringComparison.Ordinal));
+        var installation = PowerShellInstallation.Parse(report[PowerShellInstallation.ReportPrefix.Length..]);
+        installation.Validate();
+        Assert.True(PowerShellProcessDiscovery.IsSupportedVersion(Version.Parse(installation.Version)));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("{not json")]
+    [InlineData("null")]
+    public void MalformedReportIsRejected(string report)
+    {
+        var error = Assert.Throws<InvalidOperationException>(() => PowerShellInstallation.Parse(report));
+        Assert.Contains("installation description", error.Message);
+    }
+
+    [Fact]
+    public async Task SessionRejectsUnsupportedPowerShellFromItsOwnReport()
+    {
+        // A pwsh too old to load the net8.0 bridge module must still fail with the version it found,
+        // not after the bridge pipe times out.
+        var report = PowerShellInstallation.ReportPrefix + "{\"Home\":\"" + home.Replace("\\", "\\\\", StringComparison.Ordinal) +
+            "\",\"Version\":\"7.3.0\",\"RuntimeVersion\":\"7.0.0\",\"Architecture\":\"X64\"}";
+        await using var session = new PowerShellSession { ExecutablePath = FakePowerShell("old-pwsh", stdout: report) };
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            session.InitializeAsync().WaitAsync(TimeSpan.FromSeconds(20)));
+
+        Assert.Equal($"Iseberg requires PowerShell {PowerShellCompatibility.SupportedVersions}; found 7.3.0.", error.Message);
+        Assert.Equal(SessionState.Failed, session.State);
+    }
+
+    [Fact]
+    public async Task SessionReportsPowerShellThatExitsWithoutDescribingItself()
+    {
+        await using var session = new PowerShellSession { ExecutablePath = FakePowerShell("broken-pwsh", stdout: null) };
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            session.InitializeAsync().WaitAsync(TimeSpan.FromSeconds(20)));
+
+        Assert.StartsWith("PowerShell installation check failed:", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SessionReportsMissingPowerShellWithInstallGuidance()
+    {
+        await using var session = new PowerShellSession
+        {
+            ExecutablePath = Path.Combine(home, OperatingSystem.IsWindows() ? "missing-pwsh.exe" : "missing-pwsh")
+        };
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            session.InitializeAsync().WaitAsync(TimeSpan.FromSeconds(20)));
+
+        Assert.Equal(PowerShellInstallation.MissingMessage, error.Message);
+        Assert.Contains(PowerShellInstallation.HomeVariable, error.Message);
+    }
+
+    // A stand-in for pwsh that ignores its arguments: it prints one stdout line (or nothing) and,
+    // when it printed one, stays alive like a bridge still loading its module.
+    private string FakePowerShell(string name, string? stdout)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            var script = Path.Combine(home, name + ".cmd");
+            File.WriteAllText(script, stdout is null
+                ? "@echo off\r\necho fake pwsh failed before reporting 1>&2\r\nexit /b 3\r\n"
+                : $"@echo off\r\necho {stdout}\r\nping -n 30 127.0.0.1 >nul\r\n");
+            return script;
+        }
+        var shell = Path.Combine(home, name);
+        File.WriteAllText(shell, stdout is null
+            ? "#!/bin/sh\necho 'fake pwsh failed before reporting' >&2\nexit 3\n"
+            : $"#!/bin/sh\nprintf '%s\\n' '{stdout}'\nsleep 30\n");
+        File.SetUnixFileMode(shell, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        return shell;
+    }
+
     public void Dispose()
     {
-        File.Delete(Path.Combine(home, "System.Management.Automation.dll"));
-        File.Delete(Path.Combine(home, "pwsh.dll"));
-        Directory.Delete(home);
+        Directory.Delete(home, recursive: true);
     }
 }
