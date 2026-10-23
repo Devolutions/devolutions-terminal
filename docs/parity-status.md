@@ -18,7 +18,7 @@ and NativeAOT gates completed before the final live UI matrix.
 | Terminal engines | Selectable built-in and pinned Ghostty engines on Windows, Linux, and macOS |
 | Application shell | Multi-window broker, tabs, panes, settings editor, palettes, tray behavior, accessibility, clipboard, and notifications |
 | Settings | Layering, dynamic profiles, fragments, source-generated JSON, Windows paths, XDG paths, macOS Application Support, and state persistence |
-| Distribution | Windows x64/ARM64 MSIX and bundle; reproducible Linux x64/ARM64 tar, DEB, RPM, and AppImage packages with canonical freedesktop assets, licenses, checksums, inventory/SPDX SBOM, and DESTDIR-aware helpers; macOS NativeAOT `.app` and zip on Darwin |
+| Distribution | Windows x64/ARM64 MSIX and bundle; reproducible Linux x64/ARM64 tar, DEB, RPM, and AppImage packages with canonical freedesktop assets, licenses, checksums, inventory/SPDX SBOM, and DESTDIR-aware helpers; macOS NativeAOT `.app` and zip on Darwin, plus signed, notarized `.dmg` release artifacts from CI |
 
 ## Actions
 
@@ -182,5 +182,7 @@ truecolor, Unicode/CJK/emoji, row rendition, images, and shader effects.
   no ARM64 desktop was available in this session.
 - macOS ARM64 NativeAOT `.app` packaging, `dt` parser, Ghostty ABI, real
   `forkpty`, broker named-pipe length, and a live GUI-host process start were
-  validated on Darwin. Notarization, DMG, Homebrew, global hotkeys, and
-  default-terminal registration remain out of scope.
+  validated on Darwin. Signed, notarized `.dmg` release artifacts are produced
+  in CI by `scripts/Release-MacOsPackage.ps1` (see [macos.md](macos.md)).
+  Homebrew, global hotkeys, and default-terminal registration remain out of
+  scope.
