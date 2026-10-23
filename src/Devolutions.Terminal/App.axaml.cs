@@ -30,6 +30,7 @@ public partial class TerminalApp : Application
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             _desktop = desktop;
+            WindowsSurfaceRecovery.Install();
             _router = new TerminalWindowRouter(
                 desktop,
                 ConfigureWindow,
