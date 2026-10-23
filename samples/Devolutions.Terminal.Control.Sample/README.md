@@ -27,5 +27,23 @@ dotnet run --project samples/Devolutions.Terminal.Control.Sample
 ```
 
 `NuGet.Config` in this folder maps the `Devolutions.Terminal.Control` package
-id exclusively to `../../artifacts/nuget`, so it always picks up the package
-you just packed rather than whatever version (if any) is on nuget.org.
+id exclusively to `../../artifacts/nuget`, so it never resolves a version from
+nuget.org. Local packs all share the repository's `VersionPrefix`, and NuGet
+reuses a version already in its global packages folder, so after repacking
+either pass a new version (`-p:VersionPrefix=2026.3.1`) or clear the cached
+copy (`dotnet nuget locals global-packages --clear`).
+
+On Linux and macOS the sample launches `$SHELL` through the package's
+`dt-pty-host`. A local pack only contains the hosts that exist under
+`native/linux-pty/<rid>/`; see the NuGet section of
+[docs/release.md](../../docs/release.md) for building them.
+
+## Headless PTY smoke test
+
+```pwsh
+dotnet run --project samples/Devolutions.Terminal.Control.Sample -- --pty-smoke
+```
+
+`--pty-smoke` skips the UI, starts the package's own PTY transport (ConPTY on
+Windows, `dt-pty-host` on Linux and macOS), and exits with 0 once the command
+it ran produced output. CI runs it on Windows, Linux x64/ARM64, and macOS ARM64.

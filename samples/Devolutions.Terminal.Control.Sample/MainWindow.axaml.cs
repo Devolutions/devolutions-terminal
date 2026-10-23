@@ -17,10 +17,13 @@ public sealed partial class MainWindow : Window
 
         Opened += async (_, _) =>
         {
-            // A bare ProfileSettings() launches the platform default shell
-            // (Windows PowerShell on Windows, /bin/sh-family elsewhere via the
-            // package's own PTY connection).
-            await terminal.StartAsync(new ProfileSettings(), columns: 120, rows: 30);
+            // ProfileSettings defaults to Windows PowerShell, which runs through
+            // ConPTY. On Linux and macOS, launch the user's shell instead; it runs
+            // through the package's dt-pty-host.
+            var profile = OperatingSystem.IsWindows()
+                ? new ProfileSettings()
+                : new ProfileSettings { Commandline = Environment.GetEnvironmentVariable("SHELL") ?? "/bin/sh" };
+            await terminal.StartAsync(profile, columns: 120, rows: 30);
         };
     }
 }

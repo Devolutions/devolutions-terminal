@@ -187,14 +187,46 @@ jobs:
       - name: Test Windows NuGet signature guards
         run: pwsh -NoLogo -NoProfile -File src/Devolutions.Terminal.Package/Scripts/Test-WindowsPayloadSignaturesRegression.ps1
 
+  unix-pty-hosts:
+    name: Unix PTY hosts for Devolutions.Terminal.Control
+    # macOS hosts need Apple clang; Linux hosts cross-compile with Zig on the same runner.
+    runs-on: macos-26
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache Zig
+        uses: actions/cache@v4
+        with:
+          path: artifacts/tools
+          key: zig-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/Zig.ps1', 'native/ghostty/ghostty-upstream.json') }}
+
+      - name: Build dt-pty-host for every Unix RID
+        shell: pwsh
+        run: ./native/linux-pty/Build-LinuxPtyHost.ps1 -Rid linux-x64, linux-arm64, osx-x64, osx-arm64 -Force
+
+      - name: Upload Unix PTY hosts
+        uses: actions/upload-artifact@v4
+        with:
+          name: DevolutionsTerminal-unix-pty-hosts
+          path: native/linux-pty/*/dt-pty-host
+          if-no-files-found: error
+
   nuget-pack:
     name: Pack Devolutions.Terminal.Control NuGet package
     runs-on: windows-latest
     needs:
       - release-metadata
+      - unix-pty-hosts
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Download Unix PTY hosts
+        uses: actions/download-artifact@v4
+        with:
+          name: DevolutionsTerminal-unix-pty-hosts
+          path: native/linux-pty
 
       - name: Cache native libraries
         uses: actions/cache@v4
@@ -214,9 +246,18 @@ jobs:
           -c Release
           -o artifacts/nuget
           -p:VersionPrefix=${{ needs.release-metadata.outputs.release_version }}
+          -p:RequireUnixPtyHosts=true
+
+      - name: Validate Devolutions.Terminal.Control package contents
+        run: >-
+          pwsh -NoLogo -NoProfile -File scripts/Test-ControlNuGetPackage.ps1
+          -PackagePath artifacts/nuget/Devolutions.Terminal.Control.${{ needs.release-metadata.outputs.release_version }}.nupkg
 
       - name: Smoke-test package via samples/Devolutions.Terminal.Control.Sample
         run: dotnet build samples/Devolutions.Terminal.Control.Sample -c Release
+
+      - name: Start a ConPTY session from the packed package
+        run: dotnet run --project samples/Devolutions.Terminal.Control.Sample -c Release --no-build -- --pty-smoke
 
       - name: Upload NuGet package artifacts
         uses: actions/upload-artifact@v4
@@ -224,6 +265,58 @@ jobs:
           name: DevolutionsTerminal-nuget-packages
           path: artifacts/nuget
           if-no-files-found: error
+
+  nuget-pack-unix-smoke:
+    name: Devolutions.Terminal.Control PTY smoke ${{ matrix.rid }}
+    runs-on: ${{ matrix.os }}
+    needs:
+      - nuget-pack
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            rid: linux-x64
+          - os: ubuntu-24.04-arm
+            rid: linux-arm64
+          - os: macos-26
+            rid: osx-arm64
+    env:
+      SAMPLE: samples/Devolutions.Terminal.Control.Sample
+      SAMPLE_OUTPUT: samples/Devolutions.Terminal.Control.Sample/bin/Release/net10.0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Devolutions.Terminal.Control NuGet package
+        uses: actions/download-artifact@v4
+        with:
+          name: DevolutionsTerminal-nuget-packages
+          path: artifacts/nuget
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: RID-less build uses runtimes/<rid>/native/dt-pty-host
+        run: |
+          dotnet build "$SAMPLE" -c Release
+          test -x "$SAMPLE_OUTPUT/runtimes/${{ matrix.rid }}/native/dt-pty-host"
+          test ! -e "$SAMPLE_OUTPUT/dt-pty-host"
+          dotnet "$SAMPLE_OUTPUT/Devolutions.Terminal.Control.Sample.dll" --pty-smoke
+
+      - name: Host restored without the execute bit is repaired at startup
+        run: |
+          chmod a-x "$SAMPLE_OUTPUT/runtimes/${{ matrix.rid }}/native/dt-pty-host"
+          dotnet "$SAMPLE_OUTPUT/Devolutions.Terminal.Control.Sample.dll" --pty-smoke
+          test -x "$SAMPLE_OUTPUT/runtimes/${{ matrix.rid }}/native/dt-pty-host"
+
+      - name: RID-specific publish places dt-pty-host next to the app
+        run: |
+          dotnet publish "$SAMPLE" -c Release -r ${{ matrix.rid }} --self-contained false -o artifacts/pty-smoke
+          test -x artifacts/pty-smoke/dt-pty-host
+          artifacts/pty-smoke/Devolutions.Terminal.Control.Sample --pty-smoke
 
   native-aot:
     name: NativeAOT desktop ${{ matrix.rid }}
@@ -1370,6 +1463,7 @@ jobs:
       - nuget
       - nuget-macos
       - nuget-pack
+      - nuget-pack-unix-smoke
       - release-metadata
     runs-on: ubuntu-latest
     permissions:

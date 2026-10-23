@@ -1,0 +1,28 @@
+<Project>
+  <!-- dt-pty-host ships as a runtimes/<rid>/native asset, so NuGet places it next to the
+       app for RID-specific builds and under runtimes/<rid>/native for RID-less builds;
+       LinuxPtyConnection probes both. NuGet does not preserve Unix file modes, so restore
+       the execute bit when building on Linux or macOS. LinuxPtyConnection also does this
+       at startup for outputs produced on Windows. -->
+  <Target Name="MarkUnixPtyHostsExecutable"
+          AfterTargets="CopyFilesToOutputDirectory"
+          Condition="!$([MSBuild]::IsOSPlatform('Windows'))">
+    <ItemGroup>
+      <_UnixPtyHostOutput Include="$(TargetDir)dt-pty-host;$(TargetDir)runtimes/*/native/dt-pty-host" />
+      <_UnixPtyHostOutput Remove="@(_UnixPtyHostOutput)" Condition="!Exists('%(FullPath)')" />
+    </ItemGroup>
+    <Exec Command="chmod +x @(_UnixPtyHostOutput->'&quot;%(FullPath)&quot;', ' ')"
+          Condition="'@(_UnixPtyHostOutput)' != ''" />
+  </Target>
+
+  <Target Name="MarkPublishedUnixPtyHostsExecutable"
+          AfterTargets="Publish"
+          Condition="!$([MSBuild]::IsOSPlatform('Windows')) and '$(PublishDir)' != ''">
+    <ItemGroup>
+      <_UnixPtyHostPublished Include="$(PublishDir)dt-pty-host;$(PublishDir)runtimes/*/native/dt-pty-host" />
+      <_UnixPtyHostPublished Remove="@(_UnixPtyHostPublished)" Condition="!Exists('%(FullPath)')" />
+    </ItemGroup>
+    <Exec Command="chmod +x @(_UnixPtyHostPublished->'&quot;%(FullPath)&quot;', ' ')"
+          Condition="'@(_UnixPtyHostPublished)' != ''" />
+  </Target>
+</Project>
