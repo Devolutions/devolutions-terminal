@@ -1,0 +1,4 @@
+<Project>
+  <Import Project="$(MSBuildThisFileDirectory)ConPtyHost.targets" />
+  <Import Project="$(MSBuildThisFileDirectory)UnixPtyHost.targets" />
+</Project>

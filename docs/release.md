@@ -357,7 +357,19 @@ product). The package bundles the build output of `Devolutions.Terminal.Core`,
 four projects are marked `IsPackable=false` and are never published as
 separate packages, so the only NuGet dependencies a consumer sees are the
 genuine third-party ones (`Avalonia`, `Avalonia.Skia`, `SkiaSharp`,
-`SkiaSharp.HarfBuzz`, and their Linux native-asset packages).
+`SkiaSharp.HarfBuzz`, their Linux native-asset packages, and
+`Microsoft.Windows.Console.ConPTY`).
+
+The package also carries the native hosts that local shells need:
+
+- `tools/conpty/<arch>/OpenConsole.exe`, copied into Windows consumers by
+  `buildTransitive/ConPtyHost.targets`
+- `runtimes/<rid>/native/dt-pty-host` for `linux-x64`, `linux-arm64`,
+  `osx-x64`, and `osx-arm64`. NuGet places it next to the app for RID-specific
+  builds and under `runtimes/<rid>/native/` for RID-less builds;
+  `LinuxPtyConnection` probes both and restores the execute bit that NuGet
+  drops. `buildTransitive/UnixPtyHost.targets` also marks it executable when
+  building on Linux or macOS.
 
 Pack it locally:
 
@@ -365,6 +377,13 @@ Pack it locally:
 dotnet pack src/Devolutions.Terminal.Control/Devolutions.Terminal.Control.csproj `
   -c Release -o artifacts/nuget
 ```
+
+The pack includes whichever `native/linux-pty/<rid>/dt-pty-host` files exist
+and reports the missing ones. Linux hosts cross-compile on any OS
+(`./native/linux-pty/Build-LinuxPtyHost.ps1 -Rid linux-x64, linux-arm64`);
+macOS hosts need Apple clang on macOS. Pass `-p:RequireUnixPtyHosts=true` to
+fail the pack when any host is missing, and check a package with
+`scripts/Test-ControlNuGetPackage.ps1 -PackagePath <nupkg>`.
 
 Consume it as a package (see `samples/Devolutions.Terminal.Control.Sample`
 for a full working app):
@@ -383,7 +402,10 @@ using Devolutions.Terminal.Settings;
 
 var terminal = new TermControl();
 Content = terminal;
-await terminal.StartAsync(new ProfileSettings(), columns: 120, rows: 30);
+var profile = OperatingSystem.IsWindows()
+    ? new ProfileSettings()
+    : new ProfileSettings { Commandline = Environment.GetEnvironmentVariable("SHELL") ?? "/bin/sh" };
+await terminal.StartAsync(profile, columns: 120, rows: 30);
 ```
 
 `samples/Devolutions.Terminal.Control.Sample` is a minimal Avalonia app that
@@ -398,9 +420,15 @@ consumer smoke test that would catch packaging regressions (missing bundled
 assemblies/assets, broken dependencies, API usage that doesn't actually work
 from outside the repo) that an in-repo `ProjectReference` build cannot surface.
 
-CI packs the project in the `nuget-pack` job of `build-terminal.yml` on every
-build, builds the sample against the freshly packed package as a smoke test,
-and uploads the `.nupkg`/`.snupkg` as a workflow artifact. The release job
+CI builds all four Unix PTY hosts in the `unix-pty-hosts` job (one macOS
+runner, Apple clang plus Zig) and packs the project in the `nuget-pack` job of
+`build-terminal.yml` on every build with `RequireUnixPtyHosts=true`. That job
+validates the package contents with `scripts/Test-ControlNuGetPackage.ps1`,
+builds the sample against the freshly packed package, starts a ConPTY session
+with `--pty-smoke`, and uploads the `.nupkg`/`.snupkg` as a workflow artifact.
+`nuget-pack-unix-smoke` then runs `--pty-smoke` from the packed package on
+Linux x64, Linux ARM64, and macOS ARM64: RID-less, with the execute bit
+removed, and RID-specific published. The release job
 downloads this artifact alongside the `Devolutions.Terminal.App` packages and
 publishes all NuGet packages together through NuGet trusted publishing (OIDC).
 There is no separate Control publication option or publishing job.

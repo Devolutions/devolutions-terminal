@@ -64,13 +64,45 @@
   </ItemGroup>
   <Import Project="..\..\native\noto-emoji\NotoEmoji.targets" />
   <ItemGroup>
+    <None Remove="buildTransitive\**" />
+    <None Include="buildTransitive\*.targets" Pack="true" PackagePath="buildTransitive" />
     <None Include="..\Devolutions.Terminal.Connection\ConPtyHost.targets"
-          Pack="true" PackagePath="buildTransitive\Devolutions.Terminal.Control.targets" />
+          Pack="true" PackagePath="buildTransitive" />
     <None Include="..\Devolutions.Terminal.Connection\THIRD-PARTY-NOTICES-CONPTY.txt"
           Pack="true" PackagePath="buildTransitive" />
     <None Include="$(PkgMicrosoft_Windows_Console_ConPTY)\build\native\runtimes\**\OpenConsole.exe"
           Pack="true" PackagePath="tools\conpty" />
   </ItemGroup>
+
+  <!--
+    The Unix PTY host is a native executable, so it ships as a runtimes/<rid>/native asset
+    for every Unix RID LinuxPtyConnection supports. Linux hosts cross-compile with Zig on
+    any OS, but macOS hosts need Apple clang, so a pack on one machine normally has only
+    some of them; CI collects all four and passes RequireUnixPtyHosts=true.
+  -->
+  <PropertyGroup>
+    <UnixPtyHostRoot Condition="'$(UnixPtyHostRoot)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\..\native\linux-pty'))</UnixPtyHostRoot>
+  </PropertyGroup>
+  <ItemGroup>
+    <UnixPtyHostRid Include="linux-x64;linux-arm64;osx-x64;osx-arm64" />
+    <None Include="$(UnixPtyHostRoot)\linux-x64\dt-pty-host" Condition="Exists('$(UnixPtyHostRoot)\linux-x64\dt-pty-host')"
+          Pack="true" PackagePath="runtimes\linux-x64\native" Visible="false" />
+    <None Include="$(UnixPtyHostRoot)\linux-arm64\dt-pty-host" Condition="Exists('$(UnixPtyHostRoot)\linux-arm64\dt-pty-host')"
+          Pack="true" PackagePath="runtimes\linux-arm64\native" Visible="false" />
+    <None Include="$(UnixPtyHostRoot)\osx-x64\dt-pty-host" Condition="Exists('$(UnixPtyHostRoot)\osx-x64\dt-pty-host')"
+          Pack="true" PackagePath="runtimes\osx-x64\native" Visible="false" />
+    <None Include="$(UnixPtyHostRoot)\osx-arm64\dt-pty-host" Condition="Exists('$(UnixPtyHostRoot)\osx-arm64\dt-pty-host')"
+          Pack="true" PackagePath="runtimes\osx-arm64\native" Visible="false" />
+  </ItemGroup>
+  <Target Name="CheckUnixPtyHostsForPack" BeforeTargets="GenerateNuspec">
+    <ItemGroup>
+      <_MissingUnixPtyHost Include="@(UnixPtyHostRid)" Condition="!Exists('$(UnixPtyHostRoot)\%(Identity)\dt-pty-host')" />
+    </ItemGroup>
+    <Error Condition="'$(RequireUnixPtyHosts)' == 'true' and '@(_MissingUnixPtyHost)' != ''"
+           Text="dt-pty-host is missing for @(_MissingUnixPtyHost->'%(Identity)', ', ') under $(UnixPtyHostRoot). Build it with native/linux-pty/Build-LinuxPtyHost.ps1." />
+    <Message Condition="'$(RequireUnixPtyHosts)' != 'true' and '@(_MissingUnixPtyHost)' != ''" Importance="high"
+             Text="Packing Devolutions.Terminal.Control without dt-pty-host for @(_MissingUnixPtyHost->'%(Identity)', ', '); local shells will not start on those platforms." />
+  </Target>
 
   <!--
     Bundle the build outputs of the internal, non-packable project

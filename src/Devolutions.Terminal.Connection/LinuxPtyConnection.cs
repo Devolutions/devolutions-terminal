@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Text;
 
@@ -183,12 +184,27 @@ public sealed class LinuxPtyConnection : IRestartableTerminalConnection
     {
         State = TerminalConnectionState.Connecting;
         LastExitInfo = null;
-        var helper = Path.Combine(AppContext.BaseDirectory, "dt-pty-host");
-        if (!File.Exists(helper))
+        var runtimeIdentifier = UnixPtyHost.GetPortableRuntimeIdentifier(
+            OperatingSystem.IsMacOS(),
+            RuntimeInformation.ProcessArchitecture);
+        var helper = UnixPtyHost.Find(AppContext.BaseDirectory, runtimeIdentifier);
+        if (helper is null)
         {
-            var error = new FileNotFoundException("The Unix PTY host is missing.", helper);
+            var error = new FileNotFoundException(
+                "The Unix PTY host is missing.",
+                UnixPtyHost.GetCandidatePaths(AppContext.BaseDirectory, runtimeIdentifier)[0]);
             RecordStartupFailure(error);
             throw error;
+        }
+
+        try
+        {
+            UnixPtyHost.EnsureExecutable(helper);
+        }
+        catch (Exception exception)
+        {
+            RecordStartupFailure(exception);
+            throw;
         }
 
         var process = new Process
