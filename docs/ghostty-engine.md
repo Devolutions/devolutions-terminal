@@ -53,7 +53,13 @@ onto a dedicated thread with an explicit `maxStackSize`.
 
 Ghostty owns VT parsing, modes, viewport state, resize/reflow, scrollback,
 terminal replies, titles, and bells. Its render-state API is projected into the
-shared immutable cell model consumed by the existing Skia renderer. This keeps
+shared immutable cell model consumed by the existing Skia renderer.
+
+Projection is lazy. A feed only marks the projection stale. The next read of
+`Buffer`, the cursor or a snapshot (normally once per frame) re-projects the
+rows that Ghostty's render state reports dirty, then cleans that state. Title
+and working-directory changes are still raised during the feed. See
+[performance benchmarks](performance-benchmarks.md) for the measured effect. This keeps
 Avalonia tabs, panes, accessibility, clipboard, selection, search, and window
 behavior common across engines.
 

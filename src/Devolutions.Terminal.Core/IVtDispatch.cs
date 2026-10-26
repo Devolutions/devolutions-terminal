@@ -5,6 +5,22 @@ namespace Devolutions.Terminal.Core;
 public interface IVtDispatch
 {
     void Print(Rune rune);
+    // A ground-state run of printable ASCII (0x20-0x7E); dispatchers may store it in bulk.
+    void PrintAscii(ReadOnlySpan<byte> text)
+    {
+        foreach (var value in text)
+        {
+            Print(new Rune(value));
+        }
+    }
+    // A ground-state run of decoded printable scalars; dispatchers may store it in bulk.
+    void PrintRunes(ReadOnlySpan<Rune> runes)
+    {
+        foreach (var rune in runes)
+        {
+            Print(rune);
+        }
+    }
     void ExecuteC0(byte control);
     void EscDispatch(char final, byte intermediate);
     void EscDispatch(char final, ReadOnlySpan<byte> intermediates) =>
