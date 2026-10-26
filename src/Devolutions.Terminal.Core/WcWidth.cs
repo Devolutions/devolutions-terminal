@@ -7,25 +7,62 @@ public static class WcWidth
 {
     public static bool AmbiguousAsWide { get; set; }
 
+    private const byte Zero = 0;
+    private const byte Narrow = 1;
+    private const byte Wide = 2;
+    private const byte Ambiguous = 3;
+
+    // The width class of every scalar in planes 0 and 1 (which hold the emoji),
+    // from the same rules as the rest, so printing does not repeat category and
+    // range lookups per character. Ambiguous stays a class of its own because
+    // AmbiguousAsWide can change.
+    private static readonly byte[] Classes = BuildClasses();
+
     public static int Width(Rune rune)
     {
         var value = rune.Value;
+        var widthClass = value < Classes.Length ? Classes[value] : Classify(value);
+        return widthClass == Ambiguous ? (AmbiguousAsWide ? 2 : 1) : widthClass;
+    }
+
+    /// <summary>0 zero width, 1 narrow, 2 wide, 3 ambiguous (2 when <see cref="AmbiguousAsWide"/>).</summary>
+    internal static byte WidthClass(Rune rune) =>
+        rune.Value < Classes.Length ? Classes[rune.Value] : Classify(rune.Value);
+
+    internal static int ResolveWidth(byte widthClass) =>
+        widthClass == Ambiguous ? (AmbiguousAsWide ? 2 : 1) : widthClass;
+
+    private static byte[] BuildClasses()
+    {
+        var classes = new byte[0x20000];
+        for (var value = 0; value < classes.Length; value++)
+        {
+            classes[value] = Classify(value);
+        }
+
+        return classes;
+    }
+
+    private static byte Classify(int value)
+    {
         if (value == 0)
         {
-            return 0;
+            return Zero;
         }
 
         if (value < 0x20 || (value >= 0x7F && value < 0xA0))
         {
-            return 0;
+            return Zero;
         }
 
         if (value is >= 0x1F3FB and <= 0x1F3FF)
         {
-            return 0;
+            return Zero;
         }
 
-        var category = Rune.GetUnicodeCategory(rune);
+        var category = value is >= 0xD800 and <= 0xDFFF
+            ? UnicodeCategory.Surrogate
+            : Rune.GetUnicodeCategory(new Rune(value));
         if (category is UnicodeCategory.NonSpacingMark
             or UnicodeCategory.EnclosingMark
             or UnicodeCategory.SpacingCombiningMark
@@ -33,15 +70,15 @@ public static class WcWidth
             or UnicodeCategory.Format
             or UnicodeCategory.Surrogate)
         {
-            return 0;
+            return Zero;
         }
 
-        if (IsWide(value) || (AmbiguousAsWide && IsAmbiguous(value)))
+        if (IsWide(value))
         {
-            return 2;
+            return Wide;
         }
 
-        return 1;
+        return IsAmbiguous(value) ? Ambiguous : Narrow;
     }
 
     private static bool IsWide(int v) =>

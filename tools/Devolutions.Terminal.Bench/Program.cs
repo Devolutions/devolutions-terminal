@@ -23,6 +23,8 @@ namespace Devolutions.Terminal.Bench;
 ///   render  — snapshot/planning and CPU Skia rasterization, measured separately
 ///             for a static screen, one-row updates, and scrolling screens.
 ///   corpus  — write the deterministic VT input for reuse with Ghostty benchmarks.
+///   vt      — same-process ingest comparison of the builtin engine against raw
+///             libghostty-vt and DT's Ghostty engine over per-workload corpora.
 ///
 /// Caveat: control mode does not paint. Render mode uses a raster surface, not
 /// Avalonia's GPU/compositor or Ghostty's OpenGL/Metal renderer.
@@ -34,6 +36,11 @@ internal static class Program
     private static int Main(string[] args)
     {
         var mode = args.Length > 0 ? args[0] : "control";
+        if (mode == "vt")
+        {
+            return VtBench.Run(args);
+        }
+
         var megabytes = GetOption(args, "--mb", 8);
         var runs = GetOption(args, "--runs", 5);
         var chunkKb = GetOption(args, "--chunk-kb", 16);
@@ -103,7 +110,7 @@ internal static class Program
             {
                 "engine" => RunEngine(corpus, chunkKb * 1024),
                 "control" => RunControl(corpus, chunkKb * 1024),
-                _ => throw new ArgumentException($"unknown mode '{mode}' (expected engine|control|render|corpus)"),
+                _ => throw new ArgumentException($"unknown mode '{mode}' (expected engine|control|render|corpus|vt)"),
             };
             samples.Add(mbPerSec);
             Console.WriteLine($"  run {run + 1}: {mbPerSec:F1} MB/s");
@@ -114,7 +121,7 @@ internal static class Program
         return 0;
     }
 
-    private static int GetOption(string[] args, string name, int fallback, bool allowZero = false)
+    internal static int GetOption(string[] args, string name, int fallback, bool allowZero = false)
     {
         var index = Array.IndexOf(args, name);
         if (index < 0)
@@ -132,7 +139,7 @@ internal static class Program
         return value;
     }
 
-    private static string? GetStringOption(string[] args, string name)
+    internal static string? GetStringOption(string[] args, string name)
     {
         var index = Array.IndexOf(args, name);
         if (index < 0)
@@ -147,6 +154,8 @@ internal static class Program
 
         return args[index + 1];
     }
+
+    internal static byte[] BuildMixedCorpus(int targetBytes) => Corpus.Build(targetBytes);
 
     private static double RunEngine(byte[] corpus, int chunkSize)
     {

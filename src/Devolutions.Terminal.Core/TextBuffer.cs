@@ -1,5 +1,6 @@
 using System.Text;
 using System.Globalization;
+using System.Runtime.CompilerServices;
 
 namespace Devolutions.Terminal.Core;
 
@@ -43,16 +44,22 @@ public sealed class TextBuffer
 {
     private sealed class BufferLine
     {
-        public BufferLine(Cell[] cells, long logicalLineId)
+        public BufferLine(CellRow cells, long logicalLineId)
         {
             Cells = cells;
             LogicalLineId = logicalLineId;
         }
 
-        public Cell[] Cells { get; }
+        public CellRow Cells { get; }
         public bool Wrapped { get; set; }
         public LineRendition Rendition { get; set; }
-        public List<ShellMark> Marks { get; } = [];
+        private List<ShellMark>? _marks;
+
+        // Most lines never carry a mark; allocate the list on first write only.
+        public List<ShellMark> Marks => _marks ??= [];
+        public IReadOnlyList<ShellMark> MarksOrEmpty => (IReadOnlyList<ShellMark>?)_marks ?? [];
+
+        public void ClearMarks() => _marks?.Clear();
         public long LogicalLineId { get; set; }
         public int LogicalOffset { get; set; }
     }
@@ -65,6 +72,9 @@ public sealed class TextBuffer
     private ShellMark? _activeMark;
     private bool _activeMarkHasOutput;
     private string? _pendingPrepend;
+    // Printing always completes a Prepend with the scalar after it, so a cell
+    // holding a lone Prepend can only come from a projected viewport.
+    private bool _mayHoldLonePrepend;
     private long _nextLogicalLineId;
 
     public TextBuffer(int columns, int rows, int historySize, bool hasHistory)
@@ -225,7 +235,8 @@ public sealed class TextBuffer
         ScrollOffset = Math.Clamp(previousOffset, 0, HistoryCount);
     }
 
-    public Cell[] GetRow(int viewportY) => GetVisibleLine(viewportY).Cells;
+    /// <summary>A copy of the visible row; writes to it do not reach the buffer.</summary>
+    public Cell[] GetRow(int viewportY) => GetVisibleLine(viewportY).Cells.ToArray();
 
     public Cell GetCell(int x, int y)
     {
@@ -234,7 +245,7 @@ public sealed class TextBuffer
             return Cell.Blank;
         }
 
-        return GetRow(y)[x];
+        return GetVisibleLine(y).Cells[x];
     }
 
     public void ApplyColors(
@@ -260,15 +271,18 @@ public sealed class TextBuffer
                  column <= Math.Clamp(lastColumn, 0, Columns - 1);
                  column++)
             {
+                var cell = line.Cells[column];
                 if (foreground is { } foregroundColor)
                 {
-                    line.Cells[column].Attributes.Foreground = foregroundColor;
+                    cell.Attributes.Foreground = foregroundColor;
                 }
 
                 if (background is { } backgroundColor)
                 {
-                    line.Cells[column].Attributes.Background = backgroundColor;
+                    cell.Attributes.Background = backgroundColor;
                 }
+
+                line.Cells[column] = cell;
             }
         }
     }
@@ -281,11 +295,11 @@ public sealed class TextBuffer
         for (var i = 0; i < count; i++)
         {
             var sourceIndex = Math.Min(first + i, _lines.Count - 1);
-            var cells = Array.AsReadOnly((Cell[])_lines[sourceIndex].Cells.Clone());
+            var cells = Array.AsReadOnly(_lines[sourceIndex].Cells.ToArray());
             copies[i] = new TextBufferLineSnapshot(
                 cells,
                 _lines[sourceIndex].Wrapped,
-                _lines[sourceIndex].Marks
+                _lines[sourceIndex].MarksOrEmpty
                     .Select(static mark => new ShellMark(mark.StartColumn, mark.ExitCode))
                     .ToArray())
             {
@@ -310,16 +324,19 @@ public sealed class TextBuffer
             var projection = y < rows.Count
                 ? rows[y]
                 : new TextBufferProjectionRow([], false, []);
-            var source = projection.Cells;
-            var cells = Enumerable.Repeat(Cell.Blank, Columns).ToArray();
-            Array.Copy(source, cells, Math.Min(source.Length, cells.Length));
+            var cells = CellRow.FromCells(projection.Cells, Columns);
+            _mayHoldLonePrepend = true;
             var line = new BufferLine(cells, ++_nextLogicalLineId)
             {
                 Wrapped = projection.Wrapped,
                 Rendition = projection.Rendition,
             };
-            line.Marks.AddRange(projection.Marks.Select(static mark =>
-                new ShellMark(mark.StartColumn, mark.ExitCode)));
+            if (projection.Marks.Count > 0)
+            {
+                line.Marks.AddRange(projection.Marks.Select(static mark =>
+                    new ShellMark(mark.StartColumn, mark.ExitCode)));
+            }
+
             replacement.Add(line);
         }
 
@@ -410,9 +427,443 @@ public sealed class TextBuffer
             : 0;
     }
 
-    public void Print(Rune rune, bool autoWrap = true)
+    /// <summary>
+    /// Prints printable ASCII (0x20-0x7E) with auto-wrap, producing exactly what
+    /// <see cref="Print"/> per byte would. Only the first byte can extend the
+    /// previous grapheme (a pending or completed Prepend); every later byte
+    /// follows an ASCII cell written here, and ASCII never extends a grapheme, so
+    /// the rest skip the join checks and are stored a row segment at a time.
+    /// Returns whether the last byte advanced the cursor (only a lone byte that
+    /// joined a Prepend does not), which is what REP repeats.
+    /// </summary>
+    public bool PrintAscii(ReadOnlySpan<byte> text)
     {
-        if (IsPrepend(rune))
+        if (text.IsEmpty)
+        {
+            return false;
+        }
+
+        if (LeftRightMargins)
+        {
+            // DECLRMM can leave the cursor outside the margins after a wrap; keep
+            // that rare geometry on the per-character path.
+            var advanced = false;
+            foreach (var value in text)
+            {
+                advanced = PrintAndGetAdvance(new Rune(value)) > 0;
+            }
+
+            return advanced;
+        }
+
+        var index = 0;
+        if (_pendingPrepend is not null || PreviousIsLonePrepend())
+        {
+            var firstAdvanced = PrintAndGetAdvance(new Rune(text[0])) > 0;
+            if (text.Length == 1)
+            {
+                return firstAdvanced;
+            }
+
+            index = 1;
+        }
+
+        var template = PackedCell.From(new Rune(' '), CurrentAttributes, CurrentProtection, false, 1, _shellIntegration);
+        var hyperlink = CurrentHyperlinkUri;
+        while (index < text.Length)
+        {
+            if (WrapPending)
+            {
+                var source = GetLiveLine(CursorY);
+                source.Wrapped = true;
+                CarriageReturn();
+                LineFeed();
+                ContinueLogicalLine(source);
+            }
+
+            var line = GetLiveLine(CursorY);
+            var effectiveColumns = RightBound(line) + 1;
+            if (CursorX + 1 > effectiveColumns)
+            {
+                line.Wrapped = true;
+                CarriageReturn();
+                LineFeed();
+                ContinueLogicalLine(line);
+                line = GetLiveLine(CursorY);
+                effectiveColumns = RightBound(line) + 1;
+            }
+
+            var row = line.Cells;
+            var count = Math.Min(text.Length - index, effectiveColumns - CursorX);
+            // Wide glyphs inside a segment are overwritten cell by cell, so only
+            // glyphs straddling its ends need their other half blanked. A later
+            // segment starts after a cell written here or at column 0 of a new
+            // line, so only the first can straddle its start.
+            if (index == 0)
+            {
+                ClearGlyphAt(row, CursorX);
+            }
+
+            ClearGlyphAt(row, CursorX + count - 1);
+            row.WriteAscii(CursorX, text.Slice(index, count), template, hyperlink);
+            index += count;
+            CursorX += count;
+            if (CursorX >= effectiveColumns)
+            {
+                CursorX = effectiveColumns - 1;
+                WrapPending = true;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Prints runes with auto-wrap, producing exactly what <see cref="PrintAndGetAdvance"/>
+    /// per rune would. A rune that cannot take part in a grapheme join (no
+    /// <see cref="MayExtendPrevious"/>, not a Prepend, nothing pending and no lone
+    /// Prepend before it) and has a width of 1 or 2 is stored directly from packed
+    /// templates; every other rune takes the per-rune path. Returns whether any rune
+    /// advanced the cursor and the last one that did, which is what REP repeats.
+    /// </summary>
+    public bool PrintRunes(ReadOnlySpan<Rune> runes, out Rune lastAdvanced)
+    {
+        lastAdvanced = default;
+        var advanced = false;
+        if (LeftRightMargins)
+        {
+            // DECLRMM can leave the cursor outside the margins after a wrap; keep
+            // that rare geometry on the per-character path.
+            foreach (var rune in runes)
+            {
+                if (PrintAndGetAdvance(rune) > 0)
+                {
+                    lastAdvanced = rune;
+                    advanced = true;
+                }
+            }
+
+            return advanced;
+        }
+
+        UpdateRuneTemplates();
+        var hyperlink = CurrentHyperlinkUri;
+        var widths = _segmentWidths;
+        var line = GetLiveLine(CursorY);
+        var effectiveColumns = RightBound(line) + 1;
+        // Whether the cell the next rune would join has no combining text ending in
+        // ZWJ, so an Extended_Pictographic rune cannot join it (GB11): true after
+        // anything printed here advanced the cursor, since only a zero-width append
+        // (no advance) can leave a ZWJ at the end of a cell.
+        var previousEndsWithoutZwj = JoinTargetEndsWithoutZwj();
+        var index = 0;
+        while (index < runes.Length)
+        {
+            var rune = runes[index];
+            // Only the per-rune path below can set a pending Prepend.
+            var width = _pendingPrepend is null && !_mayHoldLonePrepend
+                ? SimpleWidth(rune, previousEndsWithoutZwj)
+                : 0;
+            if (width == 0)
+            {
+                previousEndsWithoutZwj = PrintAndGetAdvance(rune) > 0;
+                if (previousEndsWithoutZwj)
+                {
+                    lastAdvanced = rune;
+                    advanced = true;
+                }
+
+                line = GetLiveLine(CursorY);
+                effectiveColumns = RightBound(line) + 1;
+                index++;
+                continue;
+            }
+
+            // PrintCore for runes that cannot join, a row segment at a time.
+            if (WrapPending)
+            {
+                line.Wrapped = true;
+                CarriageReturn();
+                LineFeed();
+                ContinueLogicalLine(line);
+                line = GetLiveLine(CursorY);
+                effectiveColumns = RightBound(line) + 1;
+            }
+
+            if (CursorX + width > effectiveColumns)
+            {
+                line.Wrapped = true;
+                CarriageReturn();
+                LineFeed();
+                ContinueLogicalLine(line);
+                line = GetLiveLine(CursorY);
+                effectiveColumns = RightBound(line) + 1;
+            }
+
+            // Take every following rune that is also simple and still fits the row.
+            // Only the first can wrap; the rest follow cells stored here.
+            var row = line.Cells;
+            var end = CursorX;
+            var next = index;
+            if (!row.MayHoldWide && row.CanAppendAt(CursorX))
+            {
+                // No wide glyph in the row can straddle the segment, so classify and
+                // store in one pass.
+                var cells = row.BeginAppend(CursorX);
+                var narrow = _narrowTemplate;
+                var wide = _wideTemplate;
+                var continuation = _continuationTemplate;
+                var limit = effectiveColumns - CursorX;
+                var written = 0;
+                var wroteWide = false;
+                while (true)
+                {
+                    var stored = runes[next];
+                    if (width == 2)
+                    {
+                        cells[written] = wide.WithRune(stored);
+                        cells[written + 1] = continuation;
+                        wroteWide = true;
+                    }
+                    else
+                    {
+                        cells[written] = narrow.WithRune(stored);
+                    }
+
+                    written += width;
+                    next++;
+                    if (next == runes.Length)
+                    {
+                        break;
+                    }
+
+                    width = SimpleWidth(runes[next], previousEndsWithoutZwj: true);
+                    if (width == 0 || written + width > limit)
+                    {
+                        break;
+                    }
+                }
+
+                end = CursorX + written;
+                row.EndAppend(CursorX, end, hyperlink, wroteWide);
+            }
+            else
+            {
+                // Record widths for the write.
+                do
+                {
+                    widths[next - index] = (byte)width;
+                    end += width;
+                    next++;
+                    width = next < runes.Length && next - index < widths.Length
+                        ? SimpleWidth(runes[next], previousEndsWithoutZwj: true)
+                        : 0;
+                }
+                while (width != 0 && end + width <= effectiveColumns);
+
+                // As in PrintAscii, cells inside the segment are overwritten one by
+                // one, so only glyphs straddling its first and last cell need clearing.
+                ClearGlyphAt(row, CursorX);
+                ClearGlyphAt(row, end - 1);
+                row.WriteRunes(
+                    CursorX,
+                    end,
+                    runes[index..next],
+                    widths,
+                    _narrowTemplate,
+                    _wideTemplate,
+                    _continuationTemplate,
+                    hyperlink);
+            }
+
+            lastAdvanced = runes[next - 1];
+            advanced = true;
+            previousEndsWithoutZwj = true;
+            CursorX = end;
+            if (CursorX >= effectiveColumns)
+            {
+                CursorX = effectiveColumns - 1;
+                WrapPending = true;
+            }
+
+            index = next;
+        }
+
+        return advanced;
+    }
+
+    // Packed cells for runes stored by PrintRunes. The narrow one is packed per
+    // call (a few integer operations) and doubles as the cache key: the wide and
+    // continuation cells are derived again only when it changes.
+    private PackedCell _narrowTemplate;
+    private PackedCell _wideTemplate;
+    private PackedCell _continuationTemplate;
+    private bool _templatesBuilt;
+    private readonly byte[] _segmentWidths = new byte[256];
+
+    private void UpdateRuneTemplates()
+    {
+        var narrow = PackedCell.From(new Rune(' '), CurrentAttributes, CurrentProtection, false, 1, _shellIntegration);
+        if (_templatesBuilt && narrow.SameBits(_narrowTemplate))
+        {
+            return;
+        }
+
+        _narrowTemplate = narrow;
+        _wideTemplate = narrow.WithWidth(2, isWideContinuation: false);
+        _continuationTemplate = narrow.WithWidth(0, isWideContinuation: true);
+        _templatesBuilt = true;
+    }
+
+    /// <summary>
+    /// The width of a rune <see cref="PrintRunes"/> may store without the per-rune
+    /// path, or 0. Such a rune is not a Prepend and cannot extend the previous
+    /// grapheme: either it has no join property at all, or it is an
+    /// Extended_Pictographic scalar whose only possible join (GB11) needs combining
+    /// text ending in ZWJ, which the previous cell is known not to have. The caller
+    /// has ruled out a pending or lone Prepend.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static int SimpleWidth(Rune rune, bool previousEndsWithoutZwj)
+    {
+        var simpleClass = rune.Value < SimpleClasses.Length ? SimpleClasses[rune.Value] : ClassifySimple(rune);
+        if ((simpleClass & NeverSimple) != 0 ||
+            ((simpleClass & SimpleAfterZwjFreeCell) != 0 && !previousEndsWithoutZwj))
+        {
+            return 0;
+        }
+
+        return WcWidth.ResolveWidth((byte)(simpleClass & 3));
+    }
+
+    // SimpleWidth's inputs in one load per rune for planes 0 and 1: the width class
+    // in the low two bits, plus whether the rune needs the per-rune path or may
+    // skip it only after a cell without a trailing ZWJ.
+    private const byte SimpleAfterZwjFreeCell = 4;
+    private const byte NeverSimple = 8;
+    private static readonly byte[] SimpleClasses = BuildSimpleClasses();
+
+    private static byte[] BuildSimpleClasses()
+    {
+        var classes = new byte[0x20000];
+        for (var value = 0; value < classes.Length; value++)
+        {
+            if (value is < 0xD800 or > 0xDFFF)
+            {
+                classes[value] = ClassifySimple(new Rune(value));
+            }
+        }
+
+        return classes;
+    }
+
+    // Built from ClassifyJoin, not the JoinClasses table, which static
+    // initialization order may not have filled yet.
+    private static byte ClassifySimple(Rune rune)
+    {
+        var joinClass = ClassifyJoin(rune);
+        var widthClass = WcWidth.WidthClass(rune);
+        if ((joinClass & PrependScalar) != 0 ||
+            ((joinClass & MayExtendPrevious) != 0 && (joinClass & ExtendsOnlyAfterZwj) == 0))
+        {
+            return (byte)(NeverSimple | widthClass);
+        }
+
+        return (joinClass & ExtendsOnlyAfterZwj) != 0
+            ? (byte)(SimpleAfterZwjFreeCell | widthClass)
+            : widthClass;
+    }
+
+    /// <summary>
+    /// Whether the cell a printed rune would join (as <see cref="GetJoinTarget"/>
+    /// finds it) has no combining text ending in ZWJ, or there is none.
+    /// </summary>
+    private bool JoinTargetEndsWithoutZwj()
+    {
+        var y = CursorY;
+        var x = WrapPending ? CursorX : CursorX - 1;
+        if (!WrapPending && x < 0 && y > 0 && GetLiveLine(y - 1).Wrapped)
+        {
+            y--;
+            x = Columns - 1;
+        }
+
+        if (x < 0)
+        {
+            return true;
+        }
+
+        var row = GetLiveLine(y).Cells;
+        if (row.IsWideContinuation(x) && x > 0)
+        {
+            x--;
+        }
+
+        return row.CombiningAt(x)?.EndsWith('\u200D') != true;
+    }
+
+    /// <summary>
+    /// Whether the cell a printed rune would join holds a lone Prepend scalar
+    /// (GB9b). That is the only join open to runes without
+    /// <see cref="MayExtendPrevious"/>, printable ASCII included. Conservative:
+    /// true sends the rune through the full join check.
+    /// </summary>
+    private bool PreviousIsLonePrepend()
+    {
+        if (!_mayHoldLonePrepend)
+        {
+            return false;
+        }
+
+        var y = CursorY;
+        var x = WrapPending ? CursorX : CursorX - 1;
+        if (!WrapPending && x < 0 && y > 0 && GetLiveLine(y - 1).Wrapped)
+        {
+            y--;
+            x = Columns - 1;
+        }
+
+        if (x < 0)
+        {
+            return false;
+        }
+
+        var row = GetLiveLine(y).Cells;
+        if (row.IsWideContinuation(x) && x > 0)
+        {
+            x--;
+        }
+
+        var previous = row.RuneAt(x);
+        return IsPrependScalar(previous) && row.CombiningAt(x) is null;
+    }
+
+    public void Print(Rune rune, bool autoWrap = true) => PrintCore(rune, autoWrap, out _);
+
+    /// <summary>
+    /// Prints like <see cref="Print"/> and returns what <see cref="GetPrintAdvance"/>
+    /// would have returned just before, resolving the grapheme join target once
+    /// instead of once per call.
+    /// </summary>
+    public int PrintAndGetAdvance(Rune rune, bool autoWrap = true)
+    {
+        if (_pendingPrepend is not null || IsPrependScalar(rune))
+        {
+            // GetPrintAdvance ignores a pending Prepend while Print consumes it;
+            // keep both calls so the reported advance stays the same.
+            var advance = GetPrintAdvance(rune);
+            Print(rune, autoWrap);
+            return advance;
+        }
+
+        PrintCore(rune, autoWrap, out var printed);
+        return printed;
+    }
+
+    private void PrintCore(Rune rune, bool autoWrap, out int advance)
+    {
+        advance = 0;
+        if (IsPrependScalar(rune))
         {
             _pendingPrepend = (_pendingPrepend ?? string.Empty) + rune;
             return;
@@ -420,12 +871,17 @@ public sealed class TextBuffer
 
         var prepend = _pendingPrepend;
         _pendingPrepend = null;
-        if (prepend is null && TryAppendJoinedRune(rune))
+        // Most runes cannot extend the previous grapheme unless it is a lone
+        // Prepend; skip the full join evaluation for them.
+        if (prepend is null &&
+            ((JoinClass(rune) & MayExtendPrevious) != 0 || PreviousIsLonePrepend()) &&
+            TryAppendJoinedRune(rune, out advance))
         {
             return;
         }
 
         var width = WcWidth.Width(rune);
+        advance = width;
         if (width == 0)
         {
             AppendCombining(rune);
@@ -441,7 +897,8 @@ public sealed class TextBuffer
             ContinueLogicalLine(source);
         }
 
-        var effectiveColumns = RightBound(GetLiveLine(CursorY)) + 1;
+        var line = GetLiveLine(CursorY);
+        var effectiveColumns = RightBound(line) + 1;
         if (CursorX + width > effectiveColumns && !autoWrap)
         {
             // DECAWM reset: never wrap or scroll; overwrite at the right edge.
@@ -449,50 +906,52 @@ public sealed class TextBuffer
         }
         else if (CursorX + width > effectiveColumns)
         {
-            var source = GetLiveLine(CursorY);
-            source.Wrapped = true;
+            line.Wrapped = true;
             CarriageReturn();
             LineFeed();
-            ContinueLogicalLine(source);
-            effectiveColumns = RightBound(GetLiveLine(CursorY)) + 1;
+            ContinueLogicalLine(line);
+            line = GetLiveLine(CursorY);
+            effectiveColumns = RightBound(line) + 1;
         }
 
-        var row = GetLiveLine(CursorY).Cells;
+        var row = line.Cells;
         ClearGlyphAt(row, CursorX);
         if (width == 2 && CursorX + 1 < Columns)
         {
             ClearGlyphAt(row, CursorX + 1);
         }
 
-        row[CursorX] = new Cell
-        {
-            Rune = rune,
-            Attributes = CurrentAttributes,
-            IsProtected = CurrentProtection,
-            StoredWidth = (byte)width,
-            HyperlinkUri = CurrentHyperlinkUri,
-            ShellIntegration = _shellIntegration,
-        };
+        var storedRune = rune;
+        string? combining = null;
         if (prepend is not null)
         {
             var runes = prepend.EnumerateRunes().ToArray();
-            row[CursorX].Rune = runes[0];
-            row[CursorX].CombiningCharacters =
-                string.Concat(runes.Skip(1).Select(static value => value.ToString())) + rune;
+            storedRune = runes[0];
+            combining = string.Concat(runes.Skip(1).Select(static value => value.ToString())) + rune;
         }
 
+        row.Store(
+            CursorX,
+            storedRune,
+            CurrentAttributes,
+            CurrentProtection,
+            isWideContinuation: false,
+            (byte)width,
+            combining,
+            CurrentHyperlinkUri,
+            _shellIntegration);
         if (width == 2 && CursorX + 1 < Columns)
         {
-            row[CursorX + 1] = new Cell
-            {
-                Rune = new Rune(' '),
-                Attributes = CurrentAttributes,
-                IsProtected = CurrentProtection,
-                IsWideContinuation = true,
-                StoredWidth = 0,
-                HyperlinkUri = CurrentHyperlinkUri,
-                ShellIntegration = _shellIntegration,
-            };
+            row.Store(
+                CursorX + 1,
+                new Rune(' '),
+                CurrentAttributes,
+                CurrentProtection,
+                isWideContinuation: true,
+                storedWidth: 0,
+                combining: null,
+                CurrentHyperlinkUri,
+                _shellIntegration);
         }
 
         CursorX += width;
@@ -713,7 +1172,7 @@ public sealed class TextBuffer
             var line = GetLiveLine(y);
             line.Wrapped = false;
             line.Rendition = LineRendition.SingleWidth;
-            Array.Fill(line.Cells, glyph);
+            line.Cells.Fill(0, line.Cells.Length, glyph);
         }
     }
 
@@ -953,7 +1412,7 @@ public sealed class TextBuffer
             var row = GetLiveLine(y).Cells;
             for (var x = left; x <= right; x++)
             {
-                ref readonly var cell = ref row[x];
+                var cell = row[x];
                 if (!cell.IsWideContinuation)
                 {
                     checksum = SubtractChecksum(checksum, cell.Rune.Value == 0x2426 ? 0x1B : cell.Rune.Value);
@@ -1044,7 +1503,7 @@ public sealed class TextBuffer
             var row = GetLiveLine(y).Cells;
             if (count < 0)
             {
-                Array.Copy(row, left + shift, row, left, width - shift);
+                row.CopyTo(left + shift, row, left, width - shift);
                 for (var x = right - shift + 1; x <= right; x++)
                 {
                     row[x] = BlankWith(CurrentAttributes);
@@ -1052,7 +1511,7 @@ public sealed class TextBuffer
             }
             else
             {
-                Array.Copy(row, left, row, left + shift, width - shift);
+                row.CopyTo(left, row, left + shift, width - shift);
                 for (var x = left; x < left + shift; x++)
                 {
                     row[x] = BlankWith(CurrentAttributes);
@@ -1067,7 +1526,7 @@ public sealed class TextBuffer
     {
         var row = GetLiveLine(CursorY).Cells;
         count = Math.Min(Math.Max(1, count), Columns - CursorX);
-        Array.Copy(row, CursorX, row, CursorX + count, Columns - CursorX - count);
+        row.CopyTo(CursorX, row, CursorX + count, Columns - CursorX - count);
         for (var x = CursorX; x < CursorX + count; x++)
         {
             row[x] = BlankWith(CurrentAttributes);
@@ -1080,7 +1539,7 @@ public sealed class TextBuffer
     {
         var row = GetLiveLine(CursorY).Cells;
         count = Math.Min(Math.Max(1, count), Columns - CursorX);
-        Array.Copy(row, CursorX + count, row, CursorX, Columns - CursorX - count);
+        row.CopyTo(CursorX + count, row, CursorX, Columns - CursorX - count);
         for (var x = Columns - count; x < Columns; x++)
         {
             row[x] = BlankWith(CurrentAttributes);
@@ -1107,19 +1566,22 @@ public sealed class TextBuffer
                     CoordinateVersion++;
                 }
 
-                _lines.AddLast(NewBlankLine(CurrentAttributes));
+                // Once history is full the oldest line is evicted anyway; reuse it so
+                // steady-state scrolling allocates nothing.
+                _lines.AddLast(_lines.Count == _lines.Capacity
+                    ? RecycleLine(_lines.RemoveFirst(), CurrentAttributes)
+                    : NewBlankLine(CurrentAttributes));
                 ScrollOffset = 0;
             }
             else
             {
-                var top = ViewportStart + ScrollTop;
                 var bottom = ViewportStart + ScrollBottom;
-                for (var y = top; y < bottom; y++)
+                var scrolledOut = _lines.RotateDown(ViewportStart + ScrollTop, bottom);
+                var recycled = RecycleLine(scrolledOut, CurrentAttributes);
+                if (!ReferenceEquals(recycled, scrolledOut))
                 {
-                    _lines[y] = _lines[y + 1];
+                    _lines[bottom] = recycled;
                 }
-
-                _lines[bottom] = NewBlankLine(CurrentAttributes);
             }
         }
     }
@@ -1130,13 +1592,12 @@ public sealed class TextBuffer
         for (var i = 0; i < count; i++)
         {
             var top = ViewportStart + ScrollTop;
-            var bottom = ViewportStart + ScrollBottom;
-            for (var y = bottom; y > top; y--)
+            var scrolledOut = _lines.RotateUp(top, ViewportStart + ScrollBottom);
+            var recycled = RecycleLine(scrolledOut, CurrentAttributes);
+            if (!ReferenceEquals(recycled, scrolledOut))
             {
-                _lines[y] = _lines[y - 1];
+                _lines[top] = recycled;
             }
-
-            _lines[top] = NewBlankLine(CurrentAttributes);
         }
     }
 
@@ -1321,26 +1782,34 @@ public sealed class TextBuffer
         ScrollOffset = 0;
     }
 
-    private BufferLine NewBlankLine(CellAttributes attributes)
+    private BufferLine NewBlankLine(CellAttributes attributes) =>
+        new(new CellRow(Columns, attributes), ++_nextLogicalLineId);
+
+    /// <summary>
+    /// Blanks a line that just left the buffer (or a scroll region) and gives it a
+    /// new logical identity, so image anchors and marks never resolve to it again.
+    /// Snapshots clone cells, so no reader still observes the old content.
+    /// </summary>
+    private BufferLine RecycleLine(BufferLine line, CellAttributes attributes)
     {
-        var row = new Cell[Columns];
-        for (var x = 0; x < row.Length; x++)
+        if (line.Cells.Length != Columns)
         {
-            row[x] = BlankWith(attributes);
+            return NewBlankLine(attributes);
         }
 
-        return new BufferLine(row, ++_nextLogicalLineId);
+        line.Cells.Reset(attributes);
+        line.Wrapped = false;
+        line.Rendition = LineRendition.SingleWidth;
+        line.ClearMarks();
+        line.LogicalLineId = ++_nextLogicalLineId;
+        line.LogicalOffset = 0;
+        return line;
     }
 
     private static BufferLine ResizeLineCells(BufferLine source, int columns)
     {
-        var cells = new Cell[columns];
-        var copy = Math.Min(source.Cells.Length, columns);
-        Array.Copy(source.Cells, cells, copy);
-        for (var x = copy; x < columns; x++)
-        {
-            cells[x] = Cell.Blank;
-        }
+        var cells = new CellRow(columns, CellAttributes.Default);
+        source.Cells.CopyTo(0, cells, 0, Math.Min(source.Cells.Length, columns));
 
         RepairWideCells(cells);
         var line = new BufferLine(cells, source.LogicalLineId)
@@ -1349,7 +1818,7 @@ public sealed class TextBuffer
             Rendition = source.Rendition,
             LogicalOffset = source.LogicalOffset,
         };
-        foreach (var mark in source.Marks)
+        foreach (var mark in source.MarksOrEmpty)
         {
             if ((uint)mark.StartColumn < (uint)columns)
             {
@@ -1404,7 +1873,7 @@ public sealed class TextBuffer
         }
     }
 
-    private void EraseCells(Cell[] row, int from, int to, bool selective = false)
+    private void EraseCells(CellRow row, int from, int to, bool selective = false)
     {
         from = Math.Clamp(from, 0, row.Length);
         to = Math.Clamp(to, 0, row.Length);
@@ -1424,13 +1893,13 @@ public sealed class TextBuffer
             ClearGlyphAt(row, to - 1);
         }
 
-        for (var x = from; x < to; x++)
+        if (from < to)
         {
-            row[x] = BlankWith(CurrentAttributes);
+            row.FillBlank(from, to - from, CurrentAttributes);
         }
     }
 
-    private static void SelectivelyEraseGlyphAt(Cell[] row, int x)
+    private static void SelectivelyEraseGlyphAt(CellRow row, int x)
     {
         var first = row[x].IsWideContinuation ? x - 1 : x;
         var last = row[x].DisplayWidth == 2 ? x + 1 : x;
@@ -1485,7 +1954,9 @@ public sealed class TextBuffer
             var row = GetLiveLine(y).Cells;
             for (var x = left; x <= right; x++)
             {
-                ApplyRectangularAttributes(ref row[x].Attributes, attributes, reverse);
+                var cell = row[x];
+                ApplyRectangularAttributes(ref cell.Attributes, attributes, reverse);
+                row[x] = cell;
             }
         }
     }
@@ -1683,16 +2154,19 @@ public sealed class TextBuffer
             x--;
         }
 
-        if (row[x].IsBlank)
+        var cell = row[x];
+        if (cell.IsBlank)
         {
             return;
         }
 
-        row[x].CombiningCharacters = (row[x].CombiningCharacters ?? string.Empty) + rune;
+        cell.CombiningCharacters = (cell.CombiningCharacters ?? string.Empty) + rune;
+        row[x] = cell;
     }
 
-    private bool TryAppendJoinedRune(Rune rune)
+    private bool TryAppendJoinedRune(Rune rune, out int advance)
     {
+        advance = 0;
         var target = GetJoinTarget(rune);
         if (target is null)
         {
@@ -1700,13 +2174,16 @@ public sealed class TextBuffer
         }
 
         var (row, x, desiredWidth, lineColumns) = target.Value;
-        ref var previous = ref row[x];
+        var previous = row[x];
         var previousWidth = previous.DisplayWidth;
+        advance = Math.Max(0, desiredWidth - previousWidth);
         previous.CombiningCharacters = (previous.CombiningCharacters ?? string.Empty) + rune;
+        row[x] = previous;
         if (desiredWidth > previousWidth && x + desiredWidth <= lineColumns)
         {
             ClearGlyphAt(row, x + 1);
             previous.StoredWidth = (byte)desiredWidth;
+            row[x] = previous;
             row[x + 1] = new Cell
             {
                 Rune = new Rune(' '),
@@ -1731,7 +2208,7 @@ public sealed class TextBuffer
         return true;
     }
 
-    private (Cell[] Row, int Column, int DesiredWidth, int LineColumns)? GetJoinTarget(Rune rune)
+    private (CellRow Row, int Column, int DesiredWidth, int LineColumns)? GetJoinTarget(Rune rune)
     {
         var y = CursorY;
         var x = WrapPending ? CursorX : CursorX - 1;
@@ -1747,37 +2224,48 @@ public sealed class TextBuffer
         }
 
         var row = GetLiveLine(y).Cells;
-        if (row[x].IsWideContinuation && x > 0)
+        if (row.IsWideContinuation(x) && x > 0)
         {
             x--;
         }
 
-        ref var previous = ref row[x];
-        if (previous.IsBlank)
+        // Most runes can only join a lone Prepend (GB9b); rule them out with
+        // table loads before evaluating the rules one by one.
+        if ((JoinClass(rune) & MayExtendPrevious) == 0 &&
+            (!IsPrependScalar(row.RuneAt(x)) || row.CombiningAt(x) is not null))
         {
             return null;
         }
 
+        // Read only the fields the rules need; whole cells are built for the
+        // rare ZWJ and Indic checks that walk the combining text.
+        if (row.IsBlank(x))
+        {
+            return null;
+        }
+
+        var previousRune = row.RuneAt(x);
+        var previousCombining = row.CombiningAt(x);
         var joinedByZwj =
-            previous.CombiningCharacters?.EndsWith('\u200D') == true &&
+            previousCombining?.EndsWith('\u200D') == true &&
             IsExtendedPictographic(rune) &&
-            HasExtendedPictographicBeforeZwj(previous);
+            HasExtendedPictographicBeforeZwj(previousRune, previousCombining);
         var emojiPresentationSelector =
             rune.Value == 0xFE0F &&
-            IsExtendedPictographic(previous.Rune);
+            IsExtendedPictographic(previousRune);
         var regionalPair =
-            IsRegionalIndicator(previous.Rune) &&
+            IsRegionalIndicator(previousRune) &&
             IsRegionalIndicator(rune) &&
             // GB12/13 count immediately adjacent RIs only. An intervening
             // Extend or ZWJ terminates the run, even if it joined the RI cell.
-            previous.CombiningCharacters is null;
-        var hangulSyllable = IsHangulContinuation(previous, rune);
+            previousCombining is null;
+        var hangulSyllable = IsHangulContinuation(previousRune, previousCombining, rune);
         var spacingMark = Rune.GetUnicodeCategory(rune) == UnicodeCategory.SpacingCombiningMark;
         // A Prepend scalar at the front of a completed cell is no longer
         // pending: it applies only to the immediately following grapheme.
-        var prepend = IsPrepend(previous.Rune) &&
-            previous.CombiningCharacters is null;
-        var indicConjunct = IsIndicConsonant(rune) && EndsWithIndicLinker(previous);
+        var prepend = IsPrepend(previousRune) &&
+            previousCombining is null;
+        var indicConjunct = IsIndicConsonant(rune) && EndsWithIndicLinker(row[x]);
         if (!joinedByZwj &&
             !emojiPresentationSelector &&
             !regionalPair &&
@@ -1791,7 +2279,7 @@ public sealed class TextBuffer
 
         var desiredWidth = joinedByZwj || emojiPresentationSelector || regionalPair
             ? 2
-            : Math.Max(previous.DisplayWidth, Math.Max(1, WcWidth.Width(rune)));
+            : Math.Max(row.DisplayWidth(x), Math.Max(1, WcWidth.Width(rune)));
         var lineColumns = EffectiveColumns(GetLiveLine(y));
         return x + desiredWidth <= lineColumns ? (row, x, desiredWidth, lineColumns) : null;
     }
@@ -1799,16 +2287,25 @@ public sealed class TextBuffer
     private static bool IsRegionalIndicator(Rune rune) =>
         rune.Value is >= 0x1F1E6 and <= 0x1F1FF;
 
-    private static bool HasExtendedPictographicBeforeZwj(Cell cell)
+    // Walks the cell's text (base rune, then combining text ending in ZWJ)
+    // backwards past the ZWJ and any Extend scalars, without building arrays.
+    private static bool HasExtendedPictographicBeforeZwj(Rune baseRune, string combining)
     {
-        var runes = cell.Text.EnumerateRunes().ToArray();
-        var index = runes.Length - 2; // The final rune is ZWJ.
-        while (index >= 0 && IsGraphemeExtend(runes[index]))
+        var text = combining.AsSpan();
+        Rune.DecodeLastFromUtf16(text, out _, out var consumed); // The final rune is ZWJ.
+        text = text[..^consumed];
+        while (!text.IsEmpty)
         {
-            index--;
+            Rune.DecodeLastFromUtf16(text, out var rune, out consumed);
+            if (!IsGraphemeExtend(rune))
+            {
+                return IsExtendedPictographic(rune);
+            }
+
+            text = text[..^consumed];
         }
 
-        return index >= 0 && IsExtendedPictographic(runes[index]);
+        return !IsGraphemeExtend(baseRune) && IsExtendedPictographic(baseRune);
     }
 
     private static bool IsGraphemeExtend(Rune rune) =>
@@ -1875,12 +2372,19 @@ public sealed class TextBuffer
         Lvt,
     }
 
-    private static bool IsHangulContinuation(Cell previous, Rune current)
+    private static bool IsHangulContinuation(Rune previousRune, string? previousCombining, Rune current)
     {
-        var prior = Hangul(previous.CombiningCharacters is { Length: > 0 }
-            ? previous.CombiningCharacters.EnumerateRunes().Last()
-            : previous.Rune);
+        // Every continuation needs a Hangul jamo or syllable next; check that
+        // before walking the previous cell's combining text.
         var next = Hangul(current);
+        if (next == HangulClass.Other)
+        {
+            return false;
+        }
+
+        var prior = Hangul(previousCombining is { Length: > 0 }
+            ? previousCombining.EnumerateRunes().Last()
+            : previousRune);
         return prior == HangulClass.L && next is HangulClass.L or HangulClass.V or HangulClass.Lv or HangulClass.Lvt ||
                prior is HangulClass.Lv or HangulClass.V && next is HangulClass.V or HangulClass.T ||
                prior is HangulClass.Lvt or HangulClass.T && next == HangulClass.T;
@@ -1910,6 +2414,72 @@ public sealed class TextBuffer
         }
 
         return HangulClass.Other;
+    }
+
+    // Grapheme-join properties of every scalar in planes 0 and 1 (which hold the
+    // emoji), precomputed from the rule predicates below so most printed runes
+    // skip them with one table load.
+    private const byte MayExtendPrevious = 1;
+    private const byte PrependScalar = 2;
+    private const byte ExtendsOnlyAfterZwj = 4;
+    private static readonly byte[] JoinClasses = BuildJoinClasses();
+
+    private static byte JoinClass(Rune rune) =>
+        rune.Value < JoinClasses.Length ? JoinClasses[rune.Value] : ClassifyJoin(rune);
+
+    private static bool IsPrependScalar(Rune rune) => (JoinClass(rune) & PrependScalar) != 0;
+
+    private static byte[] BuildJoinClasses()
+    {
+        var classes = new byte[0x20000];
+        for (var value = 0; value < classes.Length; value++)
+        {
+            if (value is < 0xD800 or > 0xDFFF)
+            {
+                classes[value] = ClassifyJoin(new Rune(value));
+            }
+        }
+
+        return classes;
+    }
+
+    /// <summary>
+    /// <see cref="MayExtendPrevious"/> marks the runes for which some rule in
+    /// <see cref="GetJoinTarget"/> other than GB9b (a lone Prepend before them)
+    /// can hold: a ZWJ target, VS16, a regional indicator, Hangul, a spacing mark
+    /// or an Indic consonant.
+    /// </summary>
+    private static byte ClassifyJoin(Rune rune)
+    {
+        byte joinClass = 0;
+        if (IsExtendedPictographic(rune) ||
+            rune.Value == 0xFE0F ||
+            IsRegionalIndicator(rune) ||
+            Hangul(rune) != HangulClass.Other ||
+            Rune.GetUnicodeCategory(rune) == UnicodeCategory.SpacingCombiningMark ||
+            IsIndicConsonant(rune))
+        {
+            joinClass |= MayExtendPrevious;
+        }
+
+        if (IsPrepend(rune))
+        {
+            joinClass |= PrependScalar;
+        }
+
+        // An Extended_Pictographic scalar with no other join property extends the
+        // previous cell only through GB11 (combining text ending in ZWJ) or GB9b.
+        if (IsExtendedPictographic(rune) &&
+            rune.Value != 0xFE0F &&
+            !IsRegionalIndicator(rune) &&
+            Hangul(rune) == HangulClass.Other &&
+            Rune.GetUnicodeCategory(rune) != UnicodeCategory.SpacingCombiningMark &&
+            !IsIndicConsonant(rune))
+        {
+            joinClass |= ExtendsOnlyAfterZwj;
+        }
+
+        return joinClass;
     }
 
     private static bool IsPrepend(Rune rune) =>
@@ -2002,32 +2572,34 @@ public sealed class TextBuffer
             >= 0x1D165 and <= 0x1D166 or
             >= 0x1D16D and <= 0x1D172;
 
-    private static void ClearGlyphAt(Cell[] row, int x)
+    private static void ClearGlyphAt(CellRow row, int x)
     {
-        if ((uint)x >= (uint)row.Length)
+        // Without wide glyphs in the row there is nothing to split.
+        if (!row.MayHoldWide || (uint)x >= (uint)row.Length)
         {
             return;
         }
 
-        if (row[x].IsWideContinuation)
+        // FillBlank with default attributes stores exactly Cell.Blank.
+        if (row.IsWideContinuation(x))
         {
-            row[x] = Cell.Blank;
+            row.FillBlank(x, 1, CellAttributes.Default);
             if (x > 0)
             {
-                row[x - 1] = Cell.Blank;
+                row.FillBlank(x - 1, 1, CellAttributes.Default);
             }
         }
-        else if (row[x].DisplayWidth == 2)
+        else if (row.DisplayWidth(x) == 2)
         {
-            row[x] = Cell.Blank;
-            if (x + 1 < row.Length && row[x + 1].IsWideContinuation)
+            row.FillBlank(x, 1, CellAttributes.Default);
+            if (x + 1 < row.Length && row.IsWideContinuation(x + 1))
             {
-                row[x + 1] = Cell.Blank;
+                row.FillBlank(x + 1, 1, CellAttributes.Default);
             }
         }
     }
 
-    private static void RepairWideCells(Cell[] row)
+    private static void RepairWideCells(CellRow row)
     {
         for (var x = 0; x < row.Length; x++)
         {
@@ -2113,7 +2685,7 @@ public sealed class TextBuffer
                     }
                 }
             }
-            foreach (var mark in line.Marks)
+            foreach (var mark in line.MarksOrEmpty)
             {
                 paragraphMarks.Add((DisplayWidth(paragraphCells) + mark.StartColumn, mark));
             }
@@ -2237,8 +2809,9 @@ public sealed class TextBuffer
                 cursorColumn = x;
             }
 
-            line.Cells[x] = cell;
-            line.Cells[x].IsWideContinuation = false;
+            var stored = cell;
+            stored.IsWideContinuation = false;
+            line.Cells[x] = stored;
             if (width == 2)
             {
                 line.Cells[x + 1] = new Cell
@@ -2274,8 +2847,9 @@ public sealed class TextBuffer
         for (var index = lines.Count - 1; index >= 0; index--)
         {
             var line = lines[index];
-            foreach (var cell in line.Cells)
+            for (var x = 0; x < line.Cells.Length; x++)
             {
+                var cell = line.Cells[x];
                 // Match conhost: only text counts, so rows that were merely erased
                 // with a colored background are trimmed like any other blank row.
                 if (!cell.IsWideContinuation &&
@@ -2300,7 +2874,7 @@ public sealed class TextBuffer
         return -1;
     }
 
-    private static int LastContentColumn(Cell[] cells)
+    private static int LastContentColumn(CellRow cells)
     {
         for (var x = cells.Length - 1; x >= 0; x--)
         {

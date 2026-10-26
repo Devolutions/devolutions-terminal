@@ -5,4 +5,8 @@
     <!-- Not published standalone; bundled into the Devolutions.Terminal.Control NuGet package. -->
     <IsPackable>false</IsPackable>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- Differential tests compare fast paths against the per-character path. -->
+    <InternalsVisibleTo Include="Devolutions.Terminal.Core.Tests" />
+  </ItemGroup>
 </Project>

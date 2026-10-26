@@ -4,6 +4,9 @@ The `render` mode of `tools/Devolutions.Terminal.Bench` measures the CPU work of
 preparing and rasterizing terminal frames. It is not a GPU or presentation
 benchmark. The existing `engine` and `control` modes measure different parts
 of the pipeline; `control` uses Avalonia headless and does **not** paint.
+For the engine-level comparison against Ghostty (`vt` mode), the full suite
+script and the "beats Ghostty" criteria, see
+[performance benchmarks](performance-benchmarks.md).
 
 ## Reproducible input
 

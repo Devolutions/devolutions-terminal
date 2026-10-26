@@ -23,8 +23,11 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
 
     private const int RenderDataCols = 1;
     private const int RenderDataRows = 2;
+    private const int RenderDataDirty = 3;
     private const int RenderDataRowIterator = 4;
     private const int RenderDataCursor = 18;
+    private const int RenderStateDirtyFull = 2;
+    private const int RenderRowDataDirty = 1;
     private const int RenderRowDataRaw = 2;
     private const int RenderRowDataCells = 3;
     private const int RenderCellDataStyle = 2;
@@ -50,6 +53,15 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
     private string _title = "Devolutions Terminal";
     private string? _workingDirectory;
     private GhosttyRenderCursor _cursor;
+    private readonly TextBuffer _buffer;
+    // Feeds only mark the projection stale; readers of the projected buffer or
+    // cursor rebuild it on demand, once per frame rather than once per PTY read.
+    private bool _projectionStale;
+    // The last projection of each viewport row, reused while Ghostty's render
+    // state reports the row clean.
+    private (Cell[] Cells, int? PromptStart)?[] _projectedRows = [];
+    private uint[] _codepointBuffer = new uint[16];
+    private byte[] _hyperlinkBuffer = new byte[256];
     private Exception? _callbackException;
     private SafeGhosttyTrackedGridRefHandle? _historyAnchor;
     private readonly int _historyLimit;
@@ -95,7 +107,7 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
     {
         GhosttyAbi.Validate();
         _historyLimit = Math.Max(0, historySize);
-        Buffer = new TextBuffer(columns, rows, historySize, hasHistory: true);
+        _buffer = new TextBuffer(columns, rows, historySize, hasHistory: true);
         nint terminal = 0;
         nint renderState = 0;
         nint rowIterator = 0;
@@ -168,7 +180,30 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
         }
     }
 
-    public TextBuffer Buffer { get; }
+    public TextBuffer Buffer
+    {
+        get
+        {
+            lock (_gate)
+            {
+                EnsureProjection();
+            }
+
+            return _buffer;
+        }
+    }
+
+    private GhosttyRenderCursor ProjectedCursor
+    {
+        get
+        {
+            lock (_gate)
+            {
+                EnsureProjection();
+                return _cursor;
+            }
+        }
+    }
 
     public ColorScheme Scheme
     {
@@ -192,10 +227,10 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
     public TerminalEngineCapabilities Capabilities => TerminalEngineCapabilities.Vt52Keyboard;
     public string? WorkingDirectory => _workingDirectory;
     public bool AlternateBufferActive => QueryInt(TerminalDataActiveScreen) == 1;
-    public bool CursorVisible => _cursor.ViewportHasValue != 0 && _cursor.Visible != 0;
-    public bool CursorBlinking => _cursor.Blinking != 0;
+    public bool CursorVisible => ProjectedCursor is { ViewportHasValue: not 0, Visible: not 0 };
+    public bool CursorBlinking => ProjectedCursor.Blinking != 0;
     public int CursorStyle =>
-        _cursor.VisualStyle is >= 1 and <= 6 ? _cursor.VisualStyle : 0;
+        ProjectedCursor.VisualStyle is var style and >= 1 and <= 6 ? style : 0;
     public bool ApplicationCursorKeys => QueryMode(1);
     public bool BracketedPaste => QueryMode(2004);
     public bool MouseTracking => QueryMode(9) || QueryMode(1000) || QueryMode(1002) || QueryMode(1003);
@@ -258,7 +293,11 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
                     callbackException);
             }
 
-            SynchronizeProjection();
+            // Projecting the grid costs several native calls per cell, so it waits
+            // for a reader (normally one snapshot per frame). Title and directory
+            // changes still raise their events from the feed.
+            _projectionStale = true;
+            SynchronizeMetadata();
             var historyAfter = ReadScrollbarCore().HistoryCount;
             var initialEvictionPossible = historyBefore == 0 &&
                                           EstimateRows(data, Columns) >= historyAfter + Rows;
@@ -269,7 +308,7 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
                 initialEvictionPossible ||
                 !trackedHistory)
             {
-                Buffer.AdvanceCoordinateVersion();
+                _buffer.AdvanceCoordinateVersion();
             }
             if (!trackedHistory || trackedHistoryEvicted)
             {
@@ -303,7 +342,7 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
                     _cellWidthPixels,
                     _cellHeightPixels),
                 "ghostty_terminal_resize");
-            Buffer.Resize(columns, rows);
+            _buffer.Resize(columns, rows);
             SynchronizeProjection();
         }
 
@@ -364,7 +403,8 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            var buffer = includeHistory ? CreateHistorySnapshot() : Buffer.CreateSnapshot();
+            EnsureProjection();
+            var buffer = includeHistory ? CreateHistorySnapshot() : _buffer.CreateSnapshot();
             return new TerminalSnapshot(
                 buffer,
                 Title,
@@ -838,7 +878,23 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
             "set palette");
     }
 
-    private void SynchronizeProjection()
+    private void EnsureProjection()
+    {
+        if (_projectionStale && !_disposed)
+        {
+            SynchronizeProjection(reprojectAll: false);
+        }
+    }
+
+    /// <summary>
+    /// Copies Ghostty's render state into <see cref="_buffer"/>. Rows the render
+    /// state reports clean keep their previous projection: it only rebuilds a row
+    /// (marking it dirty) when its contents change, and a viewport move, resize,
+    /// screen switch or palette change rebuilds them all, so a clean row reads
+    /// back exactly what was projected last time. Paths other than feeding pass
+    /// <paramref name="reprojectAll"/> to keep their previous, unconditional cost.
+    /// </summary>
+    private void SynchronizeProjection(bool reprojectAll = true)
     {
         ThrowIfFailed(
             GhosttyNative.RenderStateUpdate(
@@ -848,9 +904,25 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
 
         var columns = GetRenderUInt16(RenderDataCols);
         var rows = GetRenderUInt16(RenderDataRows);
-        if (Buffer.Columns != columns || Buffer.Rows != rows)
+        if (_buffer.Columns != columns || _buffer.Rows != rows)
         {
-            Buffer.Resize(columns, rows);
+            _buffer.Resize(columns, rows);
+        }
+
+        var frameDirty = 0;
+        ThrowIfFailed(
+            GhosttyNative.RenderStateGet(_renderState.DangerousGetHandle(), RenderDataDirty, &frameDirty),
+            "get render dirty state");
+        if (frameDirty == RenderStateDirtyFull ||
+            _projectedRows.Length != rows ||
+            (_projectedRows.Length > 0 && _projectedRows[0] is { } first && first.Cells.Length != columns))
+        {
+            reprojectAll = true;
+        }
+
+        if (_projectedRows.Length != rows)
+        {
+            _projectedRows = new (Cell[] Cells, int? PromptStart)?[rows];
         }
 
         var cursor = new GhosttyRenderCursor { Size = (nuint)sizeof(GhosttyRenderCursor) };
@@ -878,20 +950,41 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
                     RenderRowDataRaw,
                     &rawRow),
                 "get raw row");
-            var cellsValue = _rowCells.DangerousGetHandle();
-            ThrowIfFailed(
-                GhosttyNative.RowGet(
-                    _rowIterator.DangerousGetHandle(),
-                    RenderRowDataCells,
-                    &cellsValue),
-                "get row cells");
+            byte rowDirty = 1;
+            if (!reprojectAll)
+            {
+                ThrowIfFailed(
+                    GhosttyNative.RowGet(
+                        _rowIterator.DangerousGetHandle(),
+                        RenderRowDataDirty,
+                        &rowDirty),
+                    "get row dirty");
+            }
+
             byte wrapped = 0;
             ThrowIfFailed(GhosttyNative.RawRowGet(rawRow, 1, &wrapped), "get row wrap");
             var semanticPrompt = 0;
             ThrowIfFailed(
                 GhosttyNative.RawRowGet(rawRow, 6, &semanticPrompt),
                 "get row semantic prompt");
-            var projected = ProjectRow(columns, rowIndex);
+            var cached = rowIndex < _projectedRows.Length ? _projectedRows[rowIndex] : null;
+            if (rowDirty != 0 || cached is null)
+            {
+                var cellsValue = _rowCells.DangerousGetHandle();
+                ThrowIfFailed(
+                    GhosttyNative.RowGet(
+                        _rowIterator.DangerousGetHandle(),
+                        RenderRowDataCells,
+                        &cellsValue),
+                    "get row cells");
+                cached = ProjectRow(columns, rowIndex);
+                if (rowIndex < _projectedRows.Length)
+                {
+                    _projectedRows[rowIndex] = cached;
+                }
+            }
+
+            var projected = cached.Value;
             projectedRows.Add(new TextBufferProjectionRow(
                 projected.Cells,
                 wrapped != 0,
@@ -915,10 +1008,15 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
         var cursorY = _cursor.ViewportHasValue != 0
             ? _cursor.ViewportY
             : QueryUInt16Core(4);
-        Buffer.ReplaceViewport(
+        _buffer.ReplaceViewport(
             projectedRows,
             cursorX,
             cursorY);
+        // Every row was consumed, so the next update reports only new changes.
+        ThrowIfFailed(
+            GhosttyNative.RenderStateClean(_renderState.DangerousGetHandle()),
+            "ghostty_render_state_clean");
+        _projectionStale = false;
         SynchronizeMetadata();
     }
 
@@ -928,8 +1026,6 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
         var column = 0;
         var previousWidth = 0;
         int? promptStart = null;
-        var codepointBuffer = new uint[16];
-        var hyperlinkBuffer = new byte[256];
         while (column < columns && GhosttyNative.RowCellsNext(_rowCells.DangerousGetHandle()))
         {
             ulong rawCell = 0;
@@ -959,7 +1055,7 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
                 },
                 IsProtected = GetRawCellBool(rawCell, 8),
                 HyperlinkUri = hasHyperlink
-                    ? GetHyperlinkUri(column, rowIndex, ref hyperlinkBuffer)
+                    ? GetHyperlinkUri(column, rowIndex, ref _hyperlinkBuffer)
                     : null,
                 ShellIntegration = ShellIntegrationKind.None,
             };
@@ -984,12 +1080,12 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
                 continue;
             }
 
-            if (codepointBuffer.Length < graphemeLength)
+            if (_codepointBuffer.Length < graphemeLength)
             {
-                codepointBuffer = new uint[graphemeLength];
+                _codepointBuffer = new uint[graphemeLength];
             }
 
-            fixed (uint* codepoints = codepointBuffer)
+            fixed (uint* codepoints = _codepointBuffer)
             {
                 ThrowIfFailed(
                     GhosttyNative.RowCellsGet(
@@ -999,19 +1095,25 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
                     "get grapheme");
             }
 
-            var rune = Rune.TryCreate(codepointBuffer[0], out var value) ? value : Rune.ReplacementChar;
-            var combining = new StringBuilder();
-            for (var index = 1; index < graphemeLength; index++)
+            var rune = Rune.TryCreate(_codepointBuffer[0], out var value) ? value : Rune.ReplacementChar;
+            string? combining = null;
+            if (graphemeLength > 1)
             {
-                if (Rune.TryCreate(codepointBuffer[index], out var extra))
+                var builder = new StringBuilder();
+                for (var index = 1; index < graphemeLength; index++)
                 {
-                    combining.Append(extra);
+                    if (Rune.TryCreate(_codepointBuffer[index], out var extra))
+                    {
+                        builder.Append(extra);
+                    }
                 }
+
+                combining = builder.Length == 0 ? null : builder.ToString();
             }
 
             var width = wide == 1 ? 2 : 1;
             projected.Rune = rune;
-            projected.CombiningCharacters = combining.Length == 0 ? null : combining.ToString();
+            projected.CombiningCharacters = combining;
             projected.StoredWidth = (byte)width;
             projected.ShellIntegration = semantic switch
             {
@@ -1210,7 +1312,7 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
         var scrollbar = ReadScrollbarCore();
         if (scrollbar.HistoryCount == 0)
         {
-            return Buffer.CreateSnapshot();
+            return _buffer.CreateSnapshot();
         }
 
         var originalOffset = scrollbar.ScrollOffset;
@@ -1219,7 +1321,7 @@ public sealed unsafe class GhosttyTerminalEngine : ITerminalEngine
         for (var top = 0; top <= scrollbar.HistoryCount;)
         {
             ScrollToAbsoluteRow(top);
-            var viewport = Buffer.CreateSnapshot();
+            var viewport = _buffer.CreateSnapshot();
             var firstNewRow = Math.Max(0, nextAbsoluteRow - top);
             for (var row = firstNewRow; row < viewport.Lines.Count; row++)
             {

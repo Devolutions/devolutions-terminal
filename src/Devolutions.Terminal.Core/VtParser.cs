@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Text;
 
 namespace Devolutions.Terminal.Core;
@@ -41,6 +42,11 @@ public sealed class VtParser
     private readonly IVtDispatch _dispatch;
     private readonly int[] _parameters = new int[MaxParameters];
     private readonly bool[] _subparameters = new bool[MaxParameters];
+    private readonly int[] _csiParameters = new int[MaxParameters];
+    private readonly bool[] _csiSubparameters = new bool[MaxParameters];
+    private int _csiDispatchDepth;
+    private readonly Rune[] _runeScratch = new Rune[256];
+    private int _printRunesDepth;
     private bool _nextIsSubparameter;
     private readonly List<byte> _osc = [];
     private readonly List<byte> _apc = [];
@@ -69,10 +75,247 @@ public sealed class VtParser
 
     public void Process(ReadOnlySpan<byte> data)
     {
-        foreach (var value in data)
+        var index = 0;
+        while (index < data.Length)
         {
-            ProcessByte(value);
+            if (_state == State.Ground && _utf8Needed == 0 && IsPrintableAscii(data[index]))
+            {
+                // Hand whole printable-ASCII runs to the dispatcher. Single characters
+                // between escape sequences are common, so only start the vectorized
+                // scan once a second printable byte follows.
+                var run = 1;
+                if (index + 1 < data.Length && IsPrintableAscii(data[index + 1]))
+                {
+                    run = data[index..].IndexOfAnyExceptInRange((byte)0x20, (byte)0x7E);
+                    run = run < 0 ? data.Length - index : run;
+                }
+
+                _dispatch.PrintAscii(data.Slice(index, run));
+                index += run;
+                continue;
+            }
+
+            if (data[index] >= 0xC2 && _state == State.Ground && _utf8Needed == 0)
+            {
+                var consumed = DecodePrintableRun(data[index..]);
+                if (consumed > 0)
+                {
+                    index += consumed;
+                    continue;
+                }
+            }
+
+            if (data[index] == 0x1B && _state == State.Ground && _utf8Needed == 0)
+            {
+                var consumed = TryProcessCsi(data[index..]);
+                if (consumed > 0)
+                {
+                    index += consumed;
+                    continue;
+                }
+            }
+
+            if (data[index] < 0x20 && data[index] is not (0x18 or 0x1A or 0x1B) &&
+                _state == State.Ground && _utf8Needed == 0)
+            {
+                // What ProcessByte does with a C0 control in ground state with no
+                // UTF-8 pending, without its string-state checks: CR and LF end
+                // every line.
+                _dispatch.ExecuteC0(data[index++]);
+                continue;
+            }
+
+            ProcessByte(data[index++]);
         }
+    }
+
+    /// <summary>
+    /// Decodes a run that starts with a well-formed UTF-8 sequence and continues
+    /// with well-formed sequences and short printable-ASCII stretches, and hands it
+    /// to <see cref="IVtDispatch.PrintRunes"/>. Each well-formed sequence is exactly
+    /// what the byte path would decode into one Print, and each printable ASCII byte
+    /// one Print too. The run stops before controls, malformed or split input, and
+    /// long ASCII stretches (left to the ASCII path). Returns the bytes consumed.
+    /// </summary>
+    private int DecodePrintableRun(ReadOnlySpan<byte> data)
+    {
+        // A handler that feeds this parser again must not overwrite the run the
+        // outer call is still printing.
+        var runes = _printRunesDepth == 0 ? _runeScratch : new Rune[_runeScratch.Length];
+        var count = 0;
+        var index = 0;
+        while (index < data.Length && count < runes.Length)
+        {
+            var value = data[index];
+            if (IsPrintableAscii(value))
+            {
+                // One look per ASCII stretch: 16 or more printable bytes go to the
+                // ASCII path, a shorter stretch joins the run whole. Stretches inside
+                // non-ASCII text are short, so a scalar count beats a vector search.
+                var limit = Math.Min(16, data.Length - index);
+                var stretch = 1;
+                while (stretch < limit && IsPrintableAscii(data[index + stretch]))
+                {
+                    stretch++;
+                }
+
+                if (stretch == 16)
+                {
+                    break;
+                }
+
+                stretch = Math.Min(stretch, runes.Length - count);
+                for (var offset = 0; offset < stretch; offset++)
+                {
+                    runes[count++] = new Rune(data[index + offset]);
+                }
+
+                index += stretch;
+                continue;
+            }
+
+            // Two- to four-byte sequences, decoded inline with the validity rules
+            // of the byte path (no overlong forms, no surrogates, nothing past
+            // U+10FFFF); everything else goes through the general decoder.
+            if (value <= 0xDF && value >= 0xC2 && index + 1 < data.Length && (data[index + 1] & 0xC0) == 0x80)
+            {
+                runes[count++] = new Rune(((value & 0x1F) << 6) | (data[index + 1] & 0x3F));
+                index += 2;
+                continue;
+            }
+
+            if (value is >= 0xE0 and <= 0xEF && index + 2 < data.Length &&
+                (data[index + 1] & 0xC0) == 0x80 && (data[index + 2] & 0xC0) == 0x80)
+            {
+                var scalar = ((value & 0x0F) << 12) | ((data[index + 1] & 0x3F) << 6) | (data[index + 2] & 0x3F);
+                if (scalar >= 0x800 && scalar is < 0xD800 or > 0xDFFF)
+                {
+                    runes[count++] = new Rune(scalar);
+                    index += 3;
+                    continue;
+                }
+            }
+
+            if (value is >= 0xF0 and <= 0xF4 && index + 3 < data.Length &&
+                (data[index + 1] & 0xC0) == 0x80 && (data[index + 2] & 0xC0) == 0x80 && (data[index + 3] & 0xC0) == 0x80)
+            {
+                var scalar = ((value & 0x07) << 18) | ((data[index + 1] & 0x3F) << 12) |
+                             ((data[index + 2] & 0x3F) << 6) | (data[index + 3] & 0x3F);
+                if (scalar is >= 0x10000 and <= 0x10FFFF)
+                {
+                    runes[count++] = new Rune(scalar);
+                    index += 4;
+                    continue;
+                }
+            }
+
+            if (value < 0xC2 ||
+                Rune.DecodeFromUtf8(data[index..], out var rune, out var length) != OperationStatus.Done)
+            {
+                break;
+            }
+
+            runes[count++] = rune;
+            index += length;
+        }
+
+        if (count > 0)
+        {
+            _printRunesDepth++;
+            try
+            {
+                _dispatch.PrintRunes(runes.AsSpan(0, count));
+            }
+            finally
+            {
+                _printRunesDepth--;
+            }
+        }
+
+        return index;
+    }
+
+    /// <summary>
+    /// Parses a complete, plain CSI sequence (<c>ESC [</c>, optional private
+    /// marker, digits, ';' and ':' separators, final byte) in one pass instead of
+    /// feeding each byte through the state machine. Parameters go through the same
+    /// helpers and <see cref="DispatchCsi"/> as the byte path. Anything else
+    /// (intermediates, embedded controls, ignored or overflowing sequences, or a
+    /// sequence that continues in the next chunk) returns 0 without consuming
+    /// input, and the state machine handles it.
+    /// </summary>
+    private int TryProcessCsi(ReadOnlySpan<byte> data)
+    {
+        if (!_ansiMode || data.Length < 3 || data[1] != (byte)'[')
+        {
+            return 0;
+        }
+
+        var start = 2;
+        var privateMarker = data[2] is >= 0x3C and <= 0x3F ? data[2] : (byte)0;
+        if (privateMarker != 0)
+        {
+            start = 3;
+        }
+
+        var final = -1;
+        var separators = 0;
+        for (var index = start; index < data.Length; index++)
+        {
+            var value = data[index];
+            if (value is >= (byte)'0' and <= (byte)'9')
+            {
+                continue;
+            }
+
+            if (value is (byte)';' or (byte)':')
+            {
+                separators++;
+                continue;
+            }
+
+            if (IsFinal(value))
+            {
+                final = index;
+            }
+
+            break;
+        }
+
+        // A separator pushing past the limit puts the byte path in CsiIgnore and
+        // drops the sequence. An overflowing final push behaves the same in both
+        // paths (DispatchCsi still dispatches), so only that case is excluded.
+        if (final < 0 || separators > MaxParameters)
+        {
+            return 0;
+        }
+
+        // The state after ESC and '[' (and the private marker, if any).
+        ClearSequence();
+        _state = State.CsiParam;
+        _privateMarker = privateMarker;
+        for (var index = start; index < final; index++)
+        {
+            var value = data[index];
+            if (value == (byte)';')
+            {
+                PushParameter();
+                _nextIsSubparameter = false;
+            }
+            else if (value == (byte)':')
+            {
+                PushParameter();
+                _nextIsSubparameter = true;
+            }
+            else
+            {
+                _currentParameter = _currentParameter < 0 ? 0 : _currentParameter;
+                _currentParameter = Math.Min((_currentParameter * 10) + (value - '0'), 65535);
+            }
+        }
+
+        DispatchCsi(data[final]);
+        return final + 1;
     }
 
     public void Reset()
@@ -509,15 +752,35 @@ public sealed class VtParser
         var parameterCount = _parameterCount;
         var intermediate = _intermediate;
         var privateMarker = _privateMarker;
-        var parameters = _parameters.AsSpan(0, parameterCount).ToArray();
-        var subparameters = _subparameters.AsSpan(0, parameterCount).ToArray();
+        // Copies keep the dispatched values stable if the handler resets the
+        // parser. Reused scratch arrays avoid per-sequence heap arrays and the
+        // zeroing a stackalloc pays; a handler that feeds this parser again
+        // gets fresh copies so it cannot overwrite the outer sequence.
+        var nested = _csiDispatchDepth > 0;
+        var parameters = nested ? new int[parameterCount] : _csiParameters;
+        var subparameters = nested ? new bool[parameterCount] : _csiSubparameters;
+        // Usually a handful of values: a loop beats a Memmove call.
+        for (var index = 0; index < parameterCount; index++)
+        {
+            parameters[index] = _parameters[index];
+            subparameters[index] = _subparameters[index];
+        }
         ClearSequence();
-        _dispatch.CsiDispatch(
-            (char)final,
-            parameters,
-            subparameters,
-            intermediate,
-            privateMarker);
+        _csiDispatchDepth++;
+        try
+        {
+            _dispatch.CsiDispatch(
+                (char)final,
+                parameters.AsSpan(0, parameterCount),
+                subparameters.AsSpan(0, parameterCount),
+                intermediate,
+                privateMarker);
+        }
+        finally
+        {
+            _csiDispatchDepth--;
+        }
+
         if (enterVt52)
         {
             _ansiMode = false;
@@ -903,13 +1166,18 @@ public sealed class VtParser
 
     private void ClearSequence()
     {
+        // PushParameter sets flags only below the count, so only those can be set.
+        for (var index = 0; index < _parameterCount; index++)
+        {
+            _subparameters[index] = false;
+        }
+
         _parameterCount = 0;
         _currentParameter = -1;
         _intermediate = 0;
         _privateMarker = 0;
         _escIntermediateCount = 0;
         _nextIsSubparameter = false;
-        Array.Clear(_subparameters);
     }
 
     private void AppendEscIntermediate(byte value)
@@ -946,4 +1214,6 @@ public sealed class VtParser
     }
 
     private static bool IsFinal(byte value) => value is >= 0x40 and <= 0x7E;
+
+    private static bool IsPrintableAscii(byte value) => value is >= 0x20 and <= 0x7E;
 }

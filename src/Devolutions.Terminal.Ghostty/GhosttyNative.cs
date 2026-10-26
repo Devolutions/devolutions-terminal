@@ -108,6 +108,10 @@ internal static unsafe partial class GhosttyNative
         nint state,
         nint terminal);
 
+    [LibraryImport(LibraryName, EntryPoint = "ghostty_render_state_clean")]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial GhosttyResult RenderStateClean(nint state);
+
     [LibraryImport(LibraryName, EntryPoint = "ghostty_render_state_get")]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial GhosttyResult RenderStateGet(

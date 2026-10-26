@@ -378,16 +378,89 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
             Buffer.WrapPending = false;
         }
 
-        var advance = Buffer.GetPrintAdvance(rune);
-        if (InsertMode && advance > 0)
+        int advance;
+        if (InsertMode)
         {
-            Buffer.InsertCharacters(advance);
+            // IRM shifts the line by the advance before the glyph is stored.
+            advance = Buffer.GetPrintAdvance(rune);
+            if (advance > 0)
+            {
+                Buffer.InsertCharacters(advance);
+            }
+
+            Buffer.Print(rune, AutoWrap);
+        }
+        else
+        {
+            advance = Buffer.PrintAndGetAdvance(rune, AutoWrap);
         }
 
-        Buffer.Print(rune, AutoWrap);
         if (advance > 0)
         {
             _lastPrintedRune = rune;
+            _hasLastPrintedRune = true;
+        }
+    }
+
+    // Differential tests turn this off to get the per-character reference path.
+    internal bool BulkPrintEnabled { get; set; } = true;
+
+    void IVtDispatch.PrintAscii(ReadOnlySpan<byte> text)
+    {
+        // Bulk storage applies only when Print would store each byte unchanged: no
+        // VT52 or DEC Special Graphics/DRCS remapping, single shift, insert mode or
+        // DECAWM-off overwrite. A lone byte may still join a Prepend; the buffer
+        // reports that so REP repeats the same rune as the per-byte path.
+        var gset = _gsets[_gl];
+        if (!BulkPrintEnabled ||
+            !AnsiMode ||
+            !AutoWrap ||
+            InsertMode ||
+            _singleShift >= 0 ||
+            string.Equals(gset, "0", StringComparison.Ordinal) ||
+            (_drcsDesignator is not null && string.Equals(gset, _drcsDesignator, StringComparison.Ordinal)))
+        {
+            foreach (var value in text)
+            {
+                ((IVtDispatch)this).Print(new Rune(value));
+            }
+
+            return;
+        }
+
+        if (Buffer.PrintAscii(text))
+        {
+            _lastPrintedRune = new Rune(text[^1]);
+            _hasLastPrintedRune = true;
+        }
+    }
+
+    void IVtDispatch.PrintRunes(ReadOnlySpan<Rune> runes)
+    {
+        // The same conditions as PrintAscii, plus DRCS on the GR set, which maps
+        // the Latin-1 range: with none of them every rune is stored unchanged.
+        var gl = _gsets[_gl];
+        if (!BulkPrintEnabled ||
+            !AnsiMode ||
+            !AutoWrap ||
+            InsertMode ||
+            _singleShift >= 0 ||
+            string.Equals(gl, "0", StringComparison.Ordinal) ||
+            (_drcsDesignator is not null &&
+             (string.Equals(gl, _drcsDesignator, StringComparison.Ordinal) ||
+              string.Equals(_gsets[_gr], _drcsDesignator, StringComparison.Ordinal))))
+        {
+            foreach (var rune in runes)
+            {
+                ((IVtDispatch)this).Print(rune);
+            }
+
+            return;
+        }
+
+        if (Buffer.PrintRunes(runes, out var lastAdvanced))
+        {
+            _lastPrintedRune = lastAdvanced;
             _hasLastPrintedRune = true;
         }
     }
