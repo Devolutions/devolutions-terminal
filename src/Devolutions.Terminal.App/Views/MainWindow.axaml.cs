@@ -188,6 +188,20 @@ public partial class MainWindow :
             {
                 UpdateFullscreenChrome();
             }
+
+            // Restoring from maximized brings back the bounds the OS remembered,
+            // which may no longer fit the displays.
+            if (args.Property == WindowStateProperty && WindowState == WindowState.Normal)
+            {
+                Dispatcher.UIThread.Post(FitNormalBoundsToScreens, DispatcherPriority.Background);
+            }
+        };
+        Screens.Changed += (_, _) =>
+        {
+            // Windows moves windows off a removed display shortly after reporting
+            // the change; fit again once that has settled.
+            Dispatcher.UIThread.Post(FitNormalBoundsToScreens, DispatcherPriority.Background);
+            DispatcherTimer.RunOnce(FitNormalBoundsToScreens, TimeSpan.FromSeconds(1));
         };
         AddHandler(KeyDownEvent, OnWindowKeyDown, RoutingStrategies.Tunnel);
         AddHandler(TextInputEvent, OnWindowTextInput, RoutingStrategies.Tunnel);
@@ -342,6 +356,12 @@ public partial class MainWindow :
                 ? 0
                 : 40;
             Height = Math.Max(240, (rows * cell.Height) + 16 + titleBarHeight);
+        }
+
+        // Without a requested position the OS places the window on a display.
+        if (activation.PositionX is not null && activation.PositionY is not null)
+        {
+            FitNormalBoundsToScreens();
         }
 
         if (activation.LaunchMode.HasFlag(TerminalWindowLaunchMode.Fullscreen))
@@ -3935,6 +3955,60 @@ public partial class MainWindow :
         RebuildTabs();
     }
 
+    /// <summary>
+    /// Fits the normal-state bounds to the displays that exist now (see
+    /// <see cref="WindowPlacement.Fit"/>). A normal window moves and shrinks at
+    /// once; a maximized or full-screen one keeps its state, and the saved normal
+    /// bounds it would restore to are fitted instead. Minimized windows sit at an
+    /// off-screen placeholder position and are left alone.
+    /// </summary>
+    private void FitNormalBoundsToScreens()
+    {
+        if (WindowState == WindowState.Minimized)
+        {
+            return;
+        }
+
+        var workAreas = Screens.All.Select(static screen => screen.WorkingArea).ToArray();
+        var normal = WindowState == WindowState.Normal;
+        if (workAreas.Length == 0 || (!normal && _normalPosition is null))
+        {
+            return;
+        }
+
+        var position = normal ? Position : _normalPosition!.Value;
+        var width = normal ? (double.IsNaN(Width) ? Bounds.Width : Width) : _normalSize.Width;
+        var height = normal ? (double.IsNaN(Height) ? Bounds.Height : Height) : _normalSize.Height;
+        var scale = ScalingAt(position);
+        var bounds = new PixelRect(
+            position.X,
+            position.Y,
+            Math.Max(1, (int)Math.Round(width * scale)),
+            Math.Max(1, (int)Math.Round(height * scale)));
+        var fitted = WindowPlacement.Fit(bounds, workAreas);
+        if (fitted == bounds)
+        {
+            return;
+        }
+
+        var fittedScale = ScalingAt(fitted.Position);
+        _normalPosition = fitted.Position;
+        _normalSize = new WindowSizeState
+        {
+            Width = fitted.Width / fittedScale,
+            Height = fitted.Height / fittedScale,
+        };
+        if (normal)
+        {
+            Position = fitted.Position;
+            Width = _normalSize.Width;
+            Height = _normalSize.Height;
+        }
+
+        double ScalingAt(PixelPoint point) =>
+            Screens.ScreenFromPoint(point)?.Scaling ?? Screens.Primary?.Scaling ?? 1;
+    }
+
     private void CaptureNormalWindowBounds()
     {
         if (WindowState != WindowState.Normal)
@@ -4251,6 +4325,14 @@ public partial class MainWindow :
             };
             Width = _normalSize.Width;
             Height = _normalSize.Height;
+        }
+
+        // A saved position may belong to a display that is gone; fit before
+        // maximizing, so the window maximizes on a display that exists. Without
+        // one the OS places the window on a display.
+        if (_normalPosition is not null)
+        {
+            FitNormalBoundsToScreens();
         }
 
         switch (state?.LaunchMode)
