@@ -135,6 +135,11 @@ Methodology:
   - A sample replays the corpus into the same engine until at least `--min-ms`
     (500 ms by default) has elapsed, so fast targets are not dominated by
     timer noise.
+  - Laptop CPUs leave turbo a few seconds into sustained load: on the machine
+    below, throughput falls about 3x after ~2.7 s and stays there, whatever
+    the engine does. With 500 ms samples, runs land on both sides of that drop
+    and spreads reach 50–180%. Samples of ~3 s (`--min-ms 3000`, or the
+    script's `-MinMs 3000`) all run at the sustained clock.
 - **Conservative verdict.**
   - `faster` only when builtin's *slowest* run beats Ghostty's *fastest*.
   - `slower` when the reverse holds.
@@ -169,6 +174,7 @@ Workloads (`--workloads a,b,...`):
 ```powershell
 pwsh scripts/Invoke-TerminalBenchmarks.ps1                  # vt + render, results in artifacts/bench/<timestamp>
 pwsh scripts/Invoke-TerminalBenchmarks.ps1 -Quick           # fast local signal
+pwsh scripts/Invoke-TerminalBenchmarks.ps1 -Suite vt -MinMs 3000                           # ~3 s samples: stable on CPUs that leave turbo under load
 pwsh scripts/Invoke-TerminalBenchmarks.ps1 -Baseline artifacts/bench/<previous>/vt.json   # fails if builtin/ghostty-vt drops >15% on identical inputs
 pwsh scripts/Invoke-TerminalBenchmarks.ps1 -RequireBeatGhostty                             # fails unless builtin wins every vt workload
 pwsh scripts/Invoke-TerminalBenchmarks.ps1 -GhosttyBench <path>\ghostty-bench.exe          # also replays the corpora through upstream +terminal-stream
@@ -198,17 +204,19 @@ lists the full set of gates.
 
 Setup for these numbers:
 
-- One Windows 11 x64 workstation (24 logical CPUs, AVX2), .NET 10.0.13 (JIT,
-  tiered compilation off), and the pinned `libghostty-vt` (ReleaseFast).
-- 120x30 grid, 16 KiB chunks, 8 MiB per workload, 7 timed runs plus 1 warmup.
+- One Windows 11 x64 laptop (Intel Core Ultra 9 285HX, 24 cores, AVX2),
+  .NET 10.0.14 (JIT, tiered compilation off), and the pinned `libghostty-vt`
+  (ReleaseFast).
+- 120x30 grid, 16 KiB chunks, 8 MiB per workload, 7 timed runs plus 1 warmup,
+  samples of at least 3 s.
 - Each workload ran in its own process, via:
 
   ```powershell
-  pwsh scripts/Invoke-TerminalBenchmarks.ps1 -Suite vt,render
+  pwsh scripts/Invoke-TerminalBenchmarks.ps1 -Suite vt -MinMs 3000
   ```
 
-This machine's absolute speed drifted by up to 2.5x between invocations
-(Ghostty itself moved from ~540 to ~1,600 MB/s on `light-cells`). So read the
+This machine's absolute speed drifts by up to 2.5x between invocations,
+mostly with the CPU's turbo state (see *Fair timing* above). So read the
 **builtin / ghostty-vt ratio**, which is measured within each run, and treat
 anything within about ±10% of 1.0 as a tie. Throughput is the median MB/s.
 
@@ -216,19 +224,24 @@ anything within about ±10% of 1.0 as a tie. Throughput is the median MB/s.
 
 | Workload | builtin | ghostty-vt | ghostty (DT) | ratio | verdict | builtin alloc / MiB | screens |
 | --- | ---: | ---: | ---: | ---: | --- | ---: | --- |
-| ascii | 1,144 | 922 | 411 | **1.24x** | overlap | 31 KB | identical |
-| ascii-lines | 879 | 741 | 361 | **1.19x** | **faster** | 40 KB | identical |
-| light-cells | 2,024 | 1,647 | 60 | **1.23x** | **faster** | 0 | identical |
-| scrolling | 42.5 | 31.9 | 29.5 | **1.33x** | overlap | 0.7 MB | identical |
-| dense-cells | 207 | 144 | 53 | **1.44x** | **faster** | 0 | identical |
-| styled | 78.4 | 26.9 | 24.8 | **2.91x** | **faster** | 5.4 MB | 1 row differs |
-| osc | 124 | 27.0 | 25.1 | **4.59x** | **faster** | 6.9 MB | identical |
-| mixed | 667 | 362 | 227 | **1.84x** | **faster** | 54 KB | identical |
-| scroll-region | 641 | 669 | 56 | 0.96x | overlap | 0 | identical |
-| cursor-motion | 152 | 168 | 94 | 0.90x | slower | 33 KB | identical |
-| emoji | 588 | 736 | 267 | 0.80x | overlap | 61 KB | identical |
-| utf8 | 61.3 | 79.6 | 70.1 | 0.77x | slower | 8.7 MB | identical |
-| cjk | 458 | 596 | 299 | 0.77x | slower | 78 KB | identical |
+| osc | 147 | 25.3 | 23.5 | **5.82x** | **faster** | 6.7 MB | identical |
+| styled | 45.9 | 18.0 | 13.2 | **2.54x** | **faster** | 1.4 MB | 1 row differs |
+| mixed | 787 | 366 | 229 | **2.15x** | **faster** | 8 KB | identical |
+| dense-cells | 262 | 138 | 51 | **1.90x** | **faster** | 0 | identical |
+| scrolling | 56.5 | 32.6 | 31.9 | **1.73x** | **faster** | 104 KB | identical |
+| utf8 | 80.1 | 59.0 | 69.3 | **1.36x** | overlap | 92 KB | identical |
+| light-cells | 2,265 | 1,737 | 62 | **1.30x** | **faster** | 0 | identical |
+| emoji* | 816 | 672 | 301 | **1.21x** | **faster** | 7 KB | identical |
+| ascii | 1,145 | 971 | 448 | **1.18x** | **faster** | 5 KB | identical |
+| ascii-lines | 716 | 626 | 286 | **1.14x** | overlap | 9 KB | identical |
+| cjk* | 583 | 522 | 237 | **1.12x** | **faster** | 10 KB | identical |
+| scroll-region | 865 | 782 | 58 | **1.11x** | **faster** | 0 | identical |
+| cursor-motion | 188 | 172 | 95 | **1.09x** | **faster** | 32 KB | identical |
+
+\* From a later invocation of those two workloads alone. In the full run they
+landed in a noisy stretch (spreads over 50%) and measured 0.98x and 1.22x.
+Other quiet runs of the same code measured 1.07–1.21x on cjk and 1.18x on
+emoji.
 
 `ghostty (DT)` skips projection without `--frame-kb`. The one-row difference in
 `styled` is a behavior difference, not a measurement artifact: builtin drops a
@@ -237,21 +250,23 @@ combining mark that follows a space, and Ghostty keeps it.
 How builtin got here, as the median builtin/ghostty-vt ratio per round (each
 round measured against its own in-run Ghostty control):
 
-| Workload | `dc1cd26` | round 1 | round 2 (packed cells) | round 3 | round 4 |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| ascii | 0.009 | 0.20 | 0.55 | 1.21 | 1.24 |
-| ascii-lines | 0.009 | 0.20 | 0.50 | 1.13 | 1.19 |
-| light-cells | 0.009 | 0.32 | 0.48 | 1.20 | 1.23 |
-| scrolling | 0.015 | 0.14 | 0.40 | 1.11 | 1.33 |
-| dense-cells | 0.42 | 0.63 | 0.62 | 1.57 | 1.44 |
-| styled | 0.30 | 1.33 | 1.14 | 2.82 | 2.91 |
-| osc | 0.29 | 2.60 | 4.52 | 4.57 | 4.59 |
-| mixed | 0.03 | 0.39 | 0.45 | 1.56 | 1.84 |
-| scroll-region | 0.018 | 0.22 | 0.34 | 0.90 | 0.96 |
-| cursor-motion | 0.11 | 0.23 | 0.17 | 0.94 | 0.90 |
-| utf8 | 0.10 | 0.36 | 0.27 | 0.57 | 0.77 |
-| cjk | — | — | — | 0.53 | 0.77 |
-| emoji | — | — | — | 0.50 | 0.80 |
+| Workload | `dc1cd26` | round 1 | round 2 (packed cells) | round 3 | round 4 (`f45b95b`) | round 5 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| ascii | 0.009 | 0.20 | 0.55 | 1.21 | 1.24 | 1.18 |
+| ascii-lines | 0.009 | 0.20 | 0.50 | 1.13 | 1.19 | 1.14 |
+| light-cells | 0.009 | 0.32 | 0.48 | 1.20 | 1.23 | 1.30 |
+| scrolling | 0.015 | 0.14 | 0.40 | 1.11 | 1.33 | 1.73 |
+| dense-cells | 0.42 | 0.63 | 0.62 | 1.57 | 1.44 | 1.90 |
+| styled | 0.30 | 1.33 | 1.14 | 2.82 | 2.91 | 2.54 |
+| osc | 0.29 | 2.60 | 4.52 | 4.57 | 4.59 | 5.82 |
+| mixed | 0.03 | 0.39 | 0.45 | 1.56 | 1.84 | 2.15 |
+| scroll-region | 0.018 | 0.22 | 0.34 | 0.90 | 0.96 | 1.11 |
+| cursor-motion | 0.11 | 0.23 | 0.17 | 0.94 | 0.90 | 1.09 |
+| utf8 | 0.10 | 0.36 | 0.27 | 0.57 | 0.77 | 1.36 |
+| cjk | — | — | — | 0.53 | 0.77 | 1.12 |
+| emoji | — | — | — | 0.50 | 0.80 | 1.21 |
+
+Round 5 was measured with 3 s samples; earlier rounds used 500 ms samples.
 
 The `-Baseline` gate flagged real regressions twice:
 
@@ -260,12 +275,15 @@ The `-Baseline` gate flagged real regressions twice:
   the short-ASCII path.
 
 Each was confirmed with an interleaved A/B build and fixed before moving on.
-Moves of about ±10% between rounds (dense-cells and cursor-motion from round 3
-to round 4, for example) are within this machine's noise.
+Round 5 passed the gate after each change. Moves of about ±10% between rounds
+(ascii and ascii-lines into round 5, for example) are within this machine's
+noise. styled's 2.54x comes from a run with a 136% spread; single-workload
+runs of the same code measured 3.39–3.61x.
 
 ### DT's Ghostty mode vs raw `libghostty-vt`, with frames
 
 These numbers use `--frame-kb 256`, so a projection is taken every 256 KiB.
+They were measured in round 4; round 5 did not change the Ghostty engine.
 
 | Workload | ghostty (DT) before | after | ghostty-vt | ratio before → after |
 | --- | ---: | ---: | ---: | ---: |
@@ -280,7 +298,7 @@ per-cell P/Invoke projection still dominates.
 
 ### Frame preparation and CPU paint
 
-`render`, 120x30, median p50 / p95:
+`render`, 120x30, median p50 / p95, measured in round 4:
 
 | Stage | before packed cells | now |
 | --- | --- | --- |
@@ -298,14 +316,18 @@ No Ghostty counterpart exists on Windows.
 
 Every fast path is checked against the per-character path by differential
 tests (`AsciiFastPathTests`, `CsiFastPathTests`, `CellRowModelTests`,
-`PackedCellStorageTests`). Each new branch was also checked by deliberately
-breaking it and confirming a test fails.
+`PackedCellStorageTests`, `CombiningTableTests`). Each new branch was also
+checked by deliberately breaking it and confirming a test fails.
 
 - **Packed, reference-free storage** (`CellRow`, `PackedCell`).
   - A cell is 16 bytes with no GC references, down from about 40 with two
     `string?` fields.
-  - Combining text and hyperlinks live in per-line side arrays that exist only
-    while needed and are freed when the line is recycled.
+  - Hyperlinks live in a per-line side array that exists only while needed.
+  - Combining text is interned per buffer (`CombiningTable`), and lines store
+    int IDs. A cluster seen before costs no allocation, a recycled line keeps
+    its ID array, and the table compacts so ever-new clusters cannot grow it
+    without bound. This took utf8 from 9.4 MB to under 0.1 MB allocated per
+    MiB.
   - The public `Cell` and `TermColor` are unchanged, and every value round-trips
     losslessly.
 - **Logically blank cells are never written.**
@@ -318,17 +340,30 @@ breaking it and confirming a test fails.
   - **ASCII:** the parser hands whole printable-ASCII runs to
     `IVtDispatch.PrintAscii`. They are stored a row segment at a time, two
     64-bit (or, with AVX2, two 256-bit per four cells) stores per cell batch.
-  - **UTF-8 runs:** well-formed UTF-8 runs (2–4 byte sequences decoded inline)
-    go to `IVtDispatch.PrintRunes`.
+  - **UTF-8 runs:** well-formed UTF-8 runs go to `IVtDispatch.PrintRunes`.
+    Runs of 3- or 4-byte sequences (CJK, emoji) are decoded four at a time
+    from 16-byte `Vector128` loads, with the scalar decoder's validity rules
+    (no overlong forms, surrogates or values past U+10FFFF); anything else
+    falls back to the scalar decoder. On CJK this decodes about 3x faster.
   - **Grapheme joins:** precomputed tables for planes 0 and 1 rule out joins,
     so runes that cannot join are stored a segment at a time. That includes
-    emoji after a cell without a trailing ZWJ.
+    emoji after a cell without a trailing ZWJ. A zero-width rune with no join
+    property (a combining accent, ZWJ) goes straight into the previous cell's
+    combining text.
   - **Rows without wide glyphs:** a conservative per-row "may hold wide cells"
     flag means classifying and storing happen in one pass, with no clearing
-    around wide glyphs. Every freshly recycled scrollback line qualifies.
-- **CSI fast path.** A complete plain CSI sequence is parsed in one pass, then
-  goes through the same `DispatchCsi` as the byte path. Parameters are copied
-  into reused arrays.
+    around wide glyphs. Every freshly recycled scrollback line qualifies. That
+    pass ORs each rune into precomputed template bits and writes one 16-byte
+    store per cell, with widths from a table where ambiguous widths are already
+    resolved.
+  - **Short writes:** the packed print templates are cached and rebuilt only
+    when the attributes, protection or shell-integration state change, and a
+    single printable byte between escape sequences is one store.
+- **CSI fast path.** A complete plain CSI sequence is parsed in one pass,
+  straight into the arrays the dispatcher receives, and the parser calls the
+  engine directly instead of through `IVtDispatch`. Sequences with no private
+  marker or intermediate byte skip the special cases and go straight to the
+  switch on the final byte.
 - **C0 fast path.** CR, LF and other controls in ground state go straight to
   `ExecuteC0` instead of through the string-state checks.
 - **Scroll regions** rotate line references with `Array.Copy`, not one
@@ -336,36 +371,36 @@ breaking it and confirming a test fails.
 
 ### What still separates builtin from Ghostty
 
-- **Non-ASCII text** (`cjk`, `emoji`, `utf8`: about 0.8x). On CJK, per scalar:
+Builtin now leads on every workload. The closest leads, `cursor-motion`,
+`scroll-region` and `cjk` (1.09–1.12x), sit near the ±10% band of this
+machine's noise, and `ascii-lines` and `utf8` still get `overlap` verdicts
+from run-to-run spread. Timed stage by stage on CJK after round 5 (one engine
+reused with history full, per scalar, all stages in one process):
 
-  | Stage | Cost |
-  | --- | --- |
-  | Builtin: decode | ~2.0 ns |
-  | Builtin: storage (two 16-byte cells per wide character) | ~3.6 ns |
-  | Builtin: dispatch | ~0.6 ns |
-  | Ghostty: everything | ~5 ns |
+| Stage | Cost |
+| --- | --- |
+| UTF-8 decode, block path | ~0.5–1.0 ns |
+| Parser per-line work (CR/LF dispatch, run setup) | ~0.7–1 ns |
+| Cell stores (two 16-byte cells per wide character) | ~2 ns |
+| Buffer CR/LF, scrolling and line reuse | ~0.7 ns |
 
-  What was tried and measured:
-  - **Runtime SIMD transcoder.** Swapping the scalar decoder for the runtime's
-    SIMD `Utf8.ToUtf16` (plus a UTF-16-to-rune pass) was *slower* at these run
-    lengths, and was reverted.
-  - **Unchecked scalar decoding.** A `ref`-based decoder with unchecked `Rune`
-    construction measured the same as the indexed one.
-
-  Closing the rest needs either a purpose-built SIMD UTF-8 decoder or 8-byte
-  cells.
-- **cursor-motion and scroll-region** are ties within noise (0.90–0.96x). Per
-  escape sequence, builtin still pays for an interface call into the engine
-  and that call's own checks before each short write.
-- **Cell size.** Packed cells are 16 bytes against Ghostty's 8, so a cleared
-  or copied row moves twice the memory. Getting to 8 bytes means interning
-  styles, which is a larger change.
+- **Parser per-line overhead** now costs about as much as the decode. Each
+  CR and LF still goes through an interface call, and each line's run of
+  characters pays its setup once.
+- **Cell size.** Packed cells are 16 bytes against Ghostty's 8, so storing,
+  clearing or copying a row moves twice the memory. Getting to 8 bytes means
+  interning styles, which is a larger change.
+- **What did not help.** Prefetching the scrollback lines about to be reused
+  measured slower: with history full, steady-state throughput is the same at
+  100 and 9,000 lines, so cold recycled lines are not a bottleneck.
 
 **Variance.** Within isolated processes the ratio repeats to about ±10% on
-this machine. In one long process running every workload, ratios drifted by
-up to 50%, because heap state carried over between workloads. For that reason
-the script runs one process per workload, and `-Baseline` only compares
-workloads with the same SHA-256 and gates on the ratio, not on absolute MB/s.
+this machine with 3 s samples. With 500 ms samples, runs straddle the CPU's
+turbo drop and single workloads swing by 50% or more. In one long process
+running every workload, ratios also drifted by up to 50%, because heap state
+carried over between workloads. For that reason the script runs one process
+per workload, and `-Baseline` only compares workloads with the same SHA-256
+and gates on the ratio, not on absolute MB/s.
 
 ## Definition of "matches or beats Ghostty"
 
