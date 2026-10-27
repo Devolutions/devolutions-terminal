@@ -452,6 +452,30 @@ internal sealed class CellRow
         }
     }
 
+    /// <summary>
+    /// Equivalent to <see cref="WriteAscii(int, ReadOnlySpan{byte}, PackedCell, string?)"/>
+    /// with the single byte <paramref name="value"/>.
+    /// </summary>
+    public void StoreAscii(int x, byte value, PackedCell template, string? hyperlink)
+    {
+        PrepareWrite(x, 1);
+        _cells[x] = template.WithRune(new Rune(value));
+        if (_combining is not null)
+        {
+            _combining[x] = null;
+        }
+
+        if (hyperlink is not null)
+        {
+            _hyperlinks ??= new string?[_cells.Length];
+            _hyperlinks[x] = hyperlink;
+        }
+        else if (_hyperlinks is not null)
+        {
+            _hyperlinks[x] = null;
+        }
+    }
+
     public void CopyTo(int sourceIndex, CellRow destination, int destinationIndex, int count)
     {
         if (count <= 0)

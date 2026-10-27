@@ -70,6 +70,8 @@ public sealed class TextBuffer
     private readonly int _historySize;
     private bool[] _tabStops;
     private int _scrollOffset;
+    private CellAttributes _currentAttributes = CellAttributes.Default;
+    private bool _currentProtection;
     private ShellIntegrationKind _shellIntegration;
     private ShellMark? _activeMark;
     private bool _activeMarkHasOutput;
@@ -115,8 +117,26 @@ public sealed class TextBuffer
     public int TotalLines => _lines.Count;
     public int HistoryCount => ViewportStart;
     public long CoordinateVersion { get; private set; }
-    public CellAttributes CurrentAttributes { get; set; } = CellAttributes.Default;
-    public bool CurrentProtection { get; set; }
+    public CellAttributes CurrentAttributes
+    {
+        get => _currentAttributes;
+        set
+        {
+            _currentAttributes = value;
+            InvalidatePrintTemplates();
+        }
+    }
+
+    public bool CurrentProtection
+    {
+        get => _currentProtection;
+        set
+        {
+            _currentProtection = value;
+            InvalidatePrintTemplates();
+        }
+    }
+
     public string? CurrentHyperlinkUri { get; set; }
     public int SavedCursorX { get; set; }
     public int SavedCursorY { get; set; }
@@ -470,8 +490,29 @@ public sealed class TextBuffer
             index = 1;
         }
 
-        var template = PackedCell.From(new Rune(' '), CurrentAttributes, CurrentProtection, false, 1, _shellIntegration);
+        var template = AsciiTemplate();
         var hyperlink = CurrentHyperlinkUri;
+        if (index == text.Length - 1 && !WrapPending)
+        {
+            // A lone byte that fits (one between escape sequences, or the y of
+            // `yes`): what the loop below does for it, as a single store.
+            var line = GetLiveLine(CursorY);
+            var effectiveColumns = RightBound(line) + 1;
+            if (CursorX < effectiveColumns)
+            {
+                var row = line.Cells;
+                ClearGlyphAt(row, CursorX);
+                row.StoreAscii(CursorX, text[index], template, hyperlink);
+                if (++CursorX >= effectiveColumns)
+                {
+                    CursorX = effectiveColumns - 1;
+                    WrapPending = true;
+                }
+
+                return true;
+            }
+        }
+
         while (index < text.Length)
         {
             if (WrapPending)
@@ -673,32 +714,63 @@ public sealed class TextBuffer
         return advanced;
     }
 
-    // Packed cells for runes stored by PrintRunes, and the narrow and wide ones
-    // without their rune for PackedCell.StoreWithRune. The narrow one is packed per
-    // call (a few integer operations) and doubles as the cache key: the others are
-    // derived again only when it changes.
+    // Packed cells stored by PrintAscii and PrintRunes: the ASCII (narrow) cell,
+    // the wide and continuation cells, and the narrow and wide ones without their
+    // rune for PackedCell.StoreWithRune. They depend only on the current
+    // attributes, protection and shell-integration state, whose setters mark them
+    // stale. The ASCII one is rebuilt apart from the rest, so a style change before
+    // every ASCII cell does not also pay for the rune templates.
+    private PackedCell _asciiTemplate;
+    private bool _asciiTemplateStale = true;
     private PackedCell _narrowTemplate;
     private PackedCell _wideTemplate;
     private PackedCell _continuationTemplate;
     private Vector128<ulong> _narrowBits;
     private Vector128<ulong> _wideBits;
-    private bool _templatesBuilt;
+    private bool _runeTemplatesStale = true;
     private readonly byte[] _segmentWidths = new byte[256];
+
+    private void InvalidatePrintTemplates()
+    {
+        _asciiTemplateStale = true;
+        _runeTemplatesStale = true;
+    }
+
+    private void SetShellIntegration(ShellIntegrationKind kind)
+    {
+        _shellIntegration = kind;
+        InvalidatePrintTemplates();
+    }
+
+    private PackedCell CurrentTemplate() =>
+        PackedCell.From(new Rune(' '), _currentAttributes, _currentProtection, false, 1, _shellIntegration);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private PackedCell AsciiTemplate()
+    {
+        if (_asciiTemplateStale)
+        {
+            _asciiTemplate = CurrentTemplate();
+            _asciiTemplateStale = false;
+        }
+
+        return _asciiTemplate;
+    }
 
     private void UpdateRuneTemplates()
     {
-        var narrow = PackedCell.From(new Rune(' '), CurrentAttributes, CurrentProtection, false, 1, _shellIntegration);
-        if (_templatesBuilt && narrow.SameBits(_narrowTemplate))
+        if (!_runeTemplatesStale)
         {
             return;
         }
 
+        var narrow = CurrentTemplate();
         _narrowTemplate = narrow;
         _wideTemplate = narrow.WithWidth(2, isWideContinuation: false);
         _continuationTemplate = narrow.WithWidth(0, isWideContinuation: true);
         _narrowBits = narrow.RuneFreeBits;
         _wideBits = _wideTemplate.RuneFreeBits;
-        _templatesBuilt = true;
+        _runeTemplatesStale = false;
     }
 
     /// <summary>
@@ -1695,7 +1767,7 @@ public sealed class TextBuffer
         SavedAttributes = CellAttributes.Default;
         SavedProtection = false;
         CurrentHyperlinkUri = null;
-        _shellIntegration = ShellIntegrationKind.None;
+        SetShellIntegration(ShellIntegrationKind.None);
         _activeMark = null;
         _activeMarkHasOutput = false;
         _pendingPrepend = null;
@@ -1765,7 +1837,7 @@ public sealed class TextBuffer
     {
         if (_activeMark is not null)
         {
-            _shellIntegration = ShellIntegrationKind.Prompt;
+            SetShellIntegration(ShellIntegrationKind.Prompt);
             return;
         }
 
@@ -1773,25 +1845,25 @@ public sealed class TextBuffer
         _activeMark = new ShellMark(CursorX);
         line.Marks.Add(_activeMark);
         _activeMarkHasOutput = false;
-        _shellIntegration = ShellIntegrationKind.Prompt;
+        SetShellIntegration(ShellIntegrationKind.Prompt);
     }
 
     public void StartCommand()
     {
         EnsureShellMark();
-        _shellIntegration = ShellIntegrationKind.Command;
+        SetShellIntegration(ShellIntegrationKind.Command);
     }
 
     public void StartOutput()
     {
         EnsureShellMark();
         _activeMarkHasOutput = true;
-        _shellIntegration = ShellIntegrationKind.Output;
+        SetShellIntegration(ShellIntegrationKind.Output);
     }
 
     public void EndCommand(uint? exitCode)
     {
-        _shellIntegration = ShellIntegrationKind.None;
+        SetShellIntegration(ShellIntegrationKind.None);
         if (_activeMark is { } mark)
         {
             mark.ExitCode = exitCode;
