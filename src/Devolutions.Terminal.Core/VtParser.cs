@@ -1,4 +1,7 @@
 using System.Buffers;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
 using System.Text;
 
 namespace Devolutions.Terminal.Core;
@@ -40,6 +43,7 @@ public sealed class VtParser
     }
 
     private readonly IVtDispatch _dispatch;
+    private readonly TerminalEngine? _engine;
     private readonly int[] _parameters = new int[MaxParameters];
     private readonly bool[] _subparameters = new bool[MaxParameters];
     private readonly int[] _csiParameters = new int[MaxParameters];
@@ -71,6 +75,7 @@ public sealed class VtParser
     public VtParser(IVtDispatch dispatch)
     {
         _dispatch = dispatch;
+        _engine = dispatch as TerminalEngine;
     }
 
     public void Process(ReadOnlySpan<byte> data)
@@ -174,6 +179,19 @@ public sealed class VtParser
                 continue;
             }
 
+            // CJK and emoji text is long runs of 3- or 4-byte sequences: take four
+            // at a time when the next 16 bytes allow.
+            if (value >= 0xE0 && data.Length - index >= 16 && runes.Length - count >= 4)
+            {
+                var consumed = DecodeWideBlock(data[index..], ref runes[count]);
+                if (consumed > 0)
+                {
+                    index += consumed;
+                    count += 4;
+                    continue;
+                }
+            }
+
             // Two- to four-byte sequences, decoded inline with the validity rules
             // of the byte path (no overlong forms, no surrogates, nothing past
             // U+10FFFF); everything else goes through the general decoder.
@@ -236,6 +254,76 @@ public sealed class VtParser
     }
 
     /// <summary>
+    /// Decodes four well-formed 3-byte sequences (12 bytes) or four well-formed
+    /// 4-byte sequences (16 bytes) at the start of <paramref name="data"/> into
+    /// <paramref name="destination"/> and the three runes after it, with the
+    /// validity rules of the scalar decode: no overlong forms, no surrogates,
+    /// nothing past U+10FFFF. Returns the bytes consumed, or 0 for anything else
+    /// (mixed lengths, ASCII, malformed input), which the scalar decode then takes.
+    /// </summary>
+    private static int DecodeWideBlock(ReadOnlySpan<byte> data, ref Rune destination)
+    {
+        if (!Vector128.IsHardwareAccelerated || data.Length < 16)
+        {
+            return 0;
+        }
+
+        var block = Vector128.LoadUnsafe(ref MemoryMarshal.GetReference(data));
+        ref var output = ref Unsafe.As<Rune, int>(ref destination);
+
+        // Lead bytes E0-EF at 0, 3, 6 and 9, continuation bytes (10xxxxxx) between.
+        var threeByte = Vector128.Create((byte)0xF0, 0xC0, 0xC0, 0xF0, 0xC0, 0xC0, 0xF0, 0xC0, 0xC0, 0xF0, 0xC0, 0xC0, 0, 0, 0, 0);
+        var threeLeads = Vector128.Create((byte)0xE0, 0x80, 0x80, 0xE0, 0x80, 0x80, 0xE0, 0x80, 0x80, 0xE0, 0x80, 0x80, 0, 0, 0, 0);
+        if (Vector128.EqualsAll(block & threeByte, threeLeads))
+        {
+            // Each sequence into an int lane as lead << 16 | second << 8 | third.
+            var lanes = Vector128.Shuffle(
+                block,
+                Vector128.Create((byte)2, 1, 0, 0xFF, 5, 4, 3, 0xFF, 8, 7, 6, 0xFF, 11, 10, 9, 0xFF)).AsInt32();
+            var scalars = ((lanes & Vector128.Create(0x0F0000)) >>> 4) |
+                          ((lanes & Vector128.Create(0x3F00)) >>> 2) |
+                          (lanes & Vector128.Create(0x3F));
+            var invalid = Vector128.LessThan(scalars, Vector128.Create(0x800)) |
+                          Vector128.Equals(scalars & Vector128.Create(0xF800), Vector128.Create(0xD800));
+            if (invalid != Vector128<int>.Zero)
+            {
+                return 0;
+            }
+
+            scalars.StoreUnsafe(ref output);
+            return 12;
+        }
+
+        // Lead bytes F0-F7 at 0, 4, 8 and 12; the range check below rejects F5-F7.
+        var fourByte = Vector128.Create((byte)0xF8, 0xC0, 0xC0, 0xC0, 0xF8, 0xC0, 0xC0, 0xC0, 0xF8, 0xC0, 0xC0, 0xC0, 0xF8, 0xC0, 0xC0, 0xC0);
+        var fourLeads = Vector128.Create((byte)0xF0, 0x80, 0x80, 0x80, 0xF0, 0x80, 0x80, 0x80, 0xF0, 0x80, 0x80, 0x80, 0xF0, 0x80, 0x80, 0x80);
+        if (Vector128.EqualsAll(block & fourByte, fourLeads))
+        {
+            // Each sequence into an int lane, lead byte highest.
+            var lanes = Vector128.Shuffle(
+                block,
+                Vector128.Create((byte)3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12)).AsInt32();
+            var scalars = ((lanes >>> 6) & Vector128.Create(0x1C0000)) |
+                          ((lanes >>> 4) & Vector128.Create(0x3F000)) |
+                          ((lanes >>> 2) & Vector128.Create(0xFC0)) |
+                          (lanes & Vector128.Create(0x3F));
+            // U+10000-U+10FFFF: one unsigned compare after the subtraction.
+            var outOfRange = Vector128.GreaterThan(
+                (scalars - Vector128.Create(0x10000)).AsUInt32(),
+                Vector128.Create(0xFFFFFu));
+            if (outOfRange != Vector128<uint>.Zero)
+            {
+                return 0;
+            }
+
+            scalars.StoreUnsafe(ref output);
+            return 16;
+        }
+
+        return 0;
+    }
+
+    /// <summary>
     /// Parses a complete, plain CSI sequence (<c>ESC [</c>, optional private
     /// marker, digits, ';' and ':' separators, final byte) in one pass instead of
     /// feeding each byte through the state machine. Parameters go through the same
@@ -290,31 +378,72 @@ public sealed class VtParser
             return 0;
         }
 
-        // The state after ESC and '[' (and the private marker, if any).
-        ClearSequence();
-        _state = State.CsiParam;
-        _privateMarker = privateMarker;
+        if (_csiDispatchDepth > 0)
+        {
+            // A handler feeding this parser again must not overwrite the outer
+            // sequence's dispatch arrays: take the state machine's copying path,
+            // from the state after ESC and '[' (and the private marker, if any).
+            ClearSequence();
+            _state = State.CsiParam;
+            _privateMarker = privateMarker;
+            for (var index = start; index < final; index++)
+            {
+                var value = data[index];
+                if (value == (byte)';')
+                {
+                    PushParameter();
+                    _nextIsSubparameter = false;
+                }
+                else if (value == (byte)':')
+                {
+                    PushParameter();
+                    _nextIsSubparameter = true;
+                }
+                else
+                {
+                    _currentParameter = _currentParameter < 0 ? 0 : _currentParameter;
+                    _currentParameter = Math.Min((_currentParameter * 10) + (value - '0'), 65535);
+                }
+            }
+
+            DispatchCsi(data[final]);
+            return final + 1;
+        }
+
+        // Parse straight into the dispatch arrays with the pushes the state machine
+        // would make, writing every flag below the count. The sequence fields are
+        // untouched: ground state never reads them before ESC or CSI clears them.
+        var parameters = _csiParameters;
+        var subparameters = _csiSubparameters;
+        var count = 0;
+        var current = -1;
+        var nextIsSubparameter = false;
         for (var index = start; index < final; index++)
         {
             var value = data[index];
-            if (value == (byte)';')
+            if (value is (byte)';' or (byte)':')
             {
-                PushParameter();
-                _nextIsSubparameter = false;
-            }
-            else if (value == (byte)':')
-            {
-                PushParameter();
-                _nextIsSubparameter = true;
+                // At most MaxParameters separators, so this push always fits.
+                subparameters[count] = nextIsSubparameter;
+                parameters[count++] = current;
+                current = -1;
+                nextIsSubparameter = value == (byte)':';
             }
             else
             {
-                _currentParameter = _currentParameter < 0 ? 0 : _currentParameter;
-                _currentParameter = Math.Min((_currentParameter * 10) + (value - '0'), 65535);
+                current = Math.Min((Math.Max(current, 0) * 10) + (value - '0'), 65535);
             }
         }
 
-        DispatchCsi(data[final]);
+        // The final push; one past the limit is dropped and the sequence still
+        // dispatches, as in DispatchCsi.
+        if ((current >= 0 || count > 0) && count < MaxParameters)
+        {
+            subparameters[count] = nextIsSubparameter;
+            parameters[count++] = current;
+        }
+
+        InvokeCsi(data[final], parameters, subparameters, count, 0, privateMarker);
         return final + 1;
     }
 
@@ -744,10 +873,6 @@ public sealed class VtParser
             PushParameterIfNeeded();
         }
 
-        var enterVt52 = final == (byte)'l' &&
-                        _privateMarker == (byte)'?' &&
-                        _parameterCount == 1 &&
-                        _parameters[0] == 2;
         _state = State.Ground;
         var parameterCount = _parameterCount;
         var intermediate = _intermediate;
@@ -766,15 +891,44 @@ public sealed class VtParser
             subparameters[index] = _subparameters[index];
         }
         ClearSequence();
+        InvokeCsi(final, parameters, subparameters, parameterCount, intermediate, privateMarker);
+    }
+
+    private void InvokeCsi(
+        byte final,
+        int[] parameters,
+        bool[] subparameters,
+        int count,
+        byte intermediate,
+        byte privateMarker)
+    {
+        var enterVt52 = final == (byte)'l' &&
+                        privateMarker == (byte)'?' &&
+                        count == 1 &&
+                        parameters[0] == 2;
         _csiDispatchDepth++;
         try
         {
-            _dispatch.CsiDispatch(
-                (char)final,
-                parameters.AsSpan(0, parameterCount),
-                subparameters.AsSpan(0, parameterCount),
-                intermediate,
-                privateMarker);
+            // The engine is sealed: call it directly rather than through the
+            // interface and its explicit implementation.
+            if (_engine is not null)
+            {
+                _engine.DispatchCsi(
+                    (char)final,
+                    parameters.AsSpan(0, count),
+                    subparameters.AsSpan(0, count),
+                    intermediate,
+                    privateMarker);
+            }
+            else
+            {
+                _dispatch.CsiDispatch(
+                    (char)final,
+                    parameters.AsSpan(0, count),
+                    subparameters.AsSpan(0, count),
+                    intermediate,
+                    privateMarker);
+            }
         }
         finally
         {
@@ -1151,6 +1305,8 @@ public sealed class VtParser
             return;
         }
 
+        // Every push writes its flag, so the flags below the count always belong
+        // to the current sequence and nothing needs to clear them.
         _subparameters[_parameterCount] = _nextIsSubparameter;
         _parameters[_parameterCount++] = _currentParameter;
         _currentParameter = -1;
@@ -1166,12 +1322,6 @@ public sealed class VtParser
 
     private void ClearSequence()
     {
-        // PushParameter sets flags only below the count, so only those can be set.
-        for (var index = 0; index < _parameterCount; index++)
-        {
-            _subparameters[index] = false;
-        }
-
         _parameterCount = 0;
         _currentParameter = -1;
         _intermediate = 0;

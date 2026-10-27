@@ -29,8 +29,10 @@ public static class WcWidth
     internal static byte WidthClass(Rune rune) =>
         rune.Value < Classes.Length ? Classes[rune.Value] : Classify(rune.Value);
 
-    internal static int ResolveWidth(byte widthClass) =>
-        widthClass == Ambiguous ? (AmbiguousAsWide ? 2 : 1) : widthClass;
+    internal static int ResolveWidth(byte widthClass) => ResolveWidth(widthClass, AmbiguousAsWide);
+
+    internal static int ResolveWidth(byte widthClass, bool ambiguousAsWide) =>
+        widthClass == Ambiguous ? (ambiguousAsWide ? 2 : 1) : widthClass;
 
     private static byte[] BuildClasses()
     {

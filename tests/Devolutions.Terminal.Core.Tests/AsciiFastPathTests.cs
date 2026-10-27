@@ -9,8 +9,9 @@ namespace Devolutions.Terminal.Core.Tests;
 /// and the engine stores them in bulk; with bulk storage disabled every byte
 /// takes the per-character path, and both must leave the terminal in exactly the
 /// same state. DEC Special Graphics maps to
-/// ambiguous-width box drawing, so stay clear of tests toggling
-/// <see cref="WcWidth.AmbiguousAsWide"/>.
+/// ambiguous-width box drawing, and one test here sets
+/// <see cref="WcWidth.AmbiguousAsWide"/>, so this class stays clear of tests
+/// toggling it.
 /// </summary>
 [Collection("Unicode cell width observations")]
 public sealed class AsciiFastPathTests
@@ -47,6 +48,28 @@ public sealed class AsciiFastPathTests
     public void BulkAsciiMatchesPerCharacterPrinting(string name, string stream)
     {
         AssertBulkMatchesReference(name, Encoding.UTF8.GetBytes(stream), 20, 5, 8);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void BulkRunesMatchPerCharacterPrintingWithAmbiguousWidths(bool ambiguousAsWide)
+    {
+        // Bulk printing reads one width table per AmbiguousAsWide setting. Latin-1
+        // symbols, punctuation and box drawing are ambiguous; the long runs wrap.
+        var stream =
+            "±§ —…“” ┌─┐\r\n" +
+            new string('─', 15) + "\r\n" +
+            new string('a', 13) + "±─中│°═║";
+        WcWidth.AmbiguousAsWide = ambiguousAsWide;
+        try
+        {
+            AssertBulkMatchesReference($"ambiguous as wide: {ambiguousAsWide}", Encoding.UTF8.GetBytes(stream), 20, 5, 8);
+        }
+        finally
+        {
+            WcWidth.AmbiguousAsWide = false;
+        }
     }
 
     [Fact]

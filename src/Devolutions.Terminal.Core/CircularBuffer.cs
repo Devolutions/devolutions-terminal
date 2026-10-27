@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace Devolutions.Terminal.Core;
 
 internal sealed class CircularBuffer<T>
@@ -173,11 +175,16 @@ internal sealed class CircularBuffer<T>
 
     private int Wrap(int index) => index >= _items.Length ? index - _items.Length : index;
 
+    // Every line access checks its index; keeping the throw in its own method lets
+    // the check inline.
     private void ValidateIndex(int index)
     {
         if ((uint)index >= (uint)Count)
         {
-            throw new ArgumentOutOfRangeException(nameof(index));
+            ThrowIndexOutOfRange();
         }
     }
+
+    [DoesNotReturn]
+    private static void ThrowIndexOutOfRange() => throw new ArgumentOutOfRangeException("index");
 }

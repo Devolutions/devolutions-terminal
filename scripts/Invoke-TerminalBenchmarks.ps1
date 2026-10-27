@@ -21,6 +21,12 @@ param(
     [ValidateRange(1, 100)]
     [int] $RegressionPercent = 15,
 
+    # Minimum length of each vt sample in milliseconds (the bench's default is 500).
+    # Laptop CPUs drop out of turbo a few seconds into sustained load; samples of
+    # ~3000 ms all run at the sustained clock, so medians and spreads stay stable.
+    [ValidateRange(0, 600000)]
+    [int] $MinMs = 0,
+
     # Upstream ghostty-bench built from the pinned commit (see docs/performance-benchmarks.md).
     # When given, every vt workload is also replayed through `+terminal-stream`.
     [string] $GhosttyBench,
@@ -101,6 +107,10 @@ if ($Suite -contains "vt") {
     foreach ($name in $names) {
         $partial = Join-Path $OutputDirectory "vt-$name.json"
         $vtArgs = @("vt", "--mb", $megabytes, "--runs", $runs, "--frame-kb", $FrameKb, "--workloads", $name, "--json", $partial)
+        if ($MinMs -gt 0) {
+            $vtArgs += @("--min-ms", $MinMs)
+        }
+
         if (-not $RequireBeatGhostty) {
             $vtArgs += "--no-gate"
         }

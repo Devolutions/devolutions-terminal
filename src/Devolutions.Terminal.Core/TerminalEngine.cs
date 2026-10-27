@@ -366,7 +366,7 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         }
         else if (AnsiMode &&
                  isGlCharacter &&
-                 string.Equals(_gsets[activeGset], "0", StringComparison.Ordinal) &&
+                 IsDecSpecialGraphics(_gsets[activeGset]) &&
                  TryMapVt52Graphics(rune, out var lineDrawing))
         {
             // DEC Special Graphics shares its glyph table with VT52 graphics mode.
@@ -405,6 +405,11 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
     // Differential tests turn this off to get the per-character reference path.
     internal bool BulkPrintEnabled { get; set; } = true;
 
+    // The designator of DEC Special Graphics. Checked before every print, so it
+    // compares inline rather than calling string equality.
+    private static bool IsDecSpecialGraphics(string? designator) =>
+        designator is { Length: 1 } && designator[0] == '0';
+
     void IVtDispatch.PrintAscii(ReadOnlySpan<byte> text)
     {
         // Bulk storage applies only when Print would store each byte unchanged: no
@@ -417,7 +422,7 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
             !AutoWrap ||
             InsertMode ||
             _singleShift >= 0 ||
-            string.Equals(gset, "0", StringComparison.Ordinal) ||
+            IsDecSpecialGraphics(gset) ||
             (_drcsDesignator is not null && string.Equals(gset, _drcsDesignator, StringComparison.Ordinal)))
         {
             foreach (var value in text)
@@ -445,7 +450,7 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
             !AutoWrap ||
             InsertMode ||
             _singleShift >= 0 ||
-            string.Equals(gl, "0", StringComparison.Ordinal) ||
+            IsDecSpecialGraphics(gl) ||
             (_drcsDesignator is not null &&
              (string.Equals(gl, _drcsDesignator, StringComparison.Ordinal) ||
               string.Equals(_gsets[_gr], _drcsDesignator, StringComparison.Ordinal))))
@@ -2298,13 +2303,21 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         ShellIntegrationChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    private void DispatchCsi(
+    internal void DispatchCsi(
         char final,
         ReadOnlySpan<int> parameters,
         ReadOnlySpan<bool> subparameters,
         byte intermediate,
         byte privateMarker)
     {
+        // Nearly every sequence has neither a private marker nor an intermediate,
+        // and none of the special cases below handles one of those.
+        if ((privateMarker | intermediate) == 0)
+        {
+            DispatchPlainCsi(final, parameters, subparameters);
+            return;
+        }
+
         if (intermediate == 0 && final == 'u' && DispatchKittyKeyboard(parameters, privateMarker))
         {
             return;
@@ -2501,17 +2514,9 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
             return;
         }
 
-        if (final == 'c')
+        if (final == 'c' && privateMarker == (byte)'>')
         {
-            if (privateMarker == (byte)'>')
-            {
-                Respond("\u001b[>0;10;1c");
-            }
-            else if (privateMarker == 0 && Param(parameters, 0, 0) == 0)
-            {
-                Respond("\u001b[?61;4;6;7;14;21;22;23;24;28;32;42c");
-            }
-
+            Respond("\u001b[>0;10;1c");
             return;
         }
 
@@ -2520,6 +2525,13 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
             return;
         }
 
+        DispatchPlainCsi(final, parameters, subparameters);
+    }
+
+    // The sequences without a private marker. The ones with an intermediate that
+    // DispatchCsi does not handle land here too, as they always have.
+    private void DispatchPlainCsi(char final, ReadOnlySpan<int> parameters, ReadOnlySpan<bool> subparameters)
+    {
         switch (final)
         {
             case 'A':
@@ -2587,6 +2599,13 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
                 break;
             case 'b':
                 RepeatLastCharacter(Count(parameters));
+                break;
+            case 'c':
+                if (Param(parameters, 0, 0) == 0)
+                {
+                    Respond("\u001b[?61;4;6;7;14;21;22;23;24;28;32;42c");
+                }
+
                 break;
             case 'd':
                 // SetCursor re-applies the origin-mode left margin to the column,

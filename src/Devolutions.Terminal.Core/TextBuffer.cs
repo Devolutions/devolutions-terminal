@@ -1,6 +1,8 @@
 using System.Text;
 using System.Globalization;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
 
 namespace Devolutions.Terminal.Core;
 
@@ -65,9 +67,12 @@ public sealed class TextBuffer
     }
 
     private CircularBuffer<BufferLine> _lines;
+    private readonly CombiningTable _combiningTable = new();
     private readonly int _historySize;
     private bool[] _tabStops;
     private int _scrollOffset;
+    private CellAttributes _currentAttributes = CellAttributes.Default;
+    private bool _currentProtection;
     private ShellIntegrationKind _shellIntegration;
     private ShellMark? _activeMark;
     private bool _activeMarkHasOutput;
@@ -112,9 +117,30 @@ public sealed class TextBuffer
     public bool WrapPending { get; set; }
     public int TotalLines => _lines.Count;
     public int HistoryCount => ViewportStart;
+
+    // For tests: the combining table's size, which compaction keeps bounded.
+    internal int CombiningIdCount => _combiningTable.Count;
     public long CoordinateVersion { get; private set; }
-    public CellAttributes CurrentAttributes { get; set; } = CellAttributes.Default;
-    public bool CurrentProtection { get; set; }
+    public CellAttributes CurrentAttributes
+    {
+        get => _currentAttributes;
+        set
+        {
+            _currentAttributes = value;
+            InvalidatePrintTemplates();
+        }
+    }
+
+    public bool CurrentProtection
+    {
+        get => _currentProtection;
+        set
+        {
+            _currentProtection = value;
+            InvalidatePrintTemplates();
+        }
+    }
+
     public string? CurrentHyperlinkUri { get; set; }
     public int SavedCursorX { get; set; }
     public int SavedCursorY { get; set; }
@@ -324,7 +350,7 @@ public sealed class TextBuffer
             var projection = y < rows.Count
                 ? rows[y]
                 : new TextBufferProjectionRow([], false, []);
-            var cells = CellRow.FromCells(projection.Cells, Columns);
+            var cells = CellRow.FromCells(projection.Cells, Columns, _combiningTable);
             _mayHoldLonePrepend = true;
             var line = new BufferLine(cells, ++_nextLogicalLineId)
             {
@@ -341,6 +367,7 @@ public sealed class TextBuffer
         }
 
         _lines.ResetCapacity(Rows + _historySize, replacement);
+        CompactCombiningIfNeeded();
         CursorX = Math.Clamp(cursorX, 0, Columns - 1);
         CursorY = Math.Clamp(cursorY, 0, Rows - 1);
         ScrollOffset = 0;
@@ -468,8 +495,29 @@ public sealed class TextBuffer
             index = 1;
         }
 
-        var template = PackedCell.From(new Rune(' '), CurrentAttributes, CurrentProtection, false, 1, _shellIntegration);
+        var template = AsciiTemplate();
         var hyperlink = CurrentHyperlinkUri;
+        if (index == text.Length - 1 && !WrapPending)
+        {
+            // A lone byte that fits (one between escape sequences, or the y of
+            // `yes`): what the loop below does for it, as a single store.
+            var line = GetLiveLine(CursorY);
+            var effectiveColumns = RightBound(line) + 1;
+            if (CursorX < effectiveColumns)
+            {
+                var row = line.Cells;
+                ClearGlyphAt(row, CursorX);
+                row.StoreAscii(CursorX, text[index], template, hyperlink);
+                if (++CursorX >= effectiveColumns)
+                {
+                    CursorX = effectiveColumns - 1;
+                    WrapPending = true;
+                }
+
+                return true;
+            }
+        }
+
         while (index < text.Length)
         {
             if (WrapPending)
@@ -547,6 +595,7 @@ public sealed class TextBuffer
         }
 
         UpdateRuneTemplates();
+        var simpleWidths = CurrentSimpleWidths();
         var hyperlink = CurrentHyperlinkUri;
         var widths = _segmentWidths;
         var line = GetLiveLine(CursorY);
@@ -561,9 +610,22 @@ public sealed class TextBuffer
         {
             var rune = runes[index];
             // Only the per-rune path below can set a pending Prepend.
-            var width = _pendingPrepend is null && !_mayHoldLonePrepend
-                ? SimpleWidth(rune, previousEndsWithoutZwj)
-                : 0;
+            var simple = _pendingPrepend is null && !_mayHoldLonePrepend
+                ? SimpleEntry(rune, simpleWidths)
+                : (byte)0;
+            if (simple == PlainExtend)
+            {
+                // All PrintCore does with it: no join rule can hold and its width
+                // is 0, so it extends the previous cell's combining text. That text
+                // then ends with it, or (dropped on a blank or missing cell) is
+                // empty, so only a ZWJ can leave one at the end.
+                AppendCombining(rune);
+                previousEndsWithoutZwj = rune.Value != 0x200D;
+                index++;
+                continue;
+            }
+
+            var width = SimpleWidth(simple, previousEndsWithoutZwj);
             if (width == 0)
             {
                 previousEndsWithoutZwj = PrintAndGetAdvance(rune) > 0;
@@ -605,45 +667,23 @@ public sealed class TextBuffer
             var row = line.Cells;
             var end = CursorX;
             var next = index;
-            if (!row.MayHoldWide && row.CanAppendAt(CursorX))
+            // A line narrower than a wide glyph (one effective column) keeps the
+            // bounds-checked path below.
+            if (!row.MayHoldWide && row.CanAppendAt(CursorX) && CursorX + width <= effectiveColumns)
             {
                 // No wide glyph in the row can straddle the segment, so classify and
                 // store in one pass.
-                var cells = row.BeginAppend(CursorX);
-                var narrow = _narrowTemplate;
-                var wide = _wideTemplate;
-                var continuation = _continuationTemplate;
-                var limit = effectiveColumns - CursorX;
-                var written = 0;
-                var wroteWide = false;
-                while (true)
-                {
-                    var stored = runes[next];
-                    if (width == 2)
-                    {
-                        cells[written] = wide.WithRune(stored);
-                        cells[written + 1] = continuation;
-                        wroteWide = true;
-                    }
-                    else
-                    {
-                        cells[written] = narrow.WithRune(stored);
-                    }
-
-                    written += width;
-                    next++;
-                    if (next == runes.Length)
-                    {
-                        break;
-                    }
-
-                    width = SimpleWidth(runes[next], previousEndsWithoutZwj: true);
-                    if (width == 0 || written + width > limit)
-                    {
-                        break;
-                    }
-                }
-
+                next = index + AppendSimpleRunes(
+                    row.BeginAppend(CursorX),
+                    runes[index..],
+                    width,
+                    effectiveColumns - CursorX,
+                    simpleWidths,
+                    _narrowBits,
+                    _wideBits,
+                    _continuationTemplate,
+                    out var written,
+                    out var wroteWide);
                 end = CursorX + written;
                 row.EndAppend(CursorX, end, hyperlink, wroteWide);
             }
@@ -656,7 +696,7 @@ public sealed class TextBuffer
                     end += width;
                     next++;
                     width = next < runes.Length && next - index < widths.Length
-                        ? SimpleWidth(runes[next], previousEndsWithoutZwj: true)
+                        ? SimpleWidth(runes[next], simpleWidths, previousEndsWithoutZwj: true)
                         : 0;
                 }
                 while (width != 0 && end + width <= effectiveColumns);
@@ -692,27 +732,130 @@ public sealed class TextBuffer
         return advanced;
     }
 
-    // Packed cells for runes stored by PrintRunes. The narrow one is packed per
-    // call (a few integer operations) and doubles as the cache key: the wide and
-    // continuation cells are derived again only when it changes.
+    // Packed cells stored by PrintAscii and PrintRunes: the ASCII (narrow) cell,
+    // the wide and continuation cells, and the narrow and wide ones without their
+    // rune for PackedCell.StoreWithRune. They depend only on the current
+    // attributes, protection and shell-integration state, whose setters mark them
+    // stale. The ASCII one is rebuilt apart from the rest, so a style change before
+    // every ASCII cell does not also pay for the rune templates.
+    private PackedCell _asciiTemplate;
+    private bool _asciiTemplateStale = true;
     private PackedCell _narrowTemplate;
     private PackedCell _wideTemplate;
     private PackedCell _continuationTemplate;
-    private bool _templatesBuilt;
+    private Vector128<ulong> _narrowBits;
+    private Vector128<ulong> _wideBits;
+    private bool _runeTemplatesStale = true;
     private readonly byte[] _segmentWidths = new byte[256];
+
+    private void InvalidatePrintTemplates()
+    {
+        _asciiTemplateStale = true;
+        _runeTemplatesStale = true;
+    }
+
+    private void SetShellIntegration(ShellIntegrationKind kind)
+    {
+        _shellIntegration = kind;
+        InvalidatePrintTemplates();
+    }
+
+    private PackedCell CurrentTemplate() =>
+        PackedCell.From(new Rune(' '), _currentAttributes, _currentProtection, false, 1, _shellIntegration);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private PackedCell AsciiTemplate()
+    {
+        if (_asciiTemplateStale)
+        {
+            _asciiTemplate = CurrentTemplate();
+            _asciiTemplateStale = false;
+        }
+
+        return _asciiTemplate;
+    }
 
     private void UpdateRuneTemplates()
     {
-        var narrow = PackedCell.From(new Rune(' '), CurrentAttributes, CurrentProtection, false, 1, _shellIntegration);
-        if (_templatesBuilt && narrow.SameBits(_narrowTemplate))
+        if (!_runeTemplatesStale)
         {
             return;
         }
 
+        var narrow = CurrentTemplate();
         _narrowTemplate = narrow;
         _wideTemplate = narrow.WithWidth(2, isWideContinuation: false);
         _continuationTemplate = narrow.WithWidth(0, isWideContinuation: true);
-        _templatesBuilt = true;
+        _narrowBits = narrow.RuneFreeBits;
+        _wideBits = _wideTemplate.RuneFreeBits;
+        _runeTemplatesStale = false;
+    }
+
+    /// <summary>
+    /// The append loop of <see cref="PrintRunes"/>, kept apart so its state stays in
+    /// registers. Stores <paramref name="runes"/> from the first, whose simple
+    /// <paramref name="width"/> fits in <paramref name="limit"/> cells, while each
+    /// next rune is also simple and still fits. Every rune after the first follows
+    /// a cell stored here, so none can join it. Returns the runes stored;
+    /// <paramref name="written"/> is the cells they took.
+    /// </summary>
+    private static int AppendSimpleRunes(
+        Span<PackedCell> cells,
+        ReadOnlySpan<Rune> runes,
+        int width,
+        int limit,
+        byte[] simpleWidths,
+        Vector128<ulong> narrowBits,
+        Vector128<ulong> wideBits,
+        PackedCell continuation,
+        out int written,
+        out bool wroteWide)
+    {
+        // These bound every write below, which therefore skips per-cell checks.
+        if ((uint)limit > (uint)cells.Length || width is not (1 or 2) || width > limit || runes.IsEmpty)
+        {
+            throw new ArgumentOutOfRangeException(nameof(limit));
+        }
+
+        ref var cell = ref MemoryMarshal.GetReference(cells);
+        ref var rune = ref MemoryMarshal.GetReference(runes);
+        // Vector arguments can arrive by reference; locals keep them in registers
+        // instead of reloading them after every store.
+        var narrow = narrowBits;
+        var wide = wideBits;
+        var continuationBits = Unsafe.BitCast<PackedCell, Vector128<ulong>>(continuation);
+        var count = 0;
+        var stored = 0;
+        while (true)
+        {
+            var value = Unsafe.Add(ref rune, count).Value;
+            if (width == 2)
+            {
+                PackedCell.StoreWithRune(ref Unsafe.Add(ref cell, stored), wide, value);
+                continuationBits.StoreUnsafe(ref Unsafe.As<PackedCell, ulong>(ref Unsafe.Add(ref cell, stored + 1)));
+            }
+            else
+            {
+                PackedCell.StoreWithRune(ref Unsafe.Add(ref cell, stored), narrow, value);
+            }
+
+            stored += width;
+            if (++count == runes.Length)
+            {
+                break;
+            }
+
+            width = SimpleWidth(Unsafe.Add(ref rune, count), simpleWidths, previousEndsWithoutZwj: true);
+            if (width == 0 || stored + width > limit)
+            {
+                break;
+            }
+        }
+
+        // Only a wide rune takes more than one cell.
+        written = stored;
+        wroteWide = stored != count;
+        return count;
     }
 
     /// <summary>
@@ -721,40 +864,74 @@ public sealed class TextBuffer
     /// grapheme: either it has no join property at all, or it is an
     /// Extended_Pictographic scalar whose only possible join (GB11) needs combining
     /// text ending in ZWJ, which the previous cell is known not to have. The caller
-    /// has ruled out a pending or lone Prepend.
+    /// has ruled out a pending or lone Prepend. <paramref name="simpleWidths"/> is
+    /// <see cref="CurrentSimpleWidths"/>.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static int SimpleWidth(Rune rune, bool previousEndsWithoutZwj)
+    private static int SimpleWidth(Rune rune, byte[] simpleWidths, bool previousEndsWithoutZwj) =>
+        SimpleWidth(SimpleEntry(rune, simpleWidths), previousEndsWithoutZwj);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static int SimpleWidth(byte simple, bool previousEndsWithoutZwj) =>
+        (simple & SimpleAfterZwjFreeCell) != 0 && !previousEndsWithoutZwj ? 0 : simple & 3;
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static byte SimpleEntry(Rune rune, byte[] simpleWidths) =>
+        (uint)rune.Value < (uint)simpleWidths.Length
+            ? simpleWidths[rune.Value]
+            : SimpleWidthBeyondTables(rune);
+
+    // SimpleWidth's inputs in one load per rune for planes 0 and 1, with ambiguous
+    // widths already resolved: the width in the low two bits (0 when the rune needs
+    // the per-rune path), plus whether it may skip that path only after a cell
+    // without a trailing ZWJ. There is one table per AmbiguousAsWide setting; the
+    // wide one is built on first use.
+    private const byte SimpleAfterZwjFreeCell = 4;
+    private const byte NeverSimple = 8;
+    // In ClassifySimple's result: the rune has no join property at all. In the
+    // table: a zero-width such rune (a plain Extend mark, ZWJ), with width 0.
+    private const byte JoinFree = 16;
+    private const byte PlainExtend = 16;
+    private static readonly byte[] SimpleWidthsAmbiguousNarrow = BuildSimpleWidths(ambiguousAsWide: false);
+    private static byte[]? _simpleWidthsAmbiguousWide;
+
+    private static byte[] CurrentSimpleWidths() =>
+        WcWidth.AmbiguousAsWide
+            ? (_simpleWidthsAmbiguousWide ??= BuildSimpleWidths(ambiguousAsWide: true))
+            : SimpleWidthsAmbiguousNarrow;
+
+    private static byte[] BuildSimpleWidths(bool ambiguousAsWide)
     {
-        var simpleClass = rune.Value < SimpleClasses.Length ? SimpleClasses[rune.Value] : ClassifySimple(rune);
-        if ((simpleClass & NeverSimple) != 0 ||
-            ((simpleClass & SimpleAfterZwjFreeCell) != 0 && !previousEndsWithoutZwj))
+        var widths = new byte[0x20000];
+        for (var value = 0; value < widths.Length; value++)
+        {
+            if (value is < 0xD800 or > 0xDFFF)
+            {
+                widths[value] = ResolveSimple(ClassifySimple(new Rune(value)), ambiguousAsWide);
+            }
+        }
+
+        return widths;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static byte SimpleWidthBeyondTables(Rune rune) =>
+        ResolveSimple(ClassifySimple(rune), WcWidth.AmbiguousAsWide);
+
+    private static byte ResolveSimple(byte simpleClass, bool ambiguousAsWide)
+    {
+        var width = WcWidth.ResolveWidth((byte)(simpleClass & 3), ambiguousAsWide);
+        if ((simpleClass & NeverSimple) != 0)
         {
             return 0;
         }
 
-        return WcWidth.ResolveWidth((byte)(simpleClass & 3));
-    }
-
-    // SimpleWidth's inputs in one load per rune for planes 0 and 1: the width class
-    // in the low two bits, plus whether the rune needs the per-rune path or may
-    // skip it only after a cell without a trailing ZWJ.
-    private const byte SimpleAfterZwjFreeCell = 4;
-    private const byte NeverSimple = 8;
-    private static readonly byte[] SimpleClasses = BuildSimpleClasses();
-
-    private static byte[] BuildSimpleClasses()
-    {
-        var classes = new byte[0x20000];
-        for (var value = 0; value < classes.Length; value++)
+        if (width == 0)
         {
-            if (value is < 0xD800 or > 0xDFFF)
-            {
-                classes[value] = ClassifySimple(new Rune(value));
-            }
+            return (simpleClass & JoinFree) != 0 ? PlainExtend : (byte)0;
         }
 
-        return classes;
+        return (byte)(width | (simpleClass & SimpleAfterZwjFreeCell));
     }
 
     // Built from ClassifyJoin, not the JoinClasses table, which static
@@ -771,7 +948,7 @@ public sealed class TextBuffer
 
         return (joinClass & ExtendsOnlyAfterZwj) != 0
             ? (byte)(SimpleAfterZwjFreeCell | widthClass)
-            : widthClass;
+            : (byte)(JoinFree | widthClass);
     }
 
     /// <summary>
@@ -940,6 +1117,11 @@ public sealed class TextBuffer
             combining,
             CurrentHyperlinkUri,
             _shellIntegration);
+        if (combining is not null)
+        {
+            CompactCombiningIfNeeded();
+        }
+
         if (width == 2 && CursorX + 1 < Columns)
         {
             row.Store(
@@ -1625,7 +1807,7 @@ public sealed class TextBuffer
         SavedAttributes = CellAttributes.Default;
         SavedProtection = false;
         CurrentHyperlinkUri = null;
-        _shellIntegration = ShellIntegrationKind.None;
+        SetShellIntegration(ShellIntegrationKind.None);
         _activeMark = null;
         _activeMarkHasOutput = false;
         _pendingPrepend = null;
@@ -1695,7 +1877,7 @@ public sealed class TextBuffer
     {
         if (_activeMark is not null)
         {
-            _shellIntegration = ShellIntegrationKind.Prompt;
+            SetShellIntegration(ShellIntegrationKind.Prompt);
             return;
         }
 
@@ -1703,25 +1885,25 @@ public sealed class TextBuffer
         _activeMark = new ShellMark(CursorX);
         line.Marks.Add(_activeMark);
         _activeMarkHasOutput = false;
-        _shellIntegration = ShellIntegrationKind.Prompt;
+        SetShellIntegration(ShellIntegrationKind.Prompt);
     }
 
     public void StartCommand()
     {
         EnsureShellMark();
-        _shellIntegration = ShellIntegrationKind.Command;
+        SetShellIntegration(ShellIntegrationKind.Command);
     }
 
     public void StartOutput()
     {
         EnsureShellMark();
         _activeMarkHasOutput = true;
-        _shellIntegration = ShellIntegrationKind.Output;
+        SetShellIntegration(ShellIntegrationKind.Output);
     }
 
     public void EndCommand(uint? exitCode)
     {
-        _shellIntegration = ShellIntegrationKind.None;
+        SetShellIntegration(ShellIntegrationKind.None);
         if (_activeMark is { } mark)
         {
             mark.ExitCode = exitCode;
@@ -1783,7 +1965,7 @@ public sealed class TextBuffer
     }
 
     private BufferLine NewBlankLine(CellAttributes attributes) =>
-        new(new CellRow(Columns, attributes), ++_nextLogicalLineId);
+        new(new CellRow(Columns, attributes, _combiningTable), ++_nextLogicalLineId);
 
     /// <summary>
     /// Blanks a line that just left the buffer (or a scroll region) and gives it a
@@ -1806,9 +1988,9 @@ public sealed class TextBuffer
         return line;
     }
 
-    private static BufferLine ResizeLineCells(BufferLine source, int columns)
+    private BufferLine ResizeLineCells(BufferLine source, int columns)
     {
-        var cells = new CellRow(columns, CellAttributes.Default);
+        var cells = new CellRow(columns, CellAttributes.Default, _combiningTable);
         source.Cells.CopyTo(0, cells, 0, Math.Min(source.Cells.Length, columns));
 
         RepairWideCells(cells);
@@ -2149,19 +2331,43 @@ public sealed class TextBuffer
         }
 
         var row = GetLiveLine(y).Cells;
-        if (row[x].IsWideContinuation && x > 0)
+        if (row.IsWideContinuation(x) && x > 0)
         {
             x--;
         }
 
-        var cell = row[x];
-        if (cell.IsBlank)
+        if (row.IsBlank(x))
         {
             return;
         }
 
-        cell.CombiningCharacters = (cell.CombiningCharacters ?? string.Empty) + rune;
-        row[x] = cell;
+        row.AppendCombining(x, rune);
+        CompactCombiningIfNeeded();
+    }
+
+    /// <summary>
+    /// Drops the combining IDs no line holds any more once the table has grown
+    /// enough, so a stream of ever-new clusters cannot grow it without bound. Runs
+    /// between row operations: no row method holds an ID across it.
+    /// </summary>
+    private void CompactCombiningIfNeeded()
+    {
+        if (!_combiningTable.NeedsCompaction)
+        {
+            return;
+        }
+
+        var live = new bool[_combiningTable.Count];
+        for (var index = 0; index < _lines.Count; index++)
+        {
+            _lines[index].Cells.MarkCombining(live);
+        }
+
+        var map = _combiningTable.Compact(live);
+        for (var index = 0; index < _lines.Count; index++)
+        {
+            _lines[index].Cells.RemapCombining(map);
+        }
     }
 
     private bool TryAppendJoinedRune(Rune rune, out int advance)
@@ -2174,13 +2380,12 @@ public sealed class TextBuffer
         }
 
         var (row, x, desiredWidth, lineColumns) = target.Value;
-        var previous = row[x];
-        var previousWidth = previous.DisplayWidth;
+        var previousWidth = row.DisplayWidth(x);
         advance = Math.Max(0, desiredWidth - previousWidth);
-        previous.CombiningCharacters = (previous.CombiningCharacters ?? string.Empty) + rune;
-        row[x] = previous;
+        row.AppendCombining(x, rune);
         if (desiredWidth > previousWidth && x + desiredWidth <= lineColumns)
         {
+            var previous = row[x];
             ClearGlyphAt(row, x + 1);
             previous.StoredWidth = (byte)desiredWidth;
             row[x] = previous;
@@ -2205,6 +2410,7 @@ public sealed class TextBuffer
             }
         }
 
+        CompactCombiningIfNeeded();
         return true;
     }
 
