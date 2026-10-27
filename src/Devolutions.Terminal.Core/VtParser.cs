@@ -1,4 +1,7 @@
 using System.Buffers;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
 using System.Text;
 
 namespace Devolutions.Terminal.Core;
@@ -176,6 +179,19 @@ public sealed class VtParser
                 continue;
             }
 
+            // CJK and emoji text is long runs of 3- or 4-byte sequences: take four
+            // at a time when the next 16 bytes allow.
+            if (value >= 0xE0 && data.Length - index >= 16 && runes.Length - count >= 4)
+            {
+                var consumed = DecodeWideBlock(data[index..], ref runes[count]);
+                if (consumed > 0)
+                {
+                    index += consumed;
+                    count += 4;
+                    continue;
+                }
+            }
+
             // Two- to four-byte sequences, decoded inline with the validity rules
             // of the byte path (no overlong forms, no surrogates, nothing past
             // U+10FFFF); everything else goes through the general decoder.
@@ -235,6 +251,76 @@ public sealed class VtParser
         }
 
         return index;
+    }
+
+    /// <summary>
+    /// Decodes four well-formed 3-byte sequences (12 bytes) or four well-formed
+    /// 4-byte sequences (16 bytes) at the start of <paramref name="data"/> into
+    /// <paramref name="destination"/> and the three runes after it, with the
+    /// validity rules of the scalar decode: no overlong forms, no surrogates,
+    /// nothing past U+10FFFF. Returns the bytes consumed, or 0 for anything else
+    /// (mixed lengths, ASCII, malformed input), which the scalar decode then takes.
+    /// </summary>
+    private static int DecodeWideBlock(ReadOnlySpan<byte> data, ref Rune destination)
+    {
+        if (!Vector128.IsHardwareAccelerated || data.Length < 16)
+        {
+            return 0;
+        }
+
+        var block = Vector128.LoadUnsafe(ref MemoryMarshal.GetReference(data));
+        ref var output = ref Unsafe.As<Rune, int>(ref destination);
+
+        // Lead bytes E0-EF at 0, 3, 6 and 9, continuation bytes (10xxxxxx) between.
+        var threeByte = Vector128.Create((byte)0xF0, 0xC0, 0xC0, 0xF0, 0xC0, 0xC0, 0xF0, 0xC0, 0xC0, 0xF0, 0xC0, 0xC0, 0, 0, 0, 0);
+        var threeLeads = Vector128.Create((byte)0xE0, 0x80, 0x80, 0xE0, 0x80, 0x80, 0xE0, 0x80, 0x80, 0xE0, 0x80, 0x80, 0, 0, 0, 0);
+        if (Vector128.EqualsAll(block & threeByte, threeLeads))
+        {
+            // Each sequence into an int lane as lead << 16 | second << 8 | third.
+            var lanes = Vector128.Shuffle(
+                block,
+                Vector128.Create((byte)2, 1, 0, 0xFF, 5, 4, 3, 0xFF, 8, 7, 6, 0xFF, 11, 10, 9, 0xFF)).AsInt32();
+            var scalars = ((lanes & Vector128.Create(0x0F0000)) >>> 4) |
+                          ((lanes & Vector128.Create(0x3F00)) >>> 2) |
+                          (lanes & Vector128.Create(0x3F));
+            var invalid = Vector128.LessThan(scalars, Vector128.Create(0x800)) |
+                          Vector128.Equals(scalars & Vector128.Create(0xF800), Vector128.Create(0xD800));
+            if (invalid != Vector128<int>.Zero)
+            {
+                return 0;
+            }
+
+            scalars.StoreUnsafe(ref output);
+            return 12;
+        }
+
+        // Lead bytes F0-F7 at 0, 4, 8 and 12; the range check below rejects F5-F7.
+        var fourByte = Vector128.Create((byte)0xF8, 0xC0, 0xC0, 0xC0, 0xF8, 0xC0, 0xC0, 0xC0, 0xF8, 0xC0, 0xC0, 0xC0, 0xF8, 0xC0, 0xC0, 0xC0);
+        var fourLeads = Vector128.Create((byte)0xF0, 0x80, 0x80, 0x80, 0xF0, 0x80, 0x80, 0x80, 0xF0, 0x80, 0x80, 0x80, 0xF0, 0x80, 0x80, 0x80);
+        if (Vector128.EqualsAll(block & fourByte, fourLeads))
+        {
+            // Each sequence into an int lane, lead byte highest.
+            var lanes = Vector128.Shuffle(
+                block,
+                Vector128.Create((byte)3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12)).AsInt32();
+            var scalars = ((lanes >>> 6) & Vector128.Create(0x1C0000)) |
+                          ((lanes >>> 4) & Vector128.Create(0x3F000)) |
+                          ((lanes >>> 2) & Vector128.Create(0xFC0)) |
+                          (lanes & Vector128.Create(0x3F));
+            // U+10000-U+10FFFF: one unsigned compare after the subtraction.
+            var outOfRange = Vector128.GreaterThan(
+                (scalars - Vector128.Create(0x10000)).AsUInt32(),
+                Vector128.Create(0xFFFFFu));
+            if (outOfRange != Vector128<uint>.Zero)
+            {
+                return 0;
+            }
+
+            scalars.StoreUnsafe(ref output);
+            return 16;
+        }
+
+        return 0;
     }
 
     /// <summary>

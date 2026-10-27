@@ -88,6 +88,96 @@ public sealed class CsiFastPathTests
     }
 
     [Fact]
+    public void RandomWideSequenceRunsDispatchIdentically()
+    {
+        // Runs of 3- and 4-byte sequences are decoded four at a time; any block
+        // holding one malformed or out-of-range sequence must fall back and decode
+        // exactly as the byte path does. Edge scalars sit next to the rejected forms.
+        int[] threeByteScalars = [0x800, 0xD7FF, 0xE000, 0xFFFF, 0x4E00, 0x9FFF, 0x3042];
+        int[] fourByteScalars = [0x10000, 0x10FFFF, 0x1F600, 0x1F64F, 0x20000];
+        byte[][] malformed =
+        [
+            [0xE0, 0x9F, 0xBF], // overlong U+07FF
+            [0xED, 0xA0, 0x80], // surrogate U+D800
+            [0xED, 0xBF, 0xBF], // surrogate U+DFFF
+            [0xF0, 0x8F, 0xBF, 0xBF], // overlong U+FFFF
+            [0xF4, 0x90, 0x80, 0x80], // U+110000
+            [0xF5, 0x80, 0x80, 0x80], // lead past F4
+            [0xF7, 0xBF, 0xBF, 0xBF],
+            [0xF8, 0x90, 0x80, 0x80], // never a lead; its low bits would give U+10000
+            [0xFC, 0x80, 0x80, 0x80], // likewise U+100000
+            [0xE4, 0xB8], // truncated
+            [0xF0, 0x9F, 0x98], // truncated
+            [0xF1, 0x80, 0x80], // truncated, would read as a 3-byte sequence past U+0800
+            [0xF4, 0x8F, 0xBF], // truncated, likewise
+            [0xE4, 0xC3, 0xA9], // lead, then a 2-byte sequence where continuations belong
+            [0xE4, 0xB8, 0xC3], // lead, continuation, then a 2-byte lead
+            [0xF0, 0x9F, 0x98, 0xC3], // three of four bytes, then a 2-byte lead
+            [0xF0, 0xC3, 0x98, 0x80],
+            [0x80], [0xBF], [0xC3, 0xA9], [0x0A], [0x1B, (byte)'[', (byte)'m'],
+        ];
+        byte[] soup = [0x80, 0xBF, 0xC3, 0xE4, 0xED, 0xEF, 0xF0, 0xF4, 0xF5, 0x41];
+        var random = new Random(2027);
+        for (var iteration = 0; iteration < 400; iteration++)
+        {
+            var bytes = new List<byte>();
+            for (var piece = 0; piece < 12; piece++)
+            {
+                var kind = random.Next(12);
+                if (kind == 8)
+                {
+                    bytes.AddRange(malformed[random.Next(malformed.Length)]);
+                }
+                else if (kind == 9)
+                {
+                    // Random lead and continuation bytes in any order.
+                    for (var count = random.Next(1, 5); count > 0; count--)
+                    {
+                        bytes.Add(soup[random.Next(soup.Length)]);
+                    }
+                }
+                else if (kind == 10)
+                {
+                    // A short ASCII stretch joins the run and shifts block alignment
+                    // within the 256-rune buffer the parser decodes into.
+                    for (var count = random.Next(1, 4); count > 0; count--)
+                    {
+                        bytes.Add((byte)random.Next(0x21, 0x7F));
+                    }
+                }
+                else
+                {
+                    // A run of one length class: usually long enough for a few blocks,
+                    // sometimes longer than the 256-rune buffer.
+                    var four = kind is >= 4 and < 8;
+                    var length = kind == 11 ? random.Next(250, 300) : random.Next(1, 14);
+                    for (var index = 0; index < length; index++)
+                    {
+                        var scalar = random.Next(3) == 0
+                            ? (four ? fourByteScalars : threeByteScalars)[random.Next(four ? fourByteScalars.Length : threeByteScalars.Length)]
+                            : four ? random.Next(0x10000, 0x110000) : RandomThreeByteScalar(random);
+                        bytes.AddRange(Encoding.UTF8.GetBytes(char.ConvertFromUtf32(scalar)));
+                    }
+                }
+            }
+
+            AssertSameDispatch($"wide runs #{iteration}", [.. bytes], random);
+        }
+
+        static int RandomThreeByteScalar(Random random)
+        {
+            while (true)
+            {
+                var scalar = random.Next(0x800, 0x10000);
+                if (scalar is < 0xD800 or > 0xDFFF)
+                {
+                    return scalar;
+                }
+            }
+        }
+    }
+
+    [Fact]
     public void NestedCsiLeavesTheOuterParametersIntact()
     {
         // The one-pass parse writes into reused dispatch arrays; a handler that
