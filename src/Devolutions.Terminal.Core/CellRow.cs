@@ -203,7 +203,9 @@ internal readonly struct PackedCell
 /// One line of packed cells. The indexer converts to and from the public
 /// <see cref="Cell"/> so buffer code keeps its value semantics; hot paths use the
 /// bulk members. Side arrays exist only while some cell of the line carries
-/// combining text or a hyperlink, and are bounded by the line width.
+/// combining text or a hyperlink, and are bounded by the line width. Combining
+/// text is stored as <see cref="CombiningTable"/> IDs; rows that share a table
+/// copy IDs between them, others copy the text.
 /// </summary>
 /// <remarks>
 /// Only cells in <c>[_lo, _hi)</c> are stored; every other cell is logically
@@ -215,7 +217,12 @@ internal readonly struct PackedCell
 internal sealed class CellRow
 {
     private readonly PackedCell[] _cells;
-    private string?[]? _combining;
+    private readonly CombiningTable _table;
+    // Combining text IDs; 0 is none.
+    private int[]? _combining;
+    // The combining array a Reset released, reused (cleared) by the next line
+    // content needing one, so recycled scrollback lines allocate none.
+    private int[]? _spareCombining;
     private string?[]? _hyperlinks;
     private PackedCell _blank;
     private int _lo;
@@ -224,31 +231,46 @@ internal sealed class CellRow
     // so writes cannot split one and need no clearing around them.
     private bool _mayHoldWide;
 
-    public CellRow(int columns, CellAttributes attributes)
+    public CellRow(int columns, CellAttributes attributes, CombiningTable? table = null)
     {
         _cells = GC.AllocateUninitializedArray<PackedCell>(columns);
         _blank = PackedCell.Blank(attributes);
+        _table = table ?? new CombiningTable();
     }
 
-    private CellRow(PackedCell[] cells)
+    private CellRow(PackedCell[] cells, CombiningTable table)
     {
         _cells = cells;
+        _table = table;
     }
 
     public int Length => _cells.Length;
 
     public Cell this[int x]
     {
-        get => CellAt(x).ToCell(_combining?[x], _hyperlinks?[x]);
+        get => CellAt(x).ToCell(CombiningAt(x), _hyperlinks?[x]);
         set
         {
             PrepareWrite(x, 1);
             var packed = PackedCell.From(value);
             _cells[x] = packed;
             NoteStored(packed);
-            SetSide(ref _combining, x, value.CombiningCharacters);
+            SetCombining(x, _table.Intern(value.CombiningCharacters));
             SetSide(ref _hyperlinks, x, value.HyperlinkUri);
         }
+    }
+
+    /// <summary>
+    /// Equivalent to reading cell <paramref name="x"/> and storing it back with
+    /// <paramref name="rune"/> appended to its combining text.
+    /// </summary>
+    public void AppendCombining(int x, Rune rune)
+    {
+        var cell = CellAt(x);
+        PrepareWrite(x, 1);
+        _cells[x] = cell;
+        NoteStored(cell);
+        SetCombining(x, _table.Extend(CombiningIdAt(x), rune));
     }
 
     /// <summary>Equivalent to the indexer storing a cell with these fields, without building one.</summary>
@@ -267,7 +289,7 @@ internal sealed class CellRow
         var packed = PackedCell.From(rune, attributes, isProtected, isWideContinuation, storedWidth, shellIntegration);
         _cells[x] = packed;
         NoteStored(packed);
-        SetSide(ref _combining, x, combining);
+        SetCombining(x, _table.Intern(combining));
         SetSide(ref _hyperlinks, x, hyperlink);
     }
 
@@ -326,7 +348,7 @@ internal sealed class CellRow
         PrepareWrite(x, 1);
         _cells[x] = cell;
         NoteStored(cell);
-        SetSide(ref _combining, x, null);
+        SetCombining(x, 0);
         SetSide(ref _hyperlinks, x, hyperlink);
     }
 
@@ -337,13 +359,14 @@ internal sealed class CellRow
 
     public Rune RuneAt(int x) => CellAt(x).Rune;
 
-    public string? CombiningAt(int x) => _combining?[x];
+    public string? CombiningAt(int x) => _table[CombiningIdAt(x)];
 
-    public bool IsBlank(int x) => CellAt(x).IsBlankIgnoringCombining && string.IsNullOrEmpty(_combining?[x]);
+    public bool IsBlank(int x) =>
+        CellAt(x).IsBlankIgnoringCombining && CombiningIdAt(x) is var id && (id == 0 || _table[id]!.Length == 0);
 
-    public static CellRow FromCells(ReadOnlySpan<Cell> cells, int columns)
+    public static CellRow FromCells(ReadOnlySpan<Cell> cells, int columns, CombiningTable? table = null)
     {
-        var row = new CellRow(columns, CellAttributes.Default);
+        var row = new CellRow(columns, CellAttributes.Default, table);
         var count = Math.Min(cells.Length, columns);
         for (var x = 0; x < count; x++)
         {
@@ -371,7 +394,12 @@ internal sealed class CellRow
         _lo = 0;
         _hi = 0;
         _mayHoldWide = false;
-        _combining = null;
+        if (_combining is not null)
+        {
+            _spareCombining = _combining;
+            _combining = null;
+        }
+
         _hyperlinks = null;
     }
 
@@ -419,7 +447,16 @@ internal sealed class CellRow
         var packed = PackedCell.From(cell);
         _cells.AsSpan(start, count).Fill(packed);
         NoteStored(packed);
-        FillSide(ref _combining, start, count, cell.CombiningCharacters);
+        var combining = _table.Intern(cell.CombiningCharacters);
+        if (combining != 0)
+        {
+            CombiningArray().AsSpan(start, count).Fill(combining);
+        }
+        else
+        {
+            ClearSide(_combining, start, count);
+        }
+
         FillSide(ref _hyperlinks, start, count, cell.HyperlinkUri);
     }
 
@@ -462,7 +499,7 @@ internal sealed class CellRow
         _cells[x] = template.WithRune(new Rune(value));
         if (_combining is not null)
         {
-            _combining[x] = null;
+            _combining[x] = 0;
         }
 
         if (hyperlink is not null)
@@ -487,13 +524,35 @@ internal sealed class CellRow
         destination.PrepareWrite(destinationIndex, count);
         destination._mayHoldWide |= _mayHoldWide;
         _cells.AsSpan(sourceIndex, count).CopyTo(destination._cells.AsSpan(destinationIndex, count));
-        CopySide(_combining, ref destination._combining, sourceIndex, destinationIndex, count, destination.Length);
+        if (ReferenceEquals(_table, destination._table))
+        {
+            if (_combining is not null)
+            {
+                Array.Copy(_combining, sourceIndex, destination.CombiningArray(), destinationIndex, count);
+            }
+            else
+            {
+                ClearSide(destination._combining, destinationIndex, count);
+            }
+        }
+        else
+        {
+            // IDs mean nothing in another table; carry the text. (A row copying
+            // within itself always takes the branch above.)
+            for (var offset = 0; offset < count; offset++)
+            {
+                destination.SetCombining(
+                    destinationIndex + offset,
+                    destination._table.Intern(CombiningAt(sourceIndex + offset)));
+            }
+        }
+
         CopySide(_hyperlinks, ref destination._hyperlinks, sourceIndex, destinationIndex, count, destination.Length);
     }
 
-    public CellRow Clone() => new((PackedCell[])_cells.Clone())
+    public CellRow Clone() => new((PackedCell[])_cells.Clone(), _table)
     {
-        _combining = (string?[]?)_combining?.Clone(),
+        _combining = (int[]?)_combining?.Clone(),
         _hyperlinks = (string?[]?)_hyperlinks?.Clone(),
         _blank = _blank,
         _lo = _lo,
@@ -623,6 +682,64 @@ internal sealed class CellRow
         PrepareWrite(start, end - start);
     }
 
+    private int CombiningIdAt(int x) => _combining?[x] ?? 0;
+
+    private void SetCombining(int x, int id)
+    {
+        if (id != 0)
+        {
+            CombiningArray()[x] = id;
+        }
+        else if (_combining is not null)
+        {
+            _combining[x] = 0;
+        }
+    }
+
+    // The combining array, taking the spare one or allocating it on first use.
+    private int[] CombiningArray()
+    {
+        if (_combining is null)
+        {
+            if (_spareCombining is { } spare)
+            {
+                Array.Clear(spare);
+                _combining = spare;
+                _spareCombining = null;
+            }
+            else
+            {
+                _combining = new int[_cells.Length];
+            }
+        }
+
+        return _combining;
+    }
+
+    /// <summary>Marks in <paramref name="live"/> every combining ID this row holds.</summary>
+    public void MarkCombining(bool[] live)
+    {
+        if (_combining is not null)
+        {
+            foreach (var id in _combining)
+            {
+                live[id] = true;
+            }
+        }
+    }
+
+    /// <summary>Renumbers this row's combining IDs after <see cref="CombiningTable.Compact"/>.</summary>
+    public void RemapCombining(int[] map)
+    {
+        if (_combining is not null)
+        {
+            for (var x = 0; x < _combining.Length; x++)
+            {
+                _combining[x] = map[_combining[x]];
+            }
+        }
+    }
+
     private void SetSide(ref string?[]? side, int x, string? value)
     {
         if (value is not null)
@@ -649,7 +766,7 @@ internal sealed class CellRow
         }
     }
 
-    private static void ClearSide(string?[]? side, int start, int count)
+    private static void ClearSide<T>(T[]? side, int start, int count)
     {
         if (side is not null)
         {

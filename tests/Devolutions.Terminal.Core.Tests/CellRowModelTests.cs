@@ -5,8 +5,8 @@ using Xunit;
 namespace Devolutions.Terminal.Core.Tests;
 
 /// <summary>
-/// <see cref="CellRow"/> packs cells, keeps rare strings in side arrays and
-/// leaves a logically blank tail unwritten. Random operation sequences must
+/// <see cref="CellRow"/> packs cells, keeps rare strings in side arrays (combining
+/// text as interned IDs) and leaves a logically blank tail unwritten. Random operation sequences must
 /// leave it indistinguishable from a plain <see cref="Cell"/> array.
 /// </summary>
 public sealed class CellRowModelTests
@@ -20,7 +20,10 @@ public sealed class CellRowModelTests
         for (var iteration = 0; iteration < 300; iteration++)
         {
             var attributes = RandomAttributes(random);
-            var rows = new[] { new CellRow(Columns, attributes), new CellRow(Columns, CellAttributes.Default) };
+            // Rows of one buffer share a combining table and copy IDs; rows with
+            // their own tables copy the text.
+            var table = iteration % 2 == 0 ? new CombiningTable() : null;
+            var rows = new[] { new CellRow(Columns, attributes, table), new CellRow(Columns, CellAttributes.Default, table) };
             var models = new[] { Blank(attributes), Blank(CellAttributes.Default) };
             for (var step = 0; step < 40; step++)
             {
@@ -30,7 +33,7 @@ public sealed class CellRowModelTests
                 var start = random.Next(Columns);
                 var count = random.Next(0, Columns - start + 1);
                 string operation;
-                switch (random.Next(9))
+                switch (random.Next(10))
                 {
                     case 0:
                         var cell = RandomCell(random);
@@ -119,6 +122,12 @@ public sealed class CellRowModelTests
 
                         operation = $"append {start}+{written}";
                         break;
+                    case 8:
+                        var mark = new Rune(random.Next(2) == 0 ? 0x0301 : 0x200D);
+                        row.AppendCombining(start, mark);
+                        model[start].CombiningCharacters = (model[start].CombiningCharacters ?? string.Empty) + mark;
+                        operation = $"combine {start}";
+                        break;
                     default:
                         rows[target] = row.Clone();
                         operation = "clone";
@@ -174,7 +183,8 @@ public sealed class CellRowModelTests
         IsProtected = random.Next(4) == 0,
         IsWideContinuation = random.Next(5) == 0,
         StoredWidth = (byte)random.Next(0, 3),
-        CombiningCharacters = random.Next(4) == 0 ? "\u0301" : null,
+        // A cell can carry empty combining text, which is not the same as none.
+        CombiningCharacters = random.Next(8) switch { 0 or 1 => "\u0301", 2 => string.Empty, _ => null },
         HyperlinkUri = random.Next(4) == 0 ? "https://example.test" : null,
         ShellIntegration = (ShellIntegrationKind)random.Next(4),
     };
