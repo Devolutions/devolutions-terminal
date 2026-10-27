@@ -91,6 +91,27 @@ internal readonly struct PackedCell
     public PackedCell WithRune(Rune rune) =>
         new((_meta & ~RuneMask) | (uint)rune.Value, _foreground, _background, _flags);
 
+    /// <summary>This cell's 16 bytes with the rune cleared, for <see cref="StoreWithRune"/>.</summary>
+    public Vector128<ulong> RuneFreeBits => Unsafe.BitCast<PackedCell, Vector128<ulong>>(WithRune(default));
+
+    /// <summary>
+    /// Stores the cell whose <see cref="RuneFreeBits"/> are given with
+    /// <paramref name="rune"/> as its rune: one OR and one 16-byte write instead of
+    /// a write per field.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void StoreWithRune(ref PackedCell destination, Vector128<ulong> runeFreeBits, int rune)
+    {
+        if (!BitConverter.IsLittleEndian)
+        {
+            destination = Unsafe.BitCast<Vector128<ulong>, PackedCell>(runeFreeBits).WithRune(Unsafe.BitCast<int, Rune>(rune));
+            return;
+        }
+
+        // On little-endian hardware the rune bits are the low bits of the first word.
+        (runeFreeBits | Vector128.CreateScalar((ulong)(uint)rune)).StoreUnsafe(ref Unsafe.As<PackedCell, ulong>(ref destination));
+    }
+
     public PackedCell WithWidth(byte storedWidth, bool isWideContinuation) =>
         new(
             (_meta & ~((7u << WidthShift) | (1u << WideShift))) |
@@ -268,20 +289,22 @@ internal sealed class CellRow
     {
         PrepareWrite(start, end - start);
         var cells = _cells.AsSpan(start, end - start);
+        var narrowBits = narrow.RuneFreeBits;
+        var wideBits = wide.RuneFreeBits;
         var x = 0;
         for (var index = 0; index < runes.Length; index++)
         {
-            var rune = runes[index];
+            var rune = runes[index].Value;
             if (widths[index] == 2)
             {
-                cells[x] = wide.WithRune(rune);
+                PackedCell.StoreWithRune(ref cells[x], wideBits, rune);
                 cells[x + 1] = continuation;
                 x += 2;
                 _mayHoldWide = true;
             }
             else
             {
-                cells[x++] = narrow.WithRune(rune);
+                PackedCell.StoreWithRune(ref cells[x++], narrowBits, rune);
             }
         }
 

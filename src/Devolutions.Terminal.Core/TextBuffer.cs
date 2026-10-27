@@ -1,6 +1,8 @@
 using System.Text;
 using System.Globalization;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
 
 namespace Devolutions.Terminal.Core;
 
@@ -547,6 +549,7 @@ public sealed class TextBuffer
         }
 
         UpdateRuneTemplates();
+        var simpleWidths = CurrentSimpleWidths();
         var hyperlink = CurrentHyperlinkUri;
         var widths = _segmentWidths;
         var line = GetLiveLine(CursorY);
@@ -562,7 +565,7 @@ public sealed class TextBuffer
             var rune = runes[index];
             // Only the per-rune path below can set a pending Prepend.
             var width = _pendingPrepend is null && !_mayHoldLonePrepend
-                ? SimpleWidth(rune, previousEndsWithoutZwj)
+                ? SimpleWidth(rune, simpleWidths, previousEndsWithoutZwj)
                 : 0;
             if (width == 0)
             {
@@ -605,45 +608,23 @@ public sealed class TextBuffer
             var row = line.Cells;
             var end = CursorX;
             var next = index;
-            if (!row.MayHoldWide && row.CanAppendAt(CursorX))
+            // A line narrower than a wide glyph (one effective column) keeps the
+            // bounds-checked path below.
+            if (!row.MayHoldWide && row.CanAppendAt(CursorX) && CursorX + width <= effectiveColumns)
             {
                 // No wide glyph in the row can straddle the segment, so classify and
                 // store in one pass.
-                var cells = row.BeginAppend(CursorX);
-                var narrow = _narrowTemplate;
-                var wide = _wideTemplate;
-                var continuation = _continuationTemplate;
-                var limit = effectiveColumns - CursorX;
-                var written = 0;
-                var wroteWide = false;
-                while (true)
-                {
-                    var stored = runes[next];
-                    if (width == 2)
-                    {
-                        cells[written] = wide.WithRune(stored);
-                        cells[written + 1] = continuation;
-                        wroteWide = true;
-                    }
-                    else
-                    {
-                        cells[written] = narrow.WithRune(stored);
-                    }
-
-                    written += width;
-                    next++;
-                    if (next == runes.Length)
-                    {
-                        break;
-                    }
-
-                    width = SimpleWidth(runes[next], previousEndsWithoutZwj: true);
-                    if (width == 0 || written + width > limit)
-                    {
-                        break;
-                    }
-                }
-
+                next = index + AppendSimpleRunes(
+                    row.BeginAppend(CursorX),
+                    runes[index..],
+                    width,
+                    effectiveColumns - CursorX,
+                    simpleWidths,
+                    _narrowBits,
+                    _wideBits,
+                    _continuationTemplate,
+                    out var written,
+                    out var wroteWide);
                 end = CursorX + written;
                 row.EndAppend(CursorX, end, hyperlink, wroteWide);
             }
@@ -656,7 +637,7 @@ public sealed class TextBuffer
                     end += width;
                     next++;
                     width = next < runes.Length && next - index < widths.Length
-                        ? SimpleWidth(runes[next], previousEndsWithoutZwj: true)
+                        ? SimpleWidth(runes[next], simpleWidths, previousEndsWithoutZwj: true)
                         : 0;
                 }
                 while (width != 0 && end + width <= effectiveColumns);
@@ -692,12 +673,15 @@ public sealed class TextBuffer
         return advanced;
     }
 
-    // Packed cells for runes stored by PrintRunes. The narrow one is packed per
-    // call (a few integer operations) and doubles as the cache key: the wide and
-    // continuation cells are derived again only when it changes.
+    // Packed cells for runes stored by PrintRunes, and the narrow and wide ones
+    // without their rune for PackedCell.StoreWithRune. The narrow one is packed per
+    // call (a few integer operations) and doubles as the cache key: the others are
+    // derived again only when it changes.
     private PackedCell _narrowTemplate;
     private PackedCell _wideTemplate;
     private PackedCell _continuationTemplate;
+    private Vector128<ulong> _narrowBits;
+    private Vector128<ulong> _wideBits;
     private bool _templatesBuilt;
     private readonly byte[] _segmentWidths = new byte[256];
 
@@ -712,7 +696,76 @@ public sealed class TextBuffer
         _narrowTemplate = narrow;
         _wideTemplate = narrow.WithWidth(2, isWideContinuation: false);
         _continuationTemplate = narrow.WithWidth(0, isWideContinuation: true);
+        _narrowBits = narrow.RuneFreeBits;
+        _wideBits = _wideTemplate.RuneFreeBits;
         _templatesBuilt = true;
+    }
+
+    /// <summary>
+    /// The append loop of <see cref="PrintRunes"/>, kept apart so its state stays in
+    /// registers. Stores <paramref name="runes"/> from the first, whose simple
+    /// <paramref name="width"/> fits in <paramref name="limit"/> cells, while each
+    /// next rune is also simple and still fits. Every rune after the first follows
+    /// a cell stored here, so none can join it. Returns the runes stored;
+    /// <paramref name="written"/> is the cells they took.
+    /// </summary>
+    private static int AppendSimpleRunes(
+        Span<PackedCell> cells,
+        ReadOnlySpan<Rune> runes,
+        int width,
+        int limit,
+        byte[] simpleWidths,
+        Vector128<ulong> narrowBits,
+        Vector128<ulong> wideBits,
+        PackedCell continuation,
+        out int written,
+        out bool wroteWide)
+    {
+        // These bound every write below, which therefore skips per-cell checks.
+        if ((uint)limit > (uint)cells.Length || width is not (1 or 2) || width > limit || runes.IsEmpty)
+        {
+            throw new ArgumentOutOfRangeException(nameof(limit));
+        }
+
+        ref var cell = ref MemoryMarshal.GetReference(cells);
+        ref var rune = ref MemoryMarshal.GetReference(runes);
+        // Vector arguments can arrive by reference; locals keep them in registers
+        // instead of reloading them after every store.
+        var narrow = narrowBits;
+        var wide = wideBits;
+        var continuationBits = Unsafe.BitCast<PackedCell, Vector128<ulong>>(continuation);
+        var count = 0;
+        var stored = 0;
+        while (true)
+        {
+            var value = Unsafe.Add(ref rune, count).Value;
+            if (width == 2)
+            {
+                PackedCell.StoreWithRune(ref Unsafe.Add(ref cell, stored), wide, value);
+                continuationBits.StoreUnsafe(ref Unsafe.As<PackedCell, ulong>(ref Unsafe.Add(ref cell, stored + 1)));
+            }
+            else
+            {
+                PackedCell.StoreWithRune(ref Unsafe.Add(ref cell, stored), narrow, value);
+            }
+
+            stored += width;
+            if (++count == runes.Length)
+            {
+                break;
+            }
+
+            width = SimpleWidth(Unsafe.Add(ref rune, count), simpleWidths, previousEndsWithoutZwj: true);
+            if (width == 0 || stored + width > limit)
+            {
+                break;
+            }
+        }
+
+        // Only a wide rune takes more than one cell.
+        written = stored;
+        wroteWide = stored != count;
+        return count;
     }
 
     /// <summary>
@@ -721,40 +774,57 @@ public sealed class TextBuffer
     /// grapheme: either it has no join property at all, or it is an
     /// Extended_Pictographic scalar whose only possible join (GB11) needs combining
     /// text ending in ZWJ, which the previous cell is known not to have. The caller
-    /// has ruled out a pending or lone Prepend.
+    /// has ruled out a pending or lone Prepend. <paramref name="simpleWidths"/> is
+    /// <see cref="CurrentSimpleWidths"/>.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static int SimpleWidth(Rune rune, bool previousEndsWithoutZwj)
+    private static int SimpleWidth(Rune rune, byte[] simpleWidths, bool previousEndsWithoutZwj)
     {
-        var simpleClass = rune.Value < SimpleClasses.Length ? SimpleClasses[rune.Value] : ClassifySimple(rune);
-        if ((simpleClass & NeverSimple) != 0 ||
-            ((simpleClass & SimpleAfterZwjFreeCell) != 0 && !previousEndsWithoutZwj))
-        {
-            return 0;
-        }
-
-        return WcWidth.ResolveWidth((byte)(simpleClass & 3));
+        var simple = (uint)rune.Value < (uint)simpleWidths.Length
+            ? simpleWidths[rune.Value]
+            : SimpleWidthBeyondTables(rune);
+        return (simple & SimpleAfterZwjFreeCell) != 0 && !previousEndsWithoutZwj ? 0 : simple & 3;
     }
 
-    // SimpleWidth's inputs in one load per rune for planes 0 and 1: the width class
-    // in the low two bits, plus whether the rune needs the per-rune path or may
-    // skip it only after a cell without a trailing ZWJ.
+    // SimpleWidth's inputs in one load per rune for planes 0 and 1, with ambiguous
+    // widths already resolved: the width in the low two bits (0 when the rune needs
+    // the per-rune path), plus whether it may skip that path only after a cell
+    // without a trailing ZWJ. There is one table per AmbiguousAsWide setting; the
+    // wide one is built on first use.
     private const byte SimpleAfterZwjFreeCell = 4;
     private const byte NeverSimple = 8;
-    private static readonly byte[] SimpleClasses = BuildSimpleClasses();
+    private static readonly byte[] SimpleWidthsAmbiguousNarrow = BuildSimpleWidths(ambiguousAsWide: false);
+    private static byte[]? _simpleWidthsAmbiguousWide;
 
-    private static byte[] BuildSimpleClasses()
+    private static byte[] CurrentSimpleWidths() =>
+        WcWidth.AmbiguousAsWide
+            ? (_simpleWidthsAmbiguousWide ??= BuildSimpleWidths(ambiguousAsWide: true))
+            : SimpleWidthsAmbiguousNarrow;
+
+    private static byte[] BuildSimpleWidths(bool ambiguousAsWide)
     {
-        var classes = new byte[0x20000];
-        for (var value = 0; value < classes.Length; value++)
+        var widths = new byte[0x20000];
+        for (var value = 0; value < widths.Length; value++)
         {
             if (value is < 0xD800 or > 0xDFFF)
             {
-                classes[value] = ClassifySimple(new Rune(value));
+                widths[value] = ResolveSimple(ClassifySimple(new Rune(value)), ambiguousAsWide);
             }
         }
 
-        return classes;
+        return widths;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static byte SimpleWidthBeyondTables(Rune rune) =>
+        ResolveSimple(ClassifySimple(rune), WcWidth.AmbiguousAsWide);
+
+    private static byte ResolveSimple(byte simpleClass, bool ambiguousAsWide)
+    {
+        var width = WcWidth.ResolveWidth((byte)(simpleClass & 3), ambiguousAsWide);
+        return (simpleClass & NeverSimple) != 0 || width == 0
+            ? (byte)0
+            : (byte)(width | (simpleClass & SimpleAfterZwjFreeCell));
     }
 
     // Built from ClassifyJoin, not the JoinClasses table, which static
