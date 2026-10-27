@@ -40,6 +40,7 @@ public sealed class VtParser
     }
 
     private readonly IVtDispatch _dispatch;
+    private readonly TerminalEngine? _engine;
     private readonly int[] _parameters = new int[MaxParameters];
     private readonly bool[] _subparameters = new bool[MaxParameters];
     private readonly int[] _csiParameters = new int[MaxParameters];
@@ -71,6 +72,7 @@ public sealed class VtParser
     public VtParser(IVtDispatch dispatch)
     {
         _dispatch = dispatch;
+        _engine = dispatch as TerminalEngine;
     }
 
     public void Process(ReadOnlySpan<byte> data)
@@ -290,31 +292,72 @@ public sealed class VtParser
             return 0;
         }
 
-        // The state after ESC and '[' (and the private marker, if any).
-        ClearSequence();
-        _state = State.CsiParam;
-        _privateMarker = privateMarker;
+        if (_csiDispatchDepth > 0)
+        {
+            // A handler feeding this parser again must not overwrite the outer
+            // sequence's dispatch arrays: take the state machine's copying path,
+            // from the state after ESC and '[' (and the private marker, if any).
+            ClearSequence();
+            _state = State.CsiParam;
+            _privateMarker = privateMarker;
+            for (var index = start; index < final; index++)
+            {
+                var value = data[index];
+                if (value == (byte)';')
+                {
+                    PushParameter();
+                    _nextIsSubparameter = false;
+                }
+                else if (value == (byte)':')
+                {
+                    PushParameter();
+                    _nextIsSubparameter = true;
+                }
+                else
+                {
+                    _currentParameter = _currentParameter < 0 ? 0 : _currentParameter;
+                    _currentParameter = Math.Min((_currentParameter * 10) + (value - '0'), 65535);
+                }
+            }
+
+            DispatchCsi(data[final]);
+            return final + 1;
+        }
+
+        // Parse straight into the dispatch arrays with the pushes the state machine
+        // would make, writing every flag below the count. The sequence fields are
+        // untouched: ground state never reads them before ESC or CSI clears them.
+        var parameters = _csiParameters;
+        var subparameters = _csiSubparameters;
+        var count = 0;
+        var current = -1;
+        var nextIsSubparameter = false;
         for (var index = start; index < final; index++)
         {
             var value = data[index];
-            if (value == (byte)';')
+            if (value is (byte)';' or (byte)':')
             {
-                PushParameter();
-                _nextIsSubparameter = false;
-            }
-            else if (value == (byte)':')
-            {
-                PushParameter();
-                _nextIsSubparameter = true;
+                // At most MaxParameters separators, so this push always fits.
+                subparameters[count] = nextIsSubparameter;
+                parameters[count++] = current;
+                current = -1;
+                nextIsSubparameter = value == (byte)':';
             }
             else
             {
-                _currentParameter = _currentParameter < 0 ? 0 : _currentParameter;
-                _currentParameter = Math.Min((_currentParameter * 10) + (value - '0'), 65535);
+                current = Math.Min((Math.Max(current, 0) * 10) + (value - '0'), 65535);
             }
         }
 
-        DispatchCsi(data[final]);
+        // The final push; one past the limit is dropped and the sequence still
+        // dispatches, as in DispatchCsi.
+        if ((current >= 0 || count > 0) && count < MaxParameters)
+        {
+            subparameters[count] = nextIsSubparameter;
+            parameters[count++] = current;
+        }
+
+        InvokeCsi(data[final], parameters, subparameters, count, 0, privateMarker);
         return final + 1;
     }
 
@@ -744,10 +787,6 @@ public sealed class VtParser
             PushParameterIfNeeded();
         }
 
-        var enterVt52 = final == (byte)'l' &&
-                        _privateMarker == (byte)'?' &&
-                        _parameterCount == 1 &&
-                        _parameters[0] == 2;
         _state = State.Ground;
         var parameterCount = _parameterCount;
         var intermediate = _intermediate;
@@ -766,15 +805,44 @@ public sealed class VtParser
             subparameters[index] = _subparameters[index];
         }
         ClearSequence();
+        InvokeCsi(final, parameters, subparameters, parameterCount, intermediate, privateMarker);
+    }
+
+    private void InvokeCsi(
+        byte final,
+        int[] parameters,
+        bool[] subparameters,
+        int count,
+        byte intermediate,
+        byte privateMarker)
+    {
+        var enterVt52 = final == (byte)'l' &&
+                        privateMarker == (byte)'?' &&
+                        count == 1 &&
+                        parameters[0] == 2;
         _csiDispatchDepth++;
         try
         {
-            _dispatch.CsiDispatch(
-                (char)final,
-                parameters.AsSpan(0, parameterCount),
-                subparameters.AsSpan(0, parameterCount),
-                intermediate,
-                privateMarker);
+            // The engine is sealed: call it directly rather than through the
+            // interface and its explicit implementation.
+            if (_engine is not null)
+            {
+                _engine.DispatchCsi(
+                    (char)final,
+                    parameters.AsSpan(0, count),
+                    subparameters.AsSpan(0, count),
+                    intermediate,
+                    privateMarker);
+            }
+            else
+            {
+                _dispatch.CsiDispatch(
+                    (char)final,
+                    parameters.AsSpan(0, count),
+                    subparameters.AsSpan(0, count),
+                    intermediate,
+                    privateMarker);
+            }
         }
         finally
         {
@@ -1151,6 +1219,8 @@ public sealed class VtParser
             return;
         }
 
+        // Every push writes its flag, so the flags below the count always belong
+        // to the current sequence and nothing needs to clear them.
         _subparameters[_parameterCount] = _nextIsSubparameter;
         _parameters[_parameterCount++] = _currentParameter;
         _currentParameter = -1;
@@ -1166,12 +1236,6 @@ public sealed class VtParser
 
     private void ClearSequence()
     {
-        // PushParameter sets flags only below the count, so only those can be set.
-        for (var index = 0; index < _parameterCount; index++)
-        {
-            _subparameters[index] = false;
-        }
-
         _parameterCount = 0;
         _currentParameter = -1;
         _intermediate = 0;

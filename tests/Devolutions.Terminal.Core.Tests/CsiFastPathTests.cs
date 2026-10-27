@@ -87,6 +87,18 @@ public sealed class CsiFastPathTests
         }
     }
 
+    [Fact]
+    public void NestedCsiLeavesTheOuterParametersIntact()
+    {
+        // The one-pass parse writes into reused dispatch arrays; a handler that
+        // feeds the parser again must not overwrite the sequence it is handling.
+        var dispatch = new ReentrantDispatch();
+        dispatch.Parser = new VtParser(dispatch);
+        dispatch.Parser.Process(Encoding.UTF8.GetBytes($"{Esc}[1;2:3m"));
+
+        Assert.Equal(["H [9,8] [False,False]", "m [1,2,3] [False,False,True]"], dispatch.Calls);
+    }
+
     private static void AssertSameDispatch(string name, byte[] bytes, Random random)
     {
         var bytewise = new RecordingDispatch();
@@ -164,5 +176,47 @@ public sealed class CsiFastPathTests
         public void OscDispatch(int command, ReadOnlySpan<char> data) => Calls.Add($"osc {command} {data.ToString()}");
 
         public void ApcDispatch(ReadOnlySpan<char> data) => Calls.Add($"apc {data.ToString()}");
+    }
+
+    // Handles SGR by feeding a cursor move first, then records the SGR it was given.
+    private sealed class ReentrantDispatch : IVtDispatch
+    {
+        public VtParser Parser { get; set; } = null!;
+
+        public List<string> Calls { get; } = [];
+
+        public void Print(Rune rune)
+        {
+        }
+
+        public void ExecuteC0(byte control)
+        {
+        }
+
+        public void EscDispatch(char final, byte intermediate)
+        {
+        }
+
+        public void CsiDispatch(char final, ReadOnlySpan<int> parameters, byte intermediate, bool privateMarker) =>
+            throw new InvalidOperationException("the parser dispatches the detailed overload");
+
+        public void CsiDispatch(
+            char final,
+            ReadOnlySpan<int> parameters,
+            ReadOnlySpan<bool> subparameters,
+            byte intermediate,
+            byte privateMarker)
+        {
+            if (final == 'm')
+            {
+                Parser.Process(Encoding.UTF8.GetBytes($"{Esc}[9;8H"));
+            }
+
+            Calls.Add($"{final} [{string.Join(',', parameters.ToArray())}] [{string.Join(',', subparameters.ToArray())}]");
+        }
+
+        public void OscDispatch(int command, ReadOnlySpan<char> data)
+        {
+        }
     }
 }
