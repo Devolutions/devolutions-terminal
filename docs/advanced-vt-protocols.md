@@ -3,9 +3,8 @@
 > [!NOTE]
 > Windows local sessions use the bundled Microsoft ConPTY runtime, including
 > `OpenConsole.exe`, rather than the OS copy that filters Sixel on some Windows
-> builds. With the built-in engine, Sixel producers such as `Get-XKCD -Show`
-> can render inline images. Other transports must likewise preserve graphics
-> payloads; the optional Ghostty engine does not expose image resources.
+> builds. Sixel producers such as `Get-XKCD -Show` can therefore render inline
+> images. Other transports must likewise preserve graphics payloads.
 
 `Devolutions.Terminal.Core` parses advanced string protocols without depending on Avalonia,
 Skia, Win32, or an image codec. It exposes decoded Sixel pixels and bounded
@@ -140,7 +139,6 @@ delete or reset does not paint stale cached pixels.
 - kitty cell/z-index/number-targeted deletes (`d=c/x/y/z/n`) — silent no-op;
   the cursor for `f=100` images without `r` stays put because Core retains codec
   bytes without decoding dimensions
-- Ghostty image projection (the pinned C ABI exposes no image resources)
 
 These gaps avoid remote I/O and renderer/input dependencies while keeping every
 implemented parser and downloadable resource path bounded.

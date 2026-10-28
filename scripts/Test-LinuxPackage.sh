@@ -103,7 +103,7 @@ validate_rpm_metadata() {
         grep -E -- "^-rwxr-xr-x .* /opt/devolutions-terminal/$executable$" \
             <<<"$listing" >/dev/null
     done
-    for library in libSkiaSharp.so libHarfBuzzSharp.so libghostty-vt.so; do
+    for library in libSkiaSharp.so libHarfBuzzSharp.so; do
         grep -E -- "^-rw-r--r-- .* /opt/devolutions-terminal/$library$" \
             <<<"$listing" >/dev/null
     done
@@ -145,7 +145,7 @@ PY
     local listing="$work/appimage-listing"
     unsquashfs -lln -o "$(cat "$work/appimage-offset")" "$package" > "$listing"
     grep -E -- '^-rwxr-xr-x .* squashfs-root/opt/devolutions-terminal/(Devolutions.Terminal|dt|dt-pty-host)$' "$listing" >/dev/null
-    grep -E -- '^-rw-r--r-- .* squashfs-root/opt/devolutions-terminal/lib(SkiaSharp|HarfBuzzSharp|ghostty-vt)\.so$' "$listing" >/dev/null
+    grep -E -- '^-rw-r--r-- .* squashfs-root/opt/devolutions-terminal/lib(SkiaSharp|HarfBuzzSharp)\.so$' "$listing" >/dev/null
     unsquashfs -no-progress -o "$(cat "$work/appimage-offset")" -d "$root" "$package" >/dev/null
     local runtime_size
     runtime_size="$(cat "$work/appimage-offset")"
@@ -281,8 +281,7 @@ validate_root() {
 
     for path in \
         "$app/Devolutions.Terminal" "$app/dt" "$app/dt-pty-host" \
-        "$app/libghostty-vt.so" "$app/libSkiaSharp.so" "$app/libHarfBuzzSharp.so" \
-        "$app/THIRD-PARTY-NOTICES-GHOSTTY.txt" \
+        "$app/libSkiaSharp.so" "$app/libHarfBuzzSharp.so" \
         "$root/usr/share/doc/$PACKAGE_NAME/LICENSE" \
         "$root/usr/share/doc/$PACKAGE_NAME/inventory.json" \
         "$root/usr/share/doc/$PACKAGE_NAME/sbom.spdx.json" \

@@ -16,7 +16,7 @@ try {
 <Project>
   <Import Project="$targets" />
   <ItemGroup>
-    <ResolvedFileToPublish Include="x86\OpenConsole.exe;x64\OpenConsole.exe;arm64\OpenConsole.exe;runtimes\win-x86\native\x86\OpenConsole.exe;runtimes\win-x86\native\x64\OpenConsole.exe;runtimes\win-x86\native\arm64\OpenConsole.exe;runtimes\win-x64\native\x64\OpenConsole.exe;runtimes\win-x64\native\arm64\OpenConsole.exe;runtimes\win-arm64\native\arm64\OpenConsole.exe;THIRD-PARTY-NOTICES-CONPTY.txt;dt;libghostty-vt.dylib" />
+    <ResolvedFileToPublish Include="x86\OpenConsole.exe;x64\OpenConsole.exe;arm64\OpenConsole.exe;runtimes\win-x86\native\x86\OpenConsole.exe;runtimes\win-x86\native\x64\OpenConsole.exe;runtimes\win-x86\native\arm64\OpenConsole.exe;runtimes\win-x64\native\x64\OpenConsole.exe;runtimes\win-x64\native\arm64\OpenConsole.exe;runtimes\win-arm64\native\arm64\OpenConsole.exe;THIRD-PARTY-NOTICES-CONPTY.txt;dt;dt-pty-host" />
   </ItemGroup>
   <Target Name="ComputeFilesToPublish" />
 </Project>
@@ -34,7 +34,7 @@ try {
         if ($hosts.Count -ne $expectedHosts -or $items.Count -ne $expectedHosts + 3) {
             throw "Unexpected publish layout for '$rid': expected $expectedHosts Windows hosts and 3 retained files, got $($hosts.Count) hosts and $($items.Count) files."
         }
-        foreach ($retained in @('THIRD-PARTY-NOTICES-CONPTY.txt', 'dt', 'libghostty-vt.dylib')) {
+        foreach ($retained in @('THIRD-PARTY-NOTICES-CONPTY.txt', 'dt', 'dt-pty-host')) {
             if (@($items | Where-Object { "$($_.Filename)$($_.Extension)" -ceq $retained }).Count -ne 1) {
                 throw "Publish layout for '$rid' lost $retained."
             }

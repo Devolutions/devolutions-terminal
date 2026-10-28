@@ -63,7 +63,6 @@ Assert-Equal -Actual $metadata.APPLE_TEAM_ID -Expected 'N592S9ASDB' -Name 'APPLE
 Assert-Equal -Actual $metadata.EXECUTABLE_NAME -Expected 'Devolutions.Terminal' -Name 'EXECUTABLE_NAME'
 Assert-Equal -Actual $metadata.CLI_NAME -Expected 'dt' -Name 'CLI_NAME'
 Assert-Equal -Actual $metadata.PTY_HOST_NAME -Expected 'dt-pty-host' -Name 'PTY_HOST_NAME'
-Assert-Equal -Actual $metadata.GHOSTTY_LIBRARY -Expected 'libghostty-vt.dylib' -Name 'GHOSTTY_LIBRARY'
 Assert-Equal -Actual $metadata.ICON_NAME -Expected 'DevolutionsTerminal' -Name 'ICON_NAME'
 Assert-Equal -Actual $metadata.MACOS_DEPLOYMENT_TARGET -Expected '13.0' -Name 'MACOS_DEPLOYMENT_TARGET'
 Assert-Equal -Actual $metadata.LICENSE_ID -Expected 'MIT AND OFL-1.1' -Name 'LICENSE_ID'

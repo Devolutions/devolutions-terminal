@@ -1,5 +1,4 @@
 using Devolutions.Terminal.Core;
-using Devolutions.Terminal.Ghostty;
 using Devolutions.Terminal.Settings;
 using Devolutions.Terminal.App.Connections;
 using Xunit;
@@ -9,7 +8,7 @@ namespace Devolutions.Terminal.App.Tests;
 public sealed class TerminalEngineFactoryTests
 {
     [Fact]
-    public void BuiltInRemainsTheDefault()
+    public void CreatesTheBuiltInEngine()
     {
         using var engine = TerminalEngineFactory.Create(new AppSettings(), new ProfileSettings());
 
@@ -17,39 +16,13 @@ public sealed class TerminalEngineFactoryTests
     }
 
     [Fact]
-    public void GlobalGhosttySelectionCreatesGhosttyEngine()
+    public void LegacyGhosttySelectionLoadsTheBuiltInEngine()
     {
-        using var engine = TerminalEngineFactory.Create(
-            new AppSettings { TerminalEngine = TerminalEngineKind.Ghostty },
-            new ProfileSettings());
+        const string user = """{ "experimental.terminalEngine": "ghostty" }""";
+        var settings = SettingsLoader.Load(SettingsLoader.ReadEmbeddedDefaults(), user);
 
-        Assert.IsType<GhosttyTerminalEngine>(engine);
-    }
-
-    [Fact]
-    public void ProfileSelectionOverridesGlobalEngine()
-    {
-        using var engine = TerminalEngineFactory.Create(
-            new AppSettings { TerminalEngine = TerminalEngineKind.Ghostty },
-            new ProfileSettings { TerminalEngine = TerminalEngineKind.BuiltIn });
+        using var engine = TerminalEngineFactory.Create(settings, new ProfileSettings());
 
         Assert.IsType<TerminalEngine>(engine);
-    }
-
-    [Fact]
-    public void ProfileDefaultsOverrideGlobalEngineWhenProfileInherits()
-    {
-        using var engine = TerminalEngineFactory.Create(
-            new AppSettings
-            {
-                TerminalEngine = TerminalEngineKind.BuiltIn,
-                ProfileDefaults = new ProfileSettings
-                {
-                    TerminalEngine = TerminalEngineKind.Ghostty,
-                },
-            },
-            new ProfileSettings());
-
-        Assert.IsType<GhosttyTerminalEngine>(engine);
     }
 }

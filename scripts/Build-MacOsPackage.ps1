@@ -86,7 +86,7 @@ try {
         Remove-Item -Force
 
     $artifacts = @(
-        $metadata.EXECUTABLE_NAME, $metadata.CLI_NAME, $metadata.PTY_HOST_NAME, $metadata.GHOSTTY_LIBRARY,
+        $metadata.EXECUTABLE_NAME, $metadata.CLI_NAME, $metadata.PTY_HOST_NAME,
         'libSkiaSharp.dylib', 'libHarfBuzzSharp.dylib'
     )
     foreach ($artifact in $artifacts) {
@@ -126,8 +126,7 @@ try {
         "$base.zip",
         "$($metadata.BUNDLE_NAME)/Contents/MacOS/$($metadata.EXECUTABLE_NAME)",
         "$($metadata.BUNDLE_NAME)/Contents/MacOS/$($metadata.CLI_NAME)",
-        "$($metadata.BUNDLE_NAME)/Contents/MacOS/$($metadata.PTY_HOST_NAME)",
-        "$($metadata.BUNDLE_NAME)/Contents/MacOS/$($metadata.GHOSTTY_LIBRARY)"
+        "$($metadata.BUNDLE_NAME)/Contents/MacOS/$($metadata.PTY_HOST_NAME)"
     )
     $manifest = Get-Sha256Manifest -WorkingDirectory $OutputDir -Path $manifestPaths
     Set-Content -LiteralPath (Join-Path $OutputDir "$base.sha256") -Value $manifest -Encoding utf8

@@ -22,7 +22,7 @@ try {
     Invoke-Native -FilePath clang -ArgumentList '-arch', (Get-MacOsExpectedArch -Rid $rid), $fixtureSource, '-o', $fixtureBinary
     foreach ($name in @(
         $metadata.EXECUTABLE_NAME, $metadata.CLI_NAME, $metadata.PTY_HOST_NAME,
-        $metadata.GHOSTTY_LIBRARY, 'libAvaloniaNative.dylib', 'libSkiaSharp.dylib', 'libHarfBuzzSharp.dylib'
+        'libAvaloniaNative.dylib', 'libSkiaSharp.dylib', 'libHarfBuzzSharp.dylib'
     )) {
         Invoke-Native -FilePath cp -ArgumentList $fixtureBinary, (Join-Path $code $name)
     }
@@ -34,7 +34,7 @@ try {
 <key>CFBundlePackageType</key><string>APPL</string>
 </dict></plist>
 "@ | Set-Content (Join-Path $app 'Contents/Info.plist') -Encoding utf8
-    foreach ($name in @('LICENSE', 'THIRD-PARTY-NOTICES-CONPTY.txt', 'THIRD-PARTY-NOTICES-GHOSTTY.txt', 'THIRD-PARTY-NOTICES-NOTO-EMOJI.txt')) {
+    foreach ($name in @('LICENSE', 'THIRD-PARTY-NOTICES-CONPTY.txt', 'THIRD-PARTY-NOTICES-NOTO-EMOJI.txt')) {
         Set-Content (Join-Path $resources $name) "fixture license $name" -NoNewline
     }
     & (Join-Path $PSScriptRoot 'Sign-MacOsPackage.ps1') $app '-'

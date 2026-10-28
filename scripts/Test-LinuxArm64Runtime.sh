@@ -203,9 +203,7 @@ run_tests Devolutions.Terminal.Cli.Tests \
     'FullyQualifiedName~Devolutions.Terminal.Cli.Tests.CliParserTests'
 run_tests Devolutions.Terminal.Core.Tests \
     'FullyQualifiedName~Devolutions.Terminal.Core.Tests.VtParserTests'
-run_packaged_native_tests Devolutions.Terminal.Ghostty.Tests libghostty-vt.so \
-    "$artifact_root$INSTALL_DIR/libghostty-vt.so" \
-    'FullyQualifiedName~Devolutions.Terminal.Ghostty.Tests.GhosttyTerminalEngineTests'
+
 run_packaged_native_tests Devolutions.Terminal.Connection.Tests dt-pty-host \
     "$artifact_root$INSTALL_DIR/dt-pty-host" \
     'FullyQualifiedName~Devolutions.Terminal.Connection.Tests.LinuxPtyConnectionTests'

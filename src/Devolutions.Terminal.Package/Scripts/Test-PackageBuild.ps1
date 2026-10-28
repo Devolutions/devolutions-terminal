@@ -83,13 +83,12 @@ function New-PackageFixture {
         [BitConverter]::GetBytes([uint32]0x60000020).CopyTo($image, 0x1AC)
         $machine = if ($architecture -eq "arm64") { [uint16]0xAA64 } else { [uint16]0x8664 }
         [BitConverter]::GetBytes($machine).CopyTo($image, 0x84)
-        foreach ($name in @("Devolutions.Terminal.exe", "dt.exe", "ghostty-vt.dll")) {
+        foreach ($name in @("Devolutions.Terminal.exe", "dt.exe")) {
             [IO.File]::WriteAllBytes((Join-Path $layout $name), $image)
         }
         foreach ($name in @("Devolutions.Terminal.ShellExt.dll", "dt-shell-integration.exe")) {
             [IO.File]::WriteAllBytes((Join-Path $native $name), $image)
         }
-        [IO.File]::WriteAllText((Join-Path $layout "THIRD-PARTY-NOTICES-GHOSTTY.txt"), "Fixture license")
     }
 }
 

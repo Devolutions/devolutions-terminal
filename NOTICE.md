@@ -17,11 +17,6 @@ See the license in the Cascadia Code repository.
 Vendored under `native/noto-emoji/`. Licensed under the SIL Open Font License
 1.1. See `native/noto-emoji/LICENSE`.
 
-## Ghostty (`libghostty-vt`)
-
-Pinned native VT engine binaries under `native/ghostty/`. See
-`native/ghostty/LICENSE` and `docs/ghostty-engine.md`.
-
 ## AppImage type-2 runtime
 
 Linux AppImage packages embed a pinned type-2 runtime. See

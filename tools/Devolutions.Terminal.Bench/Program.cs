@@ -22,12 +22,12 @@ namespace Devolutions.Terminal.Bench;
 ///             coalescing ratio).
 ///   render  — snapshot/planning and CPU Skia rasterization, measured separately
 ///             for a static screen, one-row updates, and scrolling screens.
-///   corpus  — write the deterministic VT input for reuse with Ghostty benchmarks.
-///   vt      — same-process ingest comparison of the builtin engine against raw
-///             libghostty-vt and DT's Ghostty engine over per-workload corpora.
+///   corpus  — write the deterministic VT input for reuse with other benchmarks.
+///   vt      — same-process ingest throughput of the builtin engine against an
+///             in-run clock control over per-workload corpora.
 ///
 /// Caveat: control mode does not paint. Render mode uses a raster surface, not
-/// Avalonia's GPU/compositor or Ghostty's OpenGL/Metal renderer.
+/// Avalonia's GPU/compositor.
 /// </summary>
 internal static class Program
 {

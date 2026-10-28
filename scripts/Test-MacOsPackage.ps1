@@ -61,10 +61,9 @@ function Test-MacOsAppBundle {
         (Join-Path $macosDir $metadata.EXECUTABLE_NAME),
         (Join-Path $macosDir $metadata.CLI_NAME),
         (Join-Path $macosDir $metadata.PTY_HOST_NAME),
-        (Join-Path $macosDir $metadata.GHOSTTY_LIBRARY),
         (Join-Path $macosDir 'libSkiaSharp.dylib'),
         (Join-Path $macosDir 'libHarfBuzzSharp.dylib'),
-        (Join-Path $App 'Contents/Resources/THIRD-PARTY-NOTICES-GHOSTTY.txt'),
+
         (Join-Path $App 'Contents/Resources/THIRD-PARTY-NOTICES-NOTO-EMOJI.txt'),
         (Join-Path $App 'Contents/Resources/LICENSE'),
         $plist,
@@ -136,7 +135,7 @@ function Test-MacOsAppBundle {
     }
 
     foreach ($binary in @(
-        $metadata.EXECUTABLE_NAME, $metadata.CLI_NAME, $metadata.PTY_HOST_NAME, $metadata.GHOSTTY_LIBRARY,
+        $metadata.EXECUTABLE_NAME, $metadata.CLI_NAME, $metadata.PTY_HOST_NAME,
         'libSkiaSharp.dylib', 'libHarfBuzzSharp.dylib'
     )) {
         $binaryPath = Join-Path $macosDir $binary

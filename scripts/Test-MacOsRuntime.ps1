@@ -4,7 +4,7 @@
     .SYNOPSIS
     Runs native, non-UI runtime gates for the host macOS architecture: a
     packaged `dt`/`dt-pty-host` smoke test plus targeted unit tests against
-    the packaged Ghostty and PTY-host native libraries.
+    the packaged PTY host.
 
     .PARAMETER PackageDir
     Directory containing the packaged zip(s) (defaults to artifacts/packages).
@@ -171,9 +171,7 @@ try {
         -Filter 'FullyQualifiedName~Devolutions.Terminal.Cli.Tests.CliParserTests'
     Invoke-DotnetTest -Project 'Devolutions.Terminal.Core.Tests' `
         -Filter 'FullyQualifiedName~Devolutions.Terminal.Core.Tests.VtParserTests'
-    Invoke-PackagedNativeTest -Project 'Devolutions.Terminal.Ghostty.Tests' -NativeName 'libghostty-vt.dylib' `
-        -PackagedNative (Join-Path $macosDir $metadata.GHOSTTY_LIBRARY) `
-        -Filter 'FullyQualifiedName~Devolutions.Terminal.Ghostty.Tests.GhosttyTerminalEngineTests'
+
     Invoke-PackagedNativeTest -Project 'Devolutions.Terminal.Connection.Tests' -NativeName 'dt-pty-host' `
         -PackagedNative (Join-Path $macosDir $metadata.PTY_HOST_NAME) `
         -Filter 'FullyQualifiedName~Devolutions.Terminal.Connection.Tests.LinuxPtyConnectionTests'

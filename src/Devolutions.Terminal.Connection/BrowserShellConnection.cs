@@ -27,8 +27,8 @@ public sealed class BrowserShellConnection : IRestartableTerminalConnection
     {
         ["README.md"] =
             "Devolutions Terminal in the browser.\n" +
-            "This session is an in-process shell. ConPTY, Unix PTY, Ghostty,\n" +
-            "and the desktop window chrome are not available under WebAssembly.\n",
+            "This session is an in-process shell. ConPTY, Unix PTY, and the\n" +
+            "desktop window chrome are not available under WebAssembly.\n",
         ["help.txt"] =
             "help, echo, cat, ls, clear, date, uname, whoami, env, history, color, about, exit\n",
     };
@@ -249,7 +249,7 @@ public sealed class BrowserShellConnection : IRestartableTerminalConnection
 
         Emit(
             "\u001b[1;36mDevolutions Terminal\u001b[0m \u001b[90m· browser wasm\u001b[0m\r\n" +
-            "\u001b[90mBuilt-in VT engine. Local PTY, Ghostty, and desktop chrome are unavailable.\u001b[0m\r\n" +
+            "\u001b[90mBuilt-in VT engine. Local PTY and desktop chrome are unavailable.\u001b[0m\r\n" +
             "\r\nType \u001b[1mhelp\u001b[0m for commands.\r\n\r\n");
         Emit(Prompt);
     }

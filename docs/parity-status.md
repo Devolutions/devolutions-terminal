@@ -2,7 +2,7 @@
 
 This document is the authoritative measured parity record for the .NET 10,
 NativeAOT, and Avalonia port. [history/porting.md](history/porting.md) records the historical roadmap;
-this file records measured behavior after the Windows, Ghostty, and Linux
+this file records measured behavior after the Windows and Linux
 milestones.
 
 Implementation, unit, headless Avalonia, protocol, process, package-structure,
@@ -15,7 +15,7 @@ and NativeAOT gates completed before the final live UI matrix.
 | Windows process transport | ConPTY with input, resize, cancellation, restart, exit metadata, and x64/ARM64 NativeAOT |
 | Linux process transport | Bundled `forkpty` relay with input, resize, cancellation, restart, exit metadata, and x64/ARM64 NativeAOT |
 | macOS process transport | Same Unix `forkpty` host (`osx-arm64`/`osx-x64`); Apple clang `dt-pty-host` plus NativeAOT `.app` packaging on Darwin |
-| Terminal engines | Selectable built-in and pinned Ghostty engines on Windows, Linux, and macOS |
+| Terminal engine | Built-in engine (`Devolutions.Terminal.Core.TerminalEngine`) on Windows, Linux, and macOS |
 | Application shell | Multi-window broker, tabs, panes, settings editor, palettes, tray behavior, accessibility, clipboard, and notifications |
 | Settings | Layering, dynamic profiles, fragments, source-generated JSON, Windows paths, XDG paths, macOS Application Support, and state persistence |
 | Distribution | Windows x64/ARM64 MSIX and bundle; reproducible Linux x64/ARM64 tar, DEB, RPM, and AppImage packages with canonical freedesktop assets, licenses, checksums, inventory/SPDX SBOM, and DESTDIR-aware helpers; macOS NativeAOT `.app` and zip on Darwin, plus signed, notarized `.dmg` release artifacts from CI |
@@ -101,17 +101,17 @@ process environment block.
 
 | Area | Status | Remaining acceptance |
 | --- | --- | --- |
-| Search | Implemented across both engines; Core canonicalizes equivalent Unicode spellings and maps ZWJ/wide grapheme matches to cell ranges; built-in search anchors the selected match by logical-line ID and cell offset across reflow, duplicate lines, viewport scrolling, and bounded scrollback eviction, selecting the next surviving match if the selected line is lost | Ghostty projection regenerates line IDs, so selection uses a text/neighbor heuristic; its pinned render ABI does not expose equivalent cluster geometry |
-| Grapheme/emoji | Built-in supports Hangul, Indic conjuncts, prepend, spacing marks, RI pairs, emoji modifiers/selectors, and emoji ZWJ sequences at arbitrary UTF-8 feed boundaries; bundled Noto Color Emoji provides deterministic Linux fallback | Unicode 16.0.0 `GraphemeBreakTest.txt` is pinned: all 369 terminal-representable rows pass ordered-cell and chunk-invariance checks. The other 724 rows are classified as unsuitable for terminal-cell assertions, not claimed as pure-segmenter passes; full UAX #29 conformance outside the tested subset and equivalent Ghostty cluster geometry remain unavailable |
-| Row rendition | Built-in DECDWL/DECDHL parser, snapshots, logical cursor clipping, reflow preservation, and render transforms implemented | The pinned Ghostty C ABI does not expose row rendition; capability is explicitly unavailable there |
-| Sixel | Built-in decode/render, DECSDM scrolling/display behavior, retained cell geometry, and stable ownership implemented | The pinned Ghostty C ABI exposes no image resources and reports the capability unavailable |
-| OSC 1337 | Built-in bounded inline decode/render and stable ownership implemented; non-inline transfer is explicitly rejected without I/O | The pinned Ghostty C ABI exposes no image resources and reports the capability unavailable |
-| ConEmu images | Bounded single-part `st=0;sz=` payloads decode into shared overlay metadata and render safely | Multipart payloads are explicitly rejected; the pinned Ghostty C ABI exposes no image resources |
-| Kitty graphics | Direct-medium RGBA/RGB/PNG transmissions with chunking, zlib, placements, crop, z-order, deletes, and query responses implemented; unsupported media and animation are rejected deterministically | File/shared-memory media and animation frames are intentional gaps; the pinned Ghostty C ABI exposes no image resources and reports the capability unavailable |
-| Image ownership | Stable logical-line anchors survive scrollback and reflow in main and alternate buffers and are removed on owning-line eviction | Ghostty image projection is unavailable in the pinned C ABI and produces deterministic unsupported diagnostics |
-| VT52 | Output plus host cursor/PF/application-keypad encoding implemented, with built-in/Ghostty differential mode coverage | No remaining shared subset work |
-| DRCS | Built-in parse/resource mapping, bounded snapshot masks, render planning, and downloaded-pixel rendering implemented | The pinned Ghostty C ABI does not expose DRCS resources; capability is explicitly unavailable there |
-| Extended keyboard | Built-in Kitty set/query/push/pop flags, CSI-u event bytes, `modifyOtherKeys`, Win32-input mode, and press/repeat/release encoding implemented | Kitty alternate-key reporting and associated-text reporting are not advertised; the pinned Ghostty C ABI exposes no keyboard protocol state and reports these capabilities unavailable |
+| Search | Implemented in the built-in engine; Core canonicalizes equivalent Unicode spellings and maps ZWJ/wide grapheme matches to cell ranges; built-in search anchors the selected match by logical-line ID and cell offset across reflow, duplicate lines, viewport scrolling, and bounded scrollback eviction, selecting the next surviving match if the selected line is lost | None |
+| Grapheme/emoji | Built-in supports Hangul, Indic conjuncts, prepend, spacing marks, RI pairs, emoji modifiers/selectors, and emoji ZWJ sequences at arbitrary UTF-8 feed boundaries; bundled Noto Color Emoji provides deterministic Linux fallback | Unicode 16.0.0 `GraphemeBreakTest.txt` is pinned: all 369 terminal-representable rows pass ordered-cell and chunk-invariance checks. The other 724 rows are classified as unsuitable for terminal-cell assertions, not claimed as pure-segmenter passes; full UAX #29 conformance outside the tested subset remains unavailable |
+| Row rendition | Built-in DECDWL/DECDHL parser, snapshots, logical cursor clipping, reflow preservation, and render transforms implemented | None |
+| Sixel | Built-in decode/render, DECSDM scrolling/display behavior, retained cell geometry, and stable ownership implemented | None |
+| OSC 1337 | Built-in bounded inline decode/render and stable ownership implemented; non-inline transfer is explicitly rejected without I/O | None |
+| ConEmu images | Bounded single-part `st=0;sz=` payloads decode into shared overlay metadata and render safely | Multipart payloads are explicitly rejected |
+| Kitty graphics | Direct-medium RGBA/RGB/PNG transmissions with chunking, zlib, placements, crop, z-order, deletes, and query responses implemented; unsupported media and animation are rejected deterministically | File/shared-memory media and animation frames are intentional gaps |
+| Image ownership | Stable logical-line anchors survive scrollback and reflow in main and alternate buffers and are removed on owning-line eviction | None |
+| VT52 | Output plus host cursor/PF/application-keypad encoding implemented | None |
+| DRCS | Built-in parse/resource mapping, bounded snapshot masks, render planning, and downloaded-pixel rendering implemented | None |
+| Extended keyboard | Built-in Kitty set/query/push/pop flags, CSI-u event bytes, `modifyOtherKeys`, Win32-input mode, and press/repeat/release encoding implemented | Kitty alternate-key reporting and associated-text reporting are not advertised |
 | Shader effects | Optional deterministic, bounded Skia retro/scanline pass, toggleable per active terminal | Custom arbitrary HLSL/pixel-shader files are not loaded or advertised |
 
 The image regression matrix covers split protocol feeds, exact/over-limit
@@ -146,7 +146,7 @@ The `linux-arm64-hardware` CI job runs on GitHub's native
 not `aarch64` or `arm64`; emulation is not an accepted substitute. The job
 downloads the cross-built ARM64 tar, DEB, RPM, and AppImage artifacts and runs
 `scripts/Test-LinuxArm64Runtime.sh`. The gate executes the NativeAOT `wt`
-help/error paths from every extracted format, Ghostty ABI and engine feeds, the
+help/error paths from every extracted format, the
 built-in parser/engine, real `forkpty` input/resize/exit/cancellation/restart,
 broker concurrency, Linux shell profile and XDG paths, and disposable-root
 package install/upgrade/uninstall.
@@ -161,8 +161,8 @@ install/upgrade/uninstall verification for Windows x64/ARM64 packages.
 
 ## Final UI results
 
-Windows x64 and packaged Linux x64 were validated with built-in and Ghostty
-engines after the full non-UI matrix. The runs covered three independent tabs,
+Windows x64 and packaged Linux x64 were validated with the built-in
+engine after the full non-UI matrix. The runs covered three independent tabs,
 split panes, focus/resize/close isolation, clipboard, fullscreen,
 maximize/restore, settings, workspace recreation, marks, summon/quake,
 truecolor, Unicode/CJK/emoji, row rendition, images, and shader effects.
@@ -170,9 +170,7 @@ truecolor, Unicode/CJK/emoji, row rendition, images, and shader effects.
 - PowerShell 7 loaded PSReadLine normally. Windows PowerShell 5.1 on the test
   machine rejected its PSReadLine script module because of the machine's
   execution policy; ConPTY handles were confirmed as non-redirected.
-- Built-in Linux rendered Sixel and inline OSC 1337 images. Ghostty displayed
-  explicit limitation notifications for image protocols and row rendition that
-  its pinned C ABI does not expose.
+- Built-in Linux rendered Sixel and inline OSC 1337 images.
 - Bundled Noto Color Emoji fixed Linux emoji-ZWJ tofu. Portable settings icons
   and narrower content padding removed Linux settings-page clipping.
 - Mark actions display notifications and colored scrollbar ticks.
@@ -180,7 +178,7 @@ truecolor, Unicode/CJK/emoji, row rendition, images, and shader effects.
   provide a visible file-manager handler.
 - Native Windows ARM64 and Linux ARM64 remain non-UI hardware/package gates;
   no ARM64 desktop was available in this session.
-- macOS ARM64 NativeAOT `.app` packaging, `dt` parser, Ghostty ABI, real
+- macOS ARM64 NativeAOT `.app` packaging, `dt` parser, real
   `forkpty`, broker named-pipe length, and a live GUI-host process start were
   validated on Darwin. Signed, notarized `.dmg` release artifacts are produced
   in CI by `scripts/Release-MacOsPackage.ps1` (see [macos.md](macos.md)).

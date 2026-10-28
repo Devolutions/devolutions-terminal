@@ -34,7 +34,7 @@ New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 # Info.plist/resource seals cannot follow an executable out of its bundle.
 $binaries = @(
     $metadata.EXECUTABLE_NAME, $metadata.CLI_NAME, $metadata.PTY_HOST_NAME,
-    $metadata.GHOSTTY_LIBRARY, 'libAvaloniaNative.dylib', 'libSkiaSharp.dylib', 'libHarfBuzzSharp.dylib'
+    'libAvaloniaNative.dylib', 'libSkiaSharp.dylib', 'libHarfBuzzSharp.dylib'
 )
 foreach ($name in $binaries) {
     $source = Join-Path $AppPath "Contents/MacOS/$name"

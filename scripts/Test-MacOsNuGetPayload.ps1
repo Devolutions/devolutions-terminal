@@ -21,7 +21,7 @@ if ($RequireDeveloperId) {
 }
 $binaries = @(
     $metadata.EXECUTABLE_NAME, $metadata.CLI_NAME, $metadata.PTY_HOST_NAME,
-    $metadata.GHOSTTY_LIBRARY, 'libAvaloniaNative.dylib', 'libSkiaSharp.dylib', 'libHarfBuzzSharp.dylib'
+    'libAvaloniaNative.dylib', 'libSkiaSharp.dylib', 'libHarfBuzzSharp.dylib'
 )
 foreach ($name in $binaries) {
     $path = Join-Path $PayloadDirectory $name
@@ -49,7 +49,7 @@ foreach ($name in $binaries) {
         }
     }
 }
-foreach ($name in @('LICENSE', 'THIRD-PARTY-NOTICES-CONPTY.txt', 'THIRD-PARTY-NOTICES-GHOSTTY.txt', 'THIRD-PARTY-NOTICES-NOTO-EMOJI.txt')) {
+foreach ($name in @('LICENSE', 'THIRD-PARTY-NOTICES-CONPTY.txt', 'THIRD-PARTY-NOTICES-NOTO-EMOJI.txt')) {
     if (-not (Test-Path -LiteralPath (Join-Path $PayloadDirectory $name) -PathType Leaf)) {
         throw "NuGet payload is missing $name."
     }

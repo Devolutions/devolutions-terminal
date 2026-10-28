@@ -7,7 +7,7 @@
     <true/>
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
     <true/>
-    <!-- Bundled native libraries (SkiaSharp, HarfBuzzSharp, libghostty-vt) are signed
+    <!-- Bundled native libraries (SkiaSharp, HarfBuzzSharp) are signed
          individually but not necessarily by the same Team ID as this bundle. -->
     <key>com.apple.security.cs.disable-library-validation</key>
     <true/>

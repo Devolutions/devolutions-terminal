@@ -19,7 +19,6 @@ try {
         [IO.File]::WriteAllBytes($codePath, [byte[]](0xCF, 0xFA, 0xED, 0xFE))
         $codeHash = (Get-FileHash -LiteralPath $codePath).Hash
         $notices = @(
-            'THIRD-PARTY-NOTICES-GHOSTTY.txt',
             'THIRD-PARTY-NOTICES-NOTO-EMOJI.txt',
             'THIRD-PARTY-NOTICES-CONPTY.txt',
             'THIRD-PARTY-NOTICES-FUTURE-DEPENDENCY.txt'

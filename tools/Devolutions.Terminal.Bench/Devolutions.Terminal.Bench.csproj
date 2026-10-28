@@ -7,7 +7,6 @@
     <IsPackable>false</IsPackable>
     <Nullable>enable</Nullable>
     <TieredCompilation>false</TieredCompilation>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Avalonia.Headless" />
@@ -16,9 +15,7 @@
     <ProjectReference Include="..\..\src\Devolutions.Terminal.Control\Devolutions.Terminal.Control.csproj" />
     <ProjectReference Include="..\..\src\Devolutions.Terminal.Connection\Devolutions.Terminal.Connection.csproj" />
     <ProjectReference Include="..\..\src\Devolutions.Terminal.Core\Devolutions.Terminal.Core.csproj" />
-    <ProjectReference Include="..\..\src\Devolutions.Terminal.Ghostty\Devolutions.Terminal.Ghostty.csproj" />
     <ProjectReference Include="..\..\src\Devolutions.Terminal.Render\Devolutions.Terminal.Render.csproj" />
     <ProjectReference Include="..\..\src\Devolutions.Terminal.Settings\Devolutions.Terminal.Settings.csproj" />
   </ItemGroup>
-  <Import Project="..\..\native\NativeLibraries.targets" />
 </Project>

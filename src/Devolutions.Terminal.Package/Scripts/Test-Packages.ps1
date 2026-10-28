@@ -120,11 +120,7 @@ begin {
             $manifestPath = Join-Path $extractPath "AppxManifest.xml"
             Assert-Condition (Test-Path -LiteralPath $manifestPath) "AppxManifest.xml is missing from '$Path'."
             Assert-Condition (Test-Path -LiteralPath (Join-Path $extractPath "Devolutions.Terminal.exe")) "Devolutions.Terminal.exe is missing from '$Path'."
-            $ghosttyPath = Join-Path $extractPath "ghostty-vt.dll"
-            Assert-Condition (Test-Path -LiteralPath $ghosttyPath) "ghostty-vt.dll is missing from '$Path'."
-            Assert-Condition (
-                Test-Path -LiteralPath (Join-Path $extractPath "THIRD-PARTY-NOTICES-GHOSTTY.txt")
-            ) "The Ghostty license notice is missing from '$Path'."
+
             Assert-Condition (
                 Test-Path -LiteralPath (Join-Path $extractPath "SHELL-INTEGRATION-NOTICE.txt")
             ) "The shell integration notice is missing from '$Path'."
@@ -147,10 +143,7 @@ begin {
             Assert-Condition ($identity.Publisher -ceq $ExpectedPublisher) "Unexpected package publisher '$($identity.Publisher)'; expected '$ExpectedPublisher'."
             Assert-Condition ($identity.ProcessorArchitecture -in @("x64", "arm64")) "Unexpected package architecture '$($identity.ProcessorArchitecture)'."
             $expectedMachine = if ($identity.ProcessorArchitecture -eq "arm64") { 0xAA64 } else { 0x8664 }
-            $ghosttyMachine = Get-PeMachine $ghosttyPath
-            Assert-Condition (
-                $ghosttyMachine -eq $expectedMachine
-            ) "ghostty-vt.dll architecture 0x$($ghosttyMachine.ToString('X4')) does not match '$($identity.ProcessorArchitecture)' in '$Path'."
+
             foreach ($helper in @("Devolutions.Terminal.ShellExt.dll", "dt-shell-integration.exe")) {
                 $helperPath = Join-Path $extractPath $helper
                 Assert-Condition (Test-Path -LiteralPath $helperPath -PathType Leaf) "'$helper' is missing from '$Path'."

@@ -4,7 +4,7 @@ namespace Devolutions.Terminal.Bench;
 
 /// <summary>
 /// Deterministic VT byte streams for engine-ingest comparisons. Each workload
-/// isolates one kind of terminal work so a regression or a gap against Ghostty
+/// isolates one kind of terminal work so a regression
 /// points at a code path instead of an average. The shapes follow
 /// alacritty/vtebench (dense/light cells, cursor motion, scrolling regions,
 /// unicode) and Ghostty's own `ghostty-gen` generators (+ascii, +utf8, +osc).
@@ -186,9 +186,9 @@ internal static class VtWorkloads
         {
             if (!started)
             {
-                // DECSET 2027 (grapheme clustering): without it Ghostty measures a ZWJ
-                // sequence per codepoint while the builtin engine clusters it, and the
-                // two screens would wrap differently.
+                // DECSET 2027 (grapheme clustering) keeps ZWJ sequences clustered on
+                // terminals that make clustering opt-in, so the corpus wraps the same
+                // everywhere it is replayed.
                 writer.Append($"{Esc}[?2027h");
                 started = true;
             }
