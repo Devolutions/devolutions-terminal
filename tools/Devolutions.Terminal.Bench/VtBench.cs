@@ -5,28 +5,24 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Devolutions.Terminal.Core;
-using Devolutions.Terminal.Ghostty;
 
 namespace Devolutions.Terminal.Bench;
 
 /// <summary>
-/// Same-process, same-bytes VT ingest comparison between the builtin engine and
-/// Ghostty. Three targets consume identical chunks:
-///   builtin    — DT's own <see cref="TerminalEngine"/> (the default engine).
-///   ghostty-vt — raw <c>ghostty_terminal_vt_write</c>: Ghostty's parser and
-///                screen with nothing else, the bar the builtin engine must clear.
-///   ghostty    — DT's <see cref="GhosttyTerminalEngine"/>, i.e. ghostty-vt plus
-///                the per-feed render-state projection DT needs to paint it.
+/// Same-process, same-bytes VT ingest throughput of the builtin engine, measured
+/// against an in-run control. Two targets consume identical chunks:
+///   builtin — DT's <see cref="TerminalEngine"/>.
+///   control — FNV-1a over the fed bytes: a serial loop that does no terminal
+///             work, so its speed follows only the core clock and load.
 /// Runs interleave the targets in rotating order so thermal drift and
-/// background load hit every target alike; fresh engines are built outside the
-/// timed region. A verdict is only "faster"/"slower" when the run ranges do
-/// not overlap.
+/// background load hit both alike; fresh engines are built outside the timed
+/// region. builtin/control is the number to compare across sessions, because
+/// absolute MB/s drifts with the CPU's turbo state.
 /// </summary>
-internal static partial class VtBench
+internal static class VtBench
 {
     public const string Builtin = "builtin";
-    public const string GhosttyVt = "ghostty-vt";
-    public const string GhosttyDt = "ghostty";
+    public const string Control = "control";
 
     public static int Run(string[] args)
     {
@@ -40,7 +36,7 @@ internal static partial class VtBench
         var columns = Program.GetOption(args, "--columns", 120);
         var rows = Program.GetOption(args, "--rows", 30);
         var workloads = Split(Program.GetStringOption(args, "--workloads"), VtWorkloads.Names);
-        var targets = Split(Program.GetStringOption(args, "--targets"), [Builtin, GhosttyVt, GhosttyDt]);
+        var targets = Split(Program.GetStringOption(args, "--targets"), [Builtin, Control]);
         var exportDirectory = Program.GetStringOption(args, "--export");
         var jsonPath = Program.GetStringOption(args, "--json");
         var dataPath = Program.GetStringOption(args, "--data");
@@ -52,9 +48,9 @@ internal static partial class VtBench
 
         foreach (var target in targets)
         {
-            if (target is not (Builtin or GhosttyVt or GhosttyDt))
+            if (target is not (Builtin or Control))
             {
-                throw new ArgumentException($"unknown target '{target}' (expected {Builtin}|{GhosttyVt}|{GhosttyDt})");
+                throw new ArgumentException($"unknown target '{target}' (expected {Builtin}|{Control})");
             }
         }
 
@@ -95,19 +91,11 @@ internal static partial class VtBench
             frameBytes,
             runs,
             []);
-        var exitCode = 0;
         foreach (var (name, bytes) in inputs)
         {
             var sha = Convert.ToHexString(SHA256.HashData(bytes));
             Console.WriteLine();
             Console.WriteLine($"[{name}] {bytes.Length / (1024.0 * 1024):F1} MiB sha256={sha[..16]}… {VtWorkloads.Describe(name)}");
-            var equivalence = targets.Contains(Builtin) && (targets.Contains(GhosttyVt) || targets.Contains(GhosttyDt))
-                ? CheckEquivalence(bytes, columns, rows, chunkSize)
-                : null;
-            if (equivalence is not null)
-            {
-                Console.WriteLine($"  screen equivalence vs ghostty: {equivalence}");
-            }
 
             var samples = targets.ToDictionary(target => target, _ => new List<VtSample>());
             for (var run = -warmup; run < runs; run++)
@@ -134,24 +122,16 @@ internal static partial class VtBench
                     $"retained={result.RetainedMiB:F1} MiB");
             }
 
-            string? verdict = null;
             double? ratio = null;
             var builtin = results.FirstOrDefault(result => result.Target == Builtin);
-            var reference = results.FirstOrDefault(result => result.Target == GhosttyVt);
-            if (builtin is not null && reference is not null)
+            var control = results.FirstOrDefault(result => result.Target == Control);
+            if (builtin is not null && control is not null)
             {
-                ratio = builtin.MedianMBps / reference.MedianMBps;
-                verdict = builtin.MinMBps > reference.MaxMBps ? "faster"
-                    : builtin.MaxMBps < reference.MinMBps ? "slower"
-                    : "overlap";
-                Console.WriteLine($"  builtin vs ghostty-vt: {ratio:F2}x median throughput, verdict={verdict}");
-                if (verdict != "faster")
-                {
-                    exitCode = 1;
-                }
+                ratio = builtin.MedianMBps / control.MedianMBps;
+                Console.WriteLine($"  builtin / control: {ratio:F4} median throughput");
             }
 
-            report.Workloads.Add(new VtWorkloadReport(name, bytes.Length, sha, equivalence, results, ratio, verdict));
+            report.Workloads.Add(new VtWorkloadReport(name, bytes.Length, sha, results, ratio));
         }
 
         if (jsonPath is not null)
@@ -161,9 +141,7 @@ internal static partial class VtBench
             Console.WriteLine($"wrote {jsonPath}");
         }
 
-        // A non-zero exit means "builtin did not beat ghostty-vt on every workload";
-        // scripts use it as a gate, so --no-gate keeps a measurement-only run green.
-        return Array.IndexOf(args, "--no-gate") >= 0 ? 0 : exitCode;
+        return 0;
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -244,51 +222,9 @@ internal static partial class VtBench
     private static IVtTarget Create(string target, int columns, int rows) => target switch
     {
         Builtin => new EngineTarget(new TerminalEngine(columns, rows)),
-        GhosttyDt => new EngineTarget(new GhosttyTerminalEngine(columns, rows)),
-        GhosttyVt => new RawGhosttyTarget(columns, rows),
+        Control => new ControlTarget(),
         _ => throw new ArgumentOutOfRangeException(nameof(target), target, null),
     };
-
-    /// <summary>
-    /// Throughput is only comparable if both engines did the same work, so the
-    /// final visible screen and cursor must match. A mismatch is reported (with the
-    /// first differing row) rather than failing, because some workloads hit
-    /// documented engine differences such as grapheme-width policy.
-    /// </summary>
-    private static string CheckEquivalence(byte[] bytes, int columns, int rows, int chunkSize)
-    {
-        using var builtin = new TerminalEngine(columns, rows);
-        using var ghostty = new GhosttyTerminalEngine(columns, rows);
-        for (var offset = 0; offset < bytes.Length; offset += chunkSize)
-        {
-            var chunk = bytes.AsSpan(offset, Math.Min(chunkSize, bytes.Length - offset));
-            builtin.Feed(chunk);
-            ghostty.Feed(chunk);
-        }
-
-        var differing = 0;
-        var first = -1;
-        for (var row = 0; row < rows; row++)
-        {
-            var expected = builtin.Buffer.GetText(0, row, columns - 1, row).TrimEnd();
-            var actual = ghostty.Buffer.GetText(0, row, columns - 1, row).TrimEnd();
-            if (!string.Equals(expected, actual, StringComparison.Ordinal))
-            {
-                differing++;
-                first = first < 0 ? row : first;
-            }
-        }
-
-        var cursor = builtin.CursorX == ghostty.CursorX && builtin.CursorY == ghostty.CursorY
-            ? "cursor equal"
-            : $"cursor builtin=({builtin.CursorX},{builtin.CursorY}) ghostty=({ghostty.CursorX},{ghostty.CursorY})";
-        var history = builtin.HistoryCount == ghostty.HistoryCount
-            ? $"history equal ({builtin.HistoryCount})"
-            : $"history builtin={builtin.HistoryCount} ghostty={ghostty.HistoryCount}";
-        return differing == 0
-            ? $"identical text, {cursor}, {history}"
-            : $"MISMATCH {differing}/{rows} rows (first row {first}), {cursor}, {history}";
-    }
 
     private static VtTargetReport Summarize(string target, List<VtSample> samples)
     {
@@ -333,102 +269,30 @@ internal static partial class VtBench
     }
 
     /// <summary>
-    /// The pinned libghostty-vt with only the scrollback limit configured to match
-    /// the builtin engine's 9,001 lines; no effects or projection. A frame is what
-    /// Ghostty's renderer does per frame: update its render state, then clean it.
+    /// FNV-1a over every fed byte. Each step depends on the previous one, so the
+    /// loop cannot be vectorized and its speed tracks the core clock rather than
+    /// memory bandwidth, which is what drifts between sessions.
     /// </summary>
-    private sealed unsafe partial class RawGhosttyTarget : IVtTarget
+    private sealed class ControlTarget : IVtTarget
     {
-        private const int ScrollbackBytesOption = 27;
-        private const int ScrollbackLinesOption = 28;
-        private nint _terminal;
-        private nint _renderState;
-
-        public RawGhosttyTarget(int columns, int rows)
-        {
-            Check(TerminalNew(0, out _terminal, checked((ushort)columns), checked((ushort)rows)), "ghostty_terminal_new");
-            try
-            {
-                Check(TerminalSet(_terminal, ScrollbackBytesOption, null), "remove scrollback byte limit");
-                var lines = (nuint)9001;
-                Check(TerminalSet(_terminal, ScrollbackLinesOption, &lines), "set scrollback line limit");
-                Check(RenderStateNew(0, out _renderState), "ghostty_render_state_new");
-            }
-            catch
-            {
-                Dispose();
-                throw;
-            }
-        }
+        private uint _hash = 2166136261;
 
         public void Feed(ReadOnlySpan<byte> data)
         {
-            fixed (byte* bytes = data)
+            var hash = _hash;
+            foreach (var value in data)
             {
-                TerminalWrite(_terminal, bytes, (nuint)data.Length);
+                hash = (hash ^ value) * 16777619;
             }
+
+            _hash = hash;
         }
 
         public void Frame()
         {
-            Check(RenderStateUpdate(_renderState, _terminal), "ghostty_render_state_update");
-            Check(RenderStateClean(_renderState), "ghostty_render_state_clean");
         }
 
-        public void Dispose()
-        {
-            if (_renderState != 0)
-            {
-                RenderStateFree(_renderState);
-                _renderState = 0;
-            }
-
-            if (_terminal != 0)
-            {
-                TerminalFree(_terminal);
-                _terminal = 0;
-            }
-        }
-
-        private static void Check(int result, string operation)
-        {
-            if (result != 0)
-            {
-                throw new InvalidOperationException($"{operation} failed with {result}");
-            }
-        }
-
-        [LibraryImport("ghostty-vt", EntryPoint = "ghostty_terminal_new")]
-        [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-        private static partial int TerminalNew(nint allocator, out nint terminal, ushort columns, ushort rows);
-
-        [LibraryImport("ghostty-vt", EntryPoint = "ghostty_terminal_set")]
-        [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-        private static partial int TerminalSet(nint terminal, int option, void* value);
-
-        [LibraryImport("ghostty-vt", EntryPoint = "ghostty_terminal_vt_write")]
-        [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-        private static partial void TerminalWrite(nint terminal, byte* bytes, nuint length);
-
-        [LibraryImport("ghostty-vt", EntryPoint = "ghostty_terminal_free")]
-        [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-        private static partial void TerminalFree(nint terminal);
-
-        [LibraryImport("ghostty-vt", EntryPoint = "ghostty_render_state_new")]
-        [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-        private static partial int RenderStateNew(nint allocator, out nint state);
-
-        [LibraryImport("ghostty-vt", EntryPoint = "ghostty_render_state_update")]
-        [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-        private static partial int RenderStateUpdate(nint state, nint terminal);
-
-        [LibraryImport("ghostty-vt", EntryPoint = "ghostty_render_state_clean")]
-        [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-        private static partial int RenderStateClean(nint state);
-
-        [LibraryImport("ghostty-vt", EntryPoint = "ghostty_render_state_free")]
-        [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-        private static partial void RenderStateFree(nint state);
+        public void Dispose() => GC.KeepAlive(_hash);
     }
 
     private readonly record struct VtSample(
@@ -458,10 +322,8 @@ internal static partial class VtBench
         string Name,
         long Bytes,
         string Sha256,
-        string? Equivalence,
         VtTargetReport[] Targets,
-        double? BuiltinVsGhosttyVt,
-        string? Verdict);
+        double? BuiltinVsControl);
 
     private sealed record VtTargetReport(
         string Target,

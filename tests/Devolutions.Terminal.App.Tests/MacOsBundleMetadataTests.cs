@@ -43,7 +43,6 @@ public sealed class MacOsBundleMetadataTests
         Assert.Equal("Devolutions.Terminal", values["EXECUTABLE_NAME"]);
         Assert.Equal("dt", values["CLI_NAME"]);
         Assert.Equal("dt-pty-host", values["PTY_HOST_NAME"]);
-        Assert.Equal("libghostty-vt.dylib", values["GHOSTTY_LIBRARY"]);
         Assert.Equal("dterm", values["URL_SCHEME"]);
         Assert.Equal("13.0", values["MACOS_DEPLOYMENT_TARGET"]);
         Assert.DoesNotContain(values.Keys, static key => key == "VERSION" || key.EndsWith("_VERSION", StringComparison.Ordinal));

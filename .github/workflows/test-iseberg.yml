@@ -57,11 +57,9 @@ jobs:
         with:
           path: |
             artifacts/tools
-            artifacts/ghostty-src
-            native/ghostty/*/*
             native/linux-pty/*/dt-pty-host
             native/noto-emoji/NotoColorEmoji.ttf
-          key: native-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/**/*.ps1', 'native/ghostty/ghostty-upstream.json', 'native/linux-pty/dt-pty-host.c', 'native/noto-emoji/noto-emoji.json') }}
+          key: native-v3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/**/*.ps1', 'native/zig.json', 'native/linux-pty/dt-pty-host.c', 'native/noto-emoji/noto-emoji.json') }}
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v4
@@ -72,7 +70,7 @@ jobs:
         shell: pwsh
         run: ./scripts/Install-IsebergTestPowerShell.ps1
 
-      # A native cache miss downloads Zig and compiles Ghostty; keep that out of the test budget.
+      # A native cache miss downloads Zig and compiles dt-pty-host; keep that out of the test budget.
       - name: Restore native libraries
         timeout-minutes: 30
         shell: pwsh

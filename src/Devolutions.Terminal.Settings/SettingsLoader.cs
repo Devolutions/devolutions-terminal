@@ -345,7 +345,6 @@ public static class SettingsLoader
             GraphicsApi = String(root, "rendering.graphicsAPI") ?? "automatic",
             DisablePartialInvalidation = Bool(root, "rendering.disablePartialInvalidation"),
             SoftwareRendering = Bool(root, "rendering.software"),
-            TerminalEngine = TerminalEngineValue(root["experimental.terminalEngine"]) ?? TerminalEngineKind.BuiltIn,
             TextMeasurement = String(root, "compatibility.textMeasurement") ?? "graphemes",
             AmbiguousWidth = String(root, "compatibility.ambiguousWidth") ?? "narrow",
             DefaultInputScope = String(root, "defaultInputScope") ?? "default",
@@ -515,7 +514,6 @@ public static class SettingsLoader
             StartingDirectory = String(profile, "startingDirectory") ?? "%USERPROFILE%",
             Icon = String(profile, "icon"),
             ConnectionType = CanonicalGuid(String(profile, "connectionType")),
-            TerminalEngine = TerminalEngineValue(profile["experimental.terminalEngine"]),
             DarkColorScheme = ColorSchemeNames(profile).DarkName ?? "Campbell",
             LightColorScheme = ColorSchemeNames(profile).LightName
                 ?? ColorSchemeNames(profile).DarkName
@@ -1213,7 +1211,6 @@ public static class SettingsLoader
         ["rendering.graphicsAPI"] = settings.GraphicsApi,
         ["rendering.disablePartialInvalidation"] = settings.DisablePartialInvalidation,
         ["rendering.software"] = settings.SoftwareRendering,
-        ["experimental.terminalEngine"] = TerminalEngineName(settings.TerminalEngine),
         ["compatibility.textMeasurement"] = settings.TextMeasurement,
         ["compatibility.ambiguousWidth"] = settings.AmbiguousWidth,
         ["defaultInputScope"] = settings.DefaultInputScope,
@@ -1551,14 +1548,6 @@ public static class SettingsLoader
                 ise["terminal"] = terminal;
             }
             result["ise"] = ise;
-        }
-        if (profile.TerminalEngine is { } terminalEngine)
-        {
-            result["experimental.terminalEngine"] = TerminalEngineName(terminalEngine);
-        }
-        else
-        {
-            result.Remove("experimental.terminalEngine");
         }
         result["colorScheme"] = ColorSchemeNode(profile.DarkColorScheme, profile.LightColorScheme);
         result["font"] = new JsonObject
@@ -2103,22 +2092,6 @@ public static class SettingsLoader
         CopyFormat.Html => JsonValue.Create("html"),
         CopyFormat.Rtf => JsonValue.Create("rtf"),
         _ => JsonValue.Create(false),
-    };
-
-    private static TerminalEngineKind? TerminalEngineValue(JsonNode? node) =>
-        node is JsonValue value && value.TryGetValue<string>(out var name)
-            ? name.ToLowerInvariant() switch
-            {
-                "builtin" or "built-in" or "windows-terminal" => TerminalEngineKind.BuiltIn,
-                "ghostty" => TerminalEngineKind.Ghostty,
-                _ => null,
-            }
-            : null;
-
-    private static string TerminalEngineName(TerminalEngineKind engine) => engine switch
-    {
-        TerminalEngineKind.Ghostty => "ghostty",
-        _ => "builtin",
     };
 
     private static JsonArray StringArray(IEnumerable<string> values) =>

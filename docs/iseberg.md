@@ -296,7 +296,8 @@ Iseberg CI runs test projects sequentially (`-m:1`) to avoid concurrent test-hos
 startup starving short broker deadlines. It retains TRX results and per-test
 hang diagnostics and a 20-minute test-step budget for the slower hosted Windows
 runner. Native libraries are restored in a preceding step, so a native-cache miss
-(Zig download and Ghostty build) does not consume that budget. A failed App test
+(on Linux and macOS, the Zig download and `dt-pty-host` build) does not
+consume that budget. A failed App test
 project stops the step before starting the UI suite.
 
 Run the same core locally after installing the test runtime:

@@ -27,7 +27,6 @@
     <ProjectReference Include="..\Devolutions.Terminal.Connection\Devolutions.Terminal.Connection.csproj" />
     <ProjectReference Include="..\Devolutions.Terminal.Core\Devolutions.Terminal.Core.csproj" />
     <ProjectReference Include="..\Devolutions.Terminal.Render\Devolutions.Terminal.Render.csproj" />
-    <ProjectReference Include="..\Devolutions.Terminal.Ghostty\Devolutions.Terminal.Ghostty.csproj" />
     <ProjectReference Include="..\Devolutions.Terminal.Settings\Devolutions.Terminal.Settings.csproj" />
     <ProjectReference Include="..\Devolutions.Terminal.Package\Devolutions.Terminal.Package.csproj" />
     <ProjectReference Include="..\Devolutions.Terminal.Settings.Editor\Devolutions.Terminal.Settings.Editor.csproj" />

@@ -6,11 +6,7 @@ on:
       - "**"
     tags:
       - "v*"
-    paths-ignore:
-      - ".github/workflows/build-ghostty.yml"
   pull_request:
-    paths-ignore:
-      - ".github/workflows/build-ghostty.yml"
   workflow_dispatch:
     inputs:
       version:
@@ -142,12 +138,10 @@ jobs:
         with:
           path: |
             artifacts/tools
-            artifacts/ghostty-src
-            native/ghostty/*/*
             native/linux-pty/*/dt-pty-host
             native/noto-emoji/NotoColorEmoji.ttf
           # Never restore native sources or reuse binaries built from different inputs.
-          key: native-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/**/*.ps1', 'native/ghostty/ghostty-upstream.json', 'native/linux-pty/dt-pty-host.c', 'native/noto-emoji/noto-emoji.json') }}
+          key: native-v3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/**/*.ps1', 'native/zig.json', 'native/linux-pty/dt-pty-host.c', 'native/noto-emoji/noto-emoji.json') }}
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v4
@@ -199,7 +193,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: artifacts/tools
-          key: zig-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/Zig.ps1', 'native/ghostty/ghostty-upstream.json') }}
+          key: zig-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/Zig.ps1', 'native/zig.json') }}
 
       - name: Build dt-pty-host for every Unix RID
         shell: pwsh
@@ -233,7 +227,7 @@ jobs:
         with:
           path: |
             native/noto-emoji/NotoColorEmoji.ttf
-          key: native-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/**/*.ps1', 'native/ghostty/ghostty-upstream.json', 'native/linux-pty/dt-pty-host.c', 'native/noto-emoji/noto-emoji.json') }}
+          key: native-v3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/**/*.ps1', 'native/zig.json', 'native/linux-pty/dt-pty-host.c', 'native/noto-emoji/noto-emoji.json') }}
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v4
@@ -337,11 +331,9 @@ jobs:
         with:
           path: |
             artifacts/tools
-            artifacts/ghostty-src
-            native/ghostty/*/*
             native/linux-pty/*/dt-pty-host
             native/noto-emoji/NotoColorEmoji.ttf
-          key: native-v2-${{ runner.os }}-${{ runner.arch }}-${{ matrix.rid }}-${{ hashFiles('native/**/*.ps1', 'native/ghostty/ghostty-upstream.json', 'native/linux-pty/dt-pty-host.c', 'native/noto-emoji/noto-emoji.json') }}
+          key: native-v3-${{ runner.os }}-${{ runner.arch }}-${{ matrix.rid }}-${{ hashFiles('native/**/*.ps1', 'native/zig.json', 'native/linux-pty/dt-pty-host.c', 'native/noto-emoji/noto-emoji.json') }}
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v4
@@ -378,11 +370,9 @@ jobs:
         with:
           path: |
             artifacts/tools
-            artifacts/ghostty-src
-            native/ghostty/*/*
             native/linux-pty/*/dt-pty-host
             native/noto-emoji/NotoColorEmoji.ttf
-          key: native-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/**/*.ps1', 'native/ghostty/ghostty-upstream.json', 'native/linux-pty/dt-pty-host.c', 'native/noto-emoji/noto-emoji.json') }}
+          key: native-v3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/**/*.ps1', 'native/zig.json', 'native/linux-pty/dt-pty-host.c', 'native/noto-emoji/noto-emoji.json') }}
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v4
@@ -411,11 +401,9 @@ jobs:
         with:
           path: |
             artifacts/tools
-            artifacts/ghostty-src
-            native/ghostty/*/*
             native/linux-pty/*/dt-pty-host
             native/noto-emoji/NotoColorEmoji.ttf
-          key: native-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/**/*.ps1', 'native/ghostty/ghostty-upstream.json', 'native/linux-pty/dt-pty-host.c', 'native/noto-emoji/noto-emoji.json') }}
+          key: native-v3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/**/*.ps1', 'native/zig.json', 'native/linux-pty/dt-pty-host.c', 'native/noto-emoji/noto-emoji.json') }}
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v4
@@ -460,11 +448,9 @@ jobs:
         with:
           path: |
             artifacts/tools
-            artifacts/ghostty-src
-            native/ghostty/*/*
             native/linux-pty/*/dt-pty-host
             native/noto-emoji/NotoColorEmoji.ttf
-          key: native-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/**/*.ps1', 'native/ghostty/ghostty-upstream.json', 'native/linux-pty/dt-pty-host.c', 'native/noto-emoji/noto-emoji.json') }}
+          key: native-v3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('native/**/*.ps1', 'native/zig.json', 'native/linux-pty/dt-pty-host.c', 'native/noto-emoji/noto-emoji.json') }}
 
       - name: Set up .NET
         uses: actions/setup-dotnet@v4

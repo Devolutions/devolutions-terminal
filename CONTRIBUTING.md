@@ -69,13 +69,13 @@ Do not point that tool at this repository.
 ## Native helpers
 
 - Linux/macOS PTY host: `native/linux-pty` (`dt-pty-host.c`; Zig `cc` on Linux, Apple clang on macOS)
-- Ghostty VT library: `native/ghostty` (Zig build of pinned Ghostty)
 - Windows Explorer/toast helpers: `native/windows-shell` (MSVC, gitignored `bin/`)
 
-`dotnet build` restores Ghostty and `dt-pty-host` for the host RID (Zig is
-downloaded into `artifacts/tools` on first use; a system `zig` of a different
-minor version than the pinned one is ignored, so it does not break the build). See
-[`native/ghostty/README.md`](native/ghostty/README.md). Pass
+`dotnet build` restores `dt-pty-host` for Linux/macOS host RIDs; Windows builds
+have nothing to restore. The Zig version is pinned in
+[`native/zig.json`](native/zig.json); Zig is downloaded into `artifacts/tools`
+on first use, and a system `zig` of a different minor version than the pinned
+one is ignored, so it does not break the build. Pass
 `-p:SkipNativeRestore=true` to skip.
 
 ## macOS
@@ -88,7 +88,7 @@ dotnet test Devolutions.Terminal.slnx
 pwsh scripts/Build-MacOsPackage.ps1 osx-arm64 2026.3.0 artifacts/packages
 ```
 
-`dotnet build` restores Ghostty and `dt-pty-host` for `osx-arm64` / `osx-x64`.
+`dotnet build` restores `dt-pty-host` for `osx-arm64` / `osx-x64`.
 The PTY host is compiled with Apple clang against the macOS 13 SDK. App-bundle
 packaging is Darwin-only; release builds are signed and notarized with a
 Developer ID identity (see [docs/macos.md](docs/macos.md) and

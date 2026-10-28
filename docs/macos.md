@@ -1,7 +1,7 @@
 # macOS support
 
 macOS is a first-class host for the managed app, Unix PTY transport, built-in
-and Ghostty engines, and self-contained `.app` packaging (including signed,
+engine, and self-contained `.app` packaging (including signed,
 notarized `.dmg` release artifacts). Global hotkeys, default terminal
 registration, and Homebrew remain out of scope.
 
@@ -9,7 +9,7 @@ registration, and Homebrew remain out of scope.
 
 - Avalonia desktop host (`osx-arm64` / `osx-x64`)
 - Local shells through `dt-pty-host` (`forkpty`, same framing as Linux)
-- Selectable built-in and Ghostty engines (`libghostty-vt.dylib`)
+- Built-in terminal engine
 - Settings at `~/Library/Application Support/Devolutions/Terminal/`
 - Native Command-key defaults for clipboard, tabs, windows, search, settings,
   selection, font sizing, full screen, and quit actions
@@ -39,7 +39,7 @@ registration, and Homebrew remain out of scope.
 - Global hotkeys (broker / `dt -w` still work)
 - Default-terminal registration
 
-Ghostty dylibs and `dt-pty-host` are built on restore for `osx-arm64` /
+`dt-pty-host` is built on restore for `osx-arm64` /
 `osx-x64` (macOS 13+). `dt-pty-host` is compiled with Apple clang so it can
 link `libutil` from the SDK.
 

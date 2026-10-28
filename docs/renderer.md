@@ -69,7 +69,7 @@ Coalescing takes an 8 MiB burst from 514 drains to roughly one per frame.
 The separate `render` mode measures snapshot/planning and CPU Skia rasterization
 of static, one-row-update, and scrolling screens. See
 [renderer benchmarks](renderer-benchmarks.md) for reproducible inputs, results
-and the limits of comparing those measurements with Ghostty.
+and the limits of comparing those measurements with other terminals.
 
 ## Performance contract
 

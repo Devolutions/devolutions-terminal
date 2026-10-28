@@ -21,7 +21,6 @@ Devolutions Terminal can run as a static Avalonia WebAssembly app. This is a
 | Desktop capability | Why it is out of scope |
 | --- | --- |
 | ConPTY / `forkpty` inside the page | No process or PTY APIs in the WASM sandbox. A loopback host process can own the PTY and bridge it over WebSocket. |
-| Ghostty (`libghostty-vt`) | Native library, not compiled to WASM |
 | `dt` CLI, broker, multi-window | Separate OS processes and named endpoints |
 | Package identity, toasts, jump lists, global hotkeys | Windows / desktop shell |
 | Native file dialogs, unrestricted filesystem | Browser sandbox (MEMFS only) |

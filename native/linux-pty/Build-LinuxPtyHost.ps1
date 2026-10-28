@@ -12,9 +12,7 @@ $ErrorActionPreference = "Stop"
 
 $nativeRoot = $PSScriptRoot
 $dotnetRoot = [IO.Path]::GetFullPath((Join-Path $nativeRoot "..\.."))
-$manifest = Get-Content -LiteralPath (Join-Path $nativeRoot "..\ghostty\ghostty-upstream.json") -Raw |
-    ConvertFrom-Json
-$ZigPath = Resolve-ZigPath -ZigPath $ZigPath -Version ([string]$manifest.zig) -DotnetRoot $dotnetRoot -Install
+$ZigPath = Resolve-ZigPath -ZigPath $ZigPath -Version (Get-PinnedZigVersion) -DotnetRoot $dotnetRoot -Install
 
 $targets = [ordered]@{
     "linux-x64" = "x86_64-linux-gnu.2.31"

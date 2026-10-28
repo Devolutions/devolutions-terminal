@@ -59,10 +59,8 @@ $required = @(
     $metadata.EXECUTABLE_NAME,
     $metadata.CLI_NAME,
     $metadata.PTY_HOST_NAME,
-    $metadata.GHOSTTY_LIBRARY,
     'libSkiaSharp.dylib',
     'libHarfBuzzSharp.dylib',
-    'THIRD-PARTY-NOTICES-GHOSTTY.txt',
     'THIRD-PARTY-NOTICES-NOTO-EMOJI.txt'
 )
 foreach ($path in $required) {

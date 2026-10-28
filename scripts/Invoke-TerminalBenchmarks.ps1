@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    # vt: builtin vs Ghostty ingest; render: frame prep + CPU raster; control: PTY->UI coalescing.
+    # vt: builtin ingest vs an in-run clock control; render: frame prep + CPU raster; control: PTY->UI coalescing.
     [string[]] $Suite = @("vt", "render"),
 
     # Smaller corpora and fewer runs for a fast local signal (not for published numbers).
@@ -25,14 +25,7 @@ param(
     # Laptop CPUs drop out of turbo a few seconds into sustained load; samples of
     # ~3000 ms all run at the sustained clock, so medians and spreads stay stable.
     [ValidateRange(0, 600000)]
-    [int] $MinMs = 0,
-
-    # Upstream ghostty-bench built from the pinned commit (see docs/performance-benchmarks.md).
-    # When given, every vt workload is also replayed through `+terminal-stream`.
-    [string] $GhosttyBench,
-
-    # Fail when builtin is not faster than raw libghostty-vt on every workload.
-    [switch] $RequireBeatGhostty
+    [int] $MinMs = 0
 )
 
 Set-StrictMode -Version Latest
@@ -111,12 +104,8 @@ if ($Suite -contains "vt") {
             $vtArgs += @("--min-ms", $MinMs)
         }
 
-        if (-not $RequireBeatGhostty) {
-            $vtArgs += "--no-gate"
-        }
-
         if ((Invoke-Bench -Name "vt-$name" -Arguments $vtArgs) -ne 0) {
-            $failures.Add("builtin did not beat ghostty-vt on vt workload '$name'")
+            $failures.Add("vt benchmark failed on workload '$name'")
         }
 
         $report = Get-Content -LiteralPath $partial -Raw | ConvertFrom-Json
@@ -130,33 +119,6 @@ if ($Suite -contains "vt") {
 
     $merged | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $vtJson
 
-    if ($GhosttyBench) {
-        $corpora = Join-Path $OutputDirectory "corpora"
-        Invoke-Bench -Name "vt-export" -Arguments @("vt", "--mb", $megabytes, "--workloads", $Workloads, "--export", $corpora) | Out-Null
-        $upstream = foreach ($file in Get-ChildItem -LiteralPath $corpora -Filter "*.vt") {
-            $times = foreach ($run in 1..$runs) {
-                $watch = [System.Diagnostics.Stopwatch]::StartNew()
-                & $GhosttyBench "+terminal-stream" "--data=$($file.FullName)" "--terminal-rows=30" "--terminal-cols=120" | Out-Null
-                $watch.Stop()
-                if ($LASTEXITCODE -ne 0) {
-                    throw "ghostty-bench failed on $($file.Name)."
-                }
-
-                $watch.Elapsed.TotalSeconds
-            }
-
-            $sorted = @($times | Sort-Object)
-            $median = $sorted[[int][Math]::Floor($sorted.Count / 2)]
-            [pscustomobject]@{
-                Workload = $file.BaseName
-                MedianMBps = [Math]::Round($file.Length / 1MB / $median, 1)
-                Note = "process wall time, includes startup and file load"
-            }
-        }
-
-        $upstream | Format-Table -AutoSize | Out-String | Tee-Object -FilePath (Join-Path $OutputDirectory "ghostty-bench.txt")
-        $upstream | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $OutputDirectory "ghostty-bench.json")
-    }
 
     if ($Baseline) {
         $previous = Get-Content -LiteralPath $Baseline -Raw | ConvertFrom-Json
@@ -183,13 +145,12 @@ if ($Suite -contains "vt") {
             }
 
             # Absolute MB/s drifts with clocks and background load between sessions, so
-            # gate on builtin relative to ghostty-vt measured in the same run: Ghostty is
-            # the control, and only the engine under our control can regress.
-            $oldRatio = $before.PSObject.Properties["builtinVsGhosttyVt"]
-            $newRatio = $workload.PSObject.Properties["builtinVsGhosttyVt"]
+            # gate on builtin relative to the clock control measured in the same run.
+            $oldRatio = $before.PSObject.Properties["builtinVsControl"]
+            $newRatio = $workload.PSObject.Properties["builtinVsControl"]
             if ($oldRatio -and $newRatio -and $oldRatio.Value -gt 0) {
                 $change = ($newRatio.Value - $oldRatio.Value) / $oldRatio.Value * 100
-                $line = "{0,-14} builtin/ghostty-vt {1:F3} -> {2:F3} ({3:+0.0;-0.0}%)" -f $workload.name, $oldRatio.Value, $newRatio.Value, $change
+                $line = "{0,-14} builtin/control {1:F4} -> {2:F4} ({3:+0.0;-0.0}%)" -f $workload.name, $oldRatio.Value, $newRatio.Value, $change
                 if ($change -lt -$RegressionPercent) {
                     $failures.Add("regression: $line")
                     Write-Host "$line  REGRESSION"

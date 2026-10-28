@@ -1,6 +1,12 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# The Zig release that builds the native helpers, pinned in native/zig.json.
+function Get-PinnedZigVersion {
+    $manifest = Get-Content -LiteralPath (Join-Path $PSScriptRoot "zig.json") -Raw | ConvertFrom-Json
+    return [string]$manifest.zig
+}
+
 function Test-HostWindows {
     return [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
         [System.Runtime.InteropServices.OSPlatform]::Windows)

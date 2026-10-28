@@ -174,7 +174,7 @@ public sealed class TerminalSearchSession : IDisposable
             return 0;
         }
 
-        // Ghostty rebuilds projected rows (and their IDs) for each snapshot.
+        // Only the builtin engine keeps logical-line IDs stable across snapshots.
         if (_engine is not TerminalEngine || anchor.LogicalLineId == 0)
         {
             return FindTextAnchor(anchor, fallbackIndex);

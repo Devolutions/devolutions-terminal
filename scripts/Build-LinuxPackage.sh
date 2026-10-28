@@ -115,7 +115,7 @@ else
 fi
 
 find "$publish_dir" -type f \( -name '*.dbg' -o -name '*.pdb' \) -delete
-for artifact in Devolutions.Terminal dt dt-pty-host libghostty-vt.so libSkiaSharp.so libHarfBuzzSharp.so; do
+for artifact in Devolutions.Terminal dt dt-pty-host libSkiaSharp.so libHarfBuzzSharp.so; do
     [[ -f "$publish_dir/$artifact" ]] ||
         { echo "Publish output is missing $artifact." >&2; exit 70; }
     if [[ "$artifact" == *.so || "$artifact" != "lib"* ]]; then

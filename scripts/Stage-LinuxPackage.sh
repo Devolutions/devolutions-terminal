@@ -41,10 +41,8 @@ required=(
     Devolutions.Terminal
     dt
     dt-pty-host
-    libghostty-vt.so
     libSkiaSharp.so
     libHarfBuzzSharp.so
-    THIRD-PARTY-NOTICES-GHOSTTY.txt
     THIRD-PARTY-NOTICES-NOTO-EMOJI.txt
 )
 for path in "${required[@]}"; do
@@ -78,8 +76,6 @@ install -d "$package_root/usr/bin" "$package_root/usr/share/doc/$PACKAGE_NAME"
 ln -s "../../${INSTALL_DIR#/}/Devolutions.Terminal" "$package_root/usr/bin/Devolutions.Terminal"
 ln -s "../../${INSTALL_DIR#/}/dt" "$package_root/usr/bin/dt"
 install -m 0644 "$repo_root/LICENSE" "$package_root/usr/share/doc/$PACKAGE_NAME/LICENSE"
-install -m 0644 "$publish_dir/THIRD-PARTY-NOTICES-GHOSTTY.txt" \
-    "$package_root/usr/share/doc/$PACKAGE_NAME/THIRD-PARTY-NOTICES-GHOSTTY.txt"
 
 find "$package_root" -type d -exec chmod 0755 {} +
 find "$package_root" -type f -exec chmod 0644 {} +

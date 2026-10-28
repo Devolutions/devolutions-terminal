@@ -5,7 +5,7 @@ as a self-contained **NativeAOT** desktop app, and rendered with **Avalonia 12**
 
 - **ConPTY** on Windows and a real **forkpty** transport on Linux and macOS
 - Azure Cloud Shell for remote Azure sessions
-- selectable built-in or **Ghostty** VT engine
+- a built-in VT engine written in C#
 - Windows Terminal-compatible `settings.json`, actions, keybindings, and `dt` CLI
 - source-integrated **Iseberg** PowerShell ISE profiles, with execution in an
   owned PowerShell subprocess and a NativeAOT desktop
@@ -104,10 +104,6 @@ windows is unavailable, and persisted layouts are neither restored nor saved.
 It is the per-launch equivalent of Windows Terminal's
 `compatibility.isolatedMode` setting, which Windows Terminal 1.23 removed.
 
-Set `"experimental.terminalEngine": "ghostty"` to use the pinned
-`libghostty-vt` engine globally. A profile can override it with `"builtin"` or
-`"ghostty"`. ConPTY remains the Windows process transport for both engines.
-
 The compiled-XAML settings editor is documented in
 [docs/settings-editor.md](docs/settings-editor.md).
 
@@ -115,7 +111,6 @@ The compiled-XAML settings editor is documented in
 
 ```
 Devolutions.Terminal.Core         VT parser + text buffer + terminal engine
-Devolutions.Terminal.Ghostty      NativeAOT-safe libghostty-vt engine adapter
 Devolutions.Terminal.Render       Immutable plans + HarfBuzz/Skia glyph renderer
 Devolutions.Terminal.Connection   ConPTY + Linux PTY + Azure Cloud Shell + browser shell
 Devolutions.Terminal.Settings     Layered Windows Terminal-compatible JSON settings

@@ -47,11 +47,11 @@ already the primary scripting language for Windows packaging in this repo
 ## Native helpers
 
 - Linux/macOS PTY host: `native/linux-pty` (`dt-pty-host.c`)
-- Ghostty VT library: `native/ghostty`
 - Windows Explorer/toast helpers: `native/windows-shell`
 
-`dotnet build` restores these for the host RID automatically
-(`-p:SkipNativeRestore=true` to skip).
+`dotnet build` restores `dt-pty-host` for Linux/macOS host RIDs automatically
+(Zig version pinned in `native/zig.json`; `-p:SkipNativeRestore=true` to
+skip). Windows builds have nothing to restore.
 
 ## Platform packaging entry points
 

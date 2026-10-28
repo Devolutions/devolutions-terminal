@@ -4,8 +4,7 @@ The `render` mode of `tools/Devolutions.Terminal.Bench` measures the CPU work of
 preparing and rasterizing terminal frames. It is not a GPU or presentation
 benchmark. The existing `engine` and `control` modes measure different parts
 of the pipeline; `control` uses Avalonia headless and does **not** paint.
-For the engine-level comparison against Ghostty (`vt` mode), the full suite
-script and the "beats Ghostty" criteria, see
+For engine-level VT ingest (`vt` mode) and the full suite script, see
 [performance benchmarks](performance-benchmarks.md).
 
 ## Reproducible input
@@ -79,8 +78,8 @@ and three Release runs, the median-run CPU-raster results were:
 | Scrolling p50 / p95 | 35.512 / 52.286 ms | 3.435 / 5.932 ms |
 | Scrolling managed allocation/frame | 3,428,490 B | 157,920 B |
 
-These are separate runs on one machine, not a speed ratio against Ghostty.
-In this workload 16 KiB updates replace most visible rows; the row cache
+These are separate runs on one machine, not a speed ratio against another
+terminal. In this workload 16 KiB updates replace most visible rows; the row cache
 therefore helps static/localized paints more than scrolling. Replaying only
 eight warmed frames gives artificially high row-cache hit rates and is not a
 substitute for the longer scrolling case.
@@ -152,38 +151,6 @@ at the default 4,096-glyph bound. Median-run p50 changed from 3.388 to
 from these runs. For fully warmed static and localized paints, use at least
 `--warmup 2` so both the candidate and picture passes finish before timing.
 
-## Ghostty reference measurements
-
-This repository pins Ghostty at the commit in
-`native/ghostty/ghostty-upstream.json`. Build **that** source with Zig 0.16.0
-using `zig build -Demit-bench -Doptimize=ReleaseFast` (on macOS add
-`-Demit-macos-app=false`). With the pinned revision on Windows, build the
-benchmark-only/lib-vt targets instead; the default full target currently
-fails to link because of a duplicate `memset` symbol:
-
-```powershell
-zig build -Demit-bench=true -Demit-lib-vt=true -Doptimize=ReleaseFast -j1
-```
-
-The upstream `zig-out/bin/ghostty-bench` (`.exe` on Windows) can consume the
-exported corpus:
-
-```text
-ghostty-bench +screen-clone --mode=render-partial --terminal-rows=30 --terminal-cols=120 --data=<absolute-path-to-terminal-render.vt>
-```
-
-Run it repeatedly with warmups (e.g. `hyperfine`) rather than timing
-`ghostty-gen | ghostty-bench`: keep generation out of the measurement and use
-enough internal operations to amortize process startup and input loading.
-Ghostty's `screen-clone` `render`, `render-clean`, and
-`render-partial` modes time updates to its CPU `RenderState`, **not** GPU
-painting. Their steps respectively perform 50,000 full, 3,000,000 clean, or
-2,000,000 partial updates at `--loops=1`. External wall times also include
-process startup and corpus loading. They use different semantics and
-iteration counts from this project's snapshot/plan stage; record them as
-separate diagnostics, not a numeric speed ratio. The `libghostty-vt` binary
-used by this project has no Ghostty graphics renderer.
-
 ## Full renderer comparison (Linux/macOS)
 
 For a user-visible comparison, benchmark the full GUI applications on the
@@ -196,8 +163,8 @@ scrolling separately; verify the rendered screen after each run, and exclude
 unsupported image protocols from paired workloads.
 
 Instrument Avalonia at `TermControl.Render` (snapshot/plan), then at
-`TerminalSkiaDrawOperation.Render` (Skia submission). Instrument upstream
-Ghostty at `RenderState.update` and `renderer/generic.zig:drawFrame`. Both draw
+`TerminalSkiaDrawOperation.Render` (Skia submission), and instrument the other
+terminal at its equivalent frame-preparation and draw entry points. Both draw
 paths may return before presentation: use platform GPU/compositor tracing or
 presentation timestamps for end-to-end frame latency and dropped frames.
 Report CPU preparation, render submission, GPU completion/presentation, p50/
@@ -205,11 +172,9 @@ p95/p99 frame intervals, and CPU/GPU utilization **as distinct metrics**.
 Full-app elapsed time also includes each app's engine, transport, and
 scheduling; it is not a render-only speed ratio.
 Warm up caches, alternate run order, collect repeated runs, and never run both
-apps' measurements concurrently. Ghostty's native GUI is available on
-Linux/macOS, not Windows; its Windows `libghostty-vt` support cannot stand in
-for a native renderer comparison.
+apps' measurements concurrently.
 
-For a claim of beating Ghostty **at every measured point**, establish separate
+For a claim of beating another terminal **at every measured point**, establish separate
 equivalent baselines for VT ingest, CPU frame preparation, idle/static paint,
 localized updates, first-pass and replayed scrolling, and presented frame
 latency. Compare p50, p95, p99, allocation/peak resident memory, CPU/GPU
@@ -217,5 +182,9 @@ utilization, and dropped frames for each workload on the same native host;
 require pixel or terminal-state equivalence first. Alternate the applications
 across repeated runs and report the run-to-run spread as well as medians. A
 failure or unmeasured metric means the all-points claim has **not** passed.
-The Windows offscreen raster and upstream `screen-clone` results above measure
-different work and cannot satisfy the presented-frame gate.
+The Windows offscreen raster results above measure different work and cannot
+satisfy the presented-frame gate.
+
+Earlier comparison measurements against another engine, from before this
+project had a single engine, are kept in the history record linked from
+[performance benchmarks](performance-benchmarks.md).

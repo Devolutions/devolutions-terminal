@@ -26,12 +26,10 @@ Unix RID-specific publishes remove the Windows-only `OpenConsole.exe` hosts from
 ConPTY uses asynchronous host-side pipes and registered process-exit waits, with synchronous pipe endpoints for the console host, so idle sessions and blocked input do not exhaust the worker pool.
 Linux and macOS local sessions use the
 bundled `forkpty` relay. The Avalonia shell, settings, renderer, and terminal
-engines are shared.
+engine are shared.
 
 CI workflows:
 
-- `build-ghostty.yml` — compile `libghostty-vt` for every RID and upload
-  artifacts (optional cache; not required to develop).
 - `build-terminal.yml` — restore natives from source, test, NativeAOT desktop, Linux
   packages, macOS `.app`/zip, MSIX, the `Devolutions.Terminal.Control`
   NuGet package, and the browser WASM host. NativeAOT desktop releases include
@@ -110,7 +108,7 @@ pwsh scripts/Test-MacOsRuntime.ps1 artifacts/packages
 ```
 
 The staged `Devolutions Terminal.app` contains `Devolutions.Terminal`, `dt`,
-`dt-pty-host`, `libghostty-vt.dylib`, Skia, HarfBuzz, `Info.plist`, and an
+`dt-pty-host`, Skia, HarfBuzz, `Info.plist`, and an
 ad-hoc signed icon. This gate (`Build-MacOsPackage.ps1`) produces an unsigned,
 unnotarized zip for fast local iteration; the CI release pipeline additionally
 runs `scripts/Release-MacOsPackage.ps1` to sign every Mach-O with a Developer ID
@@ -128,7 +126,7 @@ scripts/Build-LinuxPackage.sh linux-arm64 2026.3.0 artifacts/packages all
 These commands publish the default self-contained desktop and create reproducible tar, DEB,
 RPM, and AppImage artifacts plus a SHA-256 manifest. Every format is staged from
 one canonical filesystem root and includes `Devolutions.Terminal`, `dt`,
-`dt-pty-host`, Ghostty, Skia, HarfBuzz, licenses, freedesktop metadata, icons,
+`dt-pty-host`, Skia, HarfBuzz, licenses, freedesktop metadata, icons,
 the reversible integration helper, a sorted inventory, and an SPDX 2.3 SBOM.
 Set `SOURCE_DATE_EPOCH` for release reproducibility. To reuse a separately
 validated publish, set `LINUX_PUBLISH_DIR`.
@@ -159,7 +157,7 @@ uninstall removes every owned file. When installed, `desktop-file-validate` and
 `Test-LinuxArm64Runtime.sh` must run on native Linux ARM64 (`uname -m` equal to
 `aarch64` or `arm64`) and deliberately rejects x64 and QEMU-based
 cross-execution. It runs only non-UI gates: NativeAOT `dt` startup/parser,
-Ghostty ABI and feed, the built-in engine, real `forkpty` lifecycle, broker
+the built-in engine, real `forkpty` lifecycle, broker
 concurrency, Linux profile/XDG discovery, and package lifecycle under a
 disposable root. CI uses the exact GitHub-hosted runner label
 `ubuntu-24.04-arm` in job `linux-arm64-hardware`. If that label is unavailable
