@@ -10,6 +10,7 @@ TryExec=/opt/devolutions-terminal/Devolutions.Terminal
 Terminal=false
 X-TerminalArgExec=--
 StartupNotify=true
+StartupWMClass=com.devolutions.Terminal
 Categories=System;TerminalEmulator;
 Keywords=shell;prompt;command;cmd;powershell;wsl;
 MimeType=x-scheme-handler/dterm;

@@ -146,7 +146,8 @@ internal static class Program
     public static AppBuilder BuildAvaloniaApp()
     {
         var builder = AppBuilder.Configure<TerminalApp>()
-            .UsePlatformDetect();
+            .UsePlatformDetect()
+            .With(new X11PlatformOptions { WmClass = "com.devolutions.Terminal" });
 #if DEBUG
         builder = builder.WithDeveloperTools();
 #endif
