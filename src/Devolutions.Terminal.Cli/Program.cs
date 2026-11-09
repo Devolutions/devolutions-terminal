@@ -8,6 +8,11 @@ public static class Program
     public static async Task<int> Main(string[] args)
     {
         WindowsParentConsole.Attach();
+        if (args.Length > 0 && args[0].Equals("automation", StringComparison.OrdinalIgnoreCase))
+        {
+            return await TerminalAutomationCli.RunAsync(args[1..]).ConfigureAwait(false);
+        }
+
         var parsed = new CliParser().Parse(args);
         if (parsed.ShouldExit)
         {

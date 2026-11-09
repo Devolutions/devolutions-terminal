@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>Devolutions.Terminal.Automation.Mcp</RootNamespace>
+    <AssemblyName>dt-automation-mcp</AssemblyName>
+    <Description>Model Context Protocol server for Devolutions Terminal automation.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="ModelContextProtocol" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <ProjectReference Include="..\Devolutions.Terminal.Automation\Devolutions.Terminal.Automation.csproj" />
+  </ItemGroup>
+</Project>

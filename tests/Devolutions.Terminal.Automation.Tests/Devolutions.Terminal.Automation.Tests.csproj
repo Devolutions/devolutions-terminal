@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Devolutions.Terminal.Automation\Devolutions.Terminal.Automation.csproj" />
+    <ProjectReference Include="..\..\src\Devolutions.Terminal.Cli\Devolutions.Terminal.Cli.csproj" />
+    <ProjectReference Include="..\..\src\Devolutions.Terminal.Automation.Mcp\Devolutions.Terminal.Automation.Mcp.csproj" />
+  </ItemGroup>
+</Project>

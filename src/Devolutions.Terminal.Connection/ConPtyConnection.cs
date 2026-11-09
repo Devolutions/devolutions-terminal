@@ -10,7 +10,7 @@ using Microsoft.Win32.SafeHandles;
 namespace Devolutions.Terminal.Connection;
 
 [SupportedOSPlatform("windows")]
-public sealed class ConPtyConnection : IRestartableTerminalConnection
+public sealed class ConPtyConnection : IRestartableTerminalConnection, ITerminalOutputCompletion
 {
     private readonly object _stateLock = new();
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
@@ -38,6 +38,16 @@ public sealed class ConPtyConnection : IRestartableTerminalConnection
         TerminalConnectionState.NotConnected;
     public TerminalProcessMetadata? ProcessMetadata { get; private set; }
     public TerminalExitInfo? LastExitInfo { get; private set; }
+    public Task OutputCompletion
+    {
+        get
+        {
+            lock (_stateLock)
+            {
+                return _session?.ReadTask ?? Task.CompletedTask;
+            }
+        }
+    }
 
     public Task StartAsync(
         string commandLine,
