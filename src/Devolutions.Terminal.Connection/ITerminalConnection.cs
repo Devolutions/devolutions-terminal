@@ -39,3 +39,9 @@ public interface IRestartableTerminalConnection : ITerminalConnection
     Task RestartAsync(TerminalLaunchOptions? options = null, CancellationToken cancellationToken = default);
     Task CloseAsync(CancellationToken cancellationToken = default);
 }
+
+public interface ITerminalOutputCompletion
+{
+    // Completes when the current session has delivered its remaining output.
+    Task OutputCompletion { get; }
+}

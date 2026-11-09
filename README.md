@@ -132,6 +132,8 @@ Advanced VT protocols are documented in
 [docs/advanced-vt-protocols.md](docs/advanced-vt-protocols.md).
 Azure Cloud Shell is documented in [docs/azure-cloud-shell.md](docs/azure-cloud-shell.md).
 The browser WASM host is documented in [docs/browser.md](docs/browser.md).
+Headless terminal automation for CLI and MCP agents is documented in
+[docs/headless-automation.md](docs/headless-automation.md).
 Build and release gates are documented in [docs/release.md](docs/release.md).
 
 `Devolutions.Terminal.Control` is also published to

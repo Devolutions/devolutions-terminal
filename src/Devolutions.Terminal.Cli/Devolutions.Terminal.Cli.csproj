@@ -9,10 +9,15 @@
     <PublishTrimmed>true</PublishTrimmed>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="Devolutions.Terminal.Automation.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="System.CommandLine" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Devolutions.Terminal.Settings\Devolutions.Terminal.Settings.csproj" />
     <ProjectReference Include="..\Devolutions.Terminal.Broker\Devolutions.Terminal.Broker.csproj" />
+    <ProjectReference Include="..\Devolutions.Terminal.Automation\Devolutions.Terminal.Automation.csproj" />
   </ItemGroup>
+  <Import Project="..\..\native\NativeLibraries.targets" />
 </Project>

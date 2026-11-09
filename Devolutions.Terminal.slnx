@@ -1,6 +1,8 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Devolutions.Terminal.Connection/Devolutions.Terminal.Connection.csproj" />
+    <Project Path="src/Devolutions.Terminal.Automation/Devolutions.Terminal.Automation.csproj" />
+    <Project Path="src/Devolutions.Terminal.Automation.Mcp/Devolutions.Terminal.Automation.Mcp.csproj" />
     <Project Path="src/Devolutions.Terminal.Control/Devolutions.Terminal.Control.csproj" />
     <Project Path="src/Devolutions.Terminal.Core/Devolutions.Terminal.Core.csproj" />
     <Project Path="src/Devolutions.Terminal.Render/Devolutions.Terminal.Render.csproj" />
@@ -23,6 +25,7 @@
     <Project Path="src/Devolutions.Terminal.Ise/Iseberg/Iseberg.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/Devolutions.Terminal.Automation.Tests/Devolutions.Terminal.Automation.Tests.csproj" />
     <Project Path="tests/Devolutions.Terminal.Connection.Tests/Devolutions.Terminal.Connection.Tests.csproj" />
     <Project Path="tests/Devolutions.Terminal.Control.Tests/Devolutions.Terminal.Control.Tests.csproj" />
     <Project Path="tests/Devolutions.Terminal.Core.Tests/Devolutions.Terminal.Core.Tests.csproj" />
