@@ -167,9 +167,43 @@ public sealed class AutomationIntegrationTests
     }
 
     [Fact]
+    public void PipeNames_FitMacOsDefaultTemporarySocketPath()
+    {
+        const string macPipePrefix = "/var/folders/xy/0123456789abcdefghijklmnopqrstuv/T/CoreFxPipe_";
+        var testPipeName = AutomationTestPipe.CreateName();
+
+        Assert.True(Encoding.UTF8.GetByteCount(macPipePrefix + AutomationIpcProtocol.PipeName) <= 104);
+        Assert.True(Encoding.UTF8.GetByteCount(macPipePrefix + testPipeName) <= 104);
+        Assert.NotEqual(testPipeName, AutomationTestPipe.CreateName());
+    }
+
+    [Fact]
+    public async Task IpcHost_PreservesListenerAcrossSequentialConnections()
+    {
+        var pipeName = AutomationTestPipe.CreateName();
+        await using var service = new TerminalAutomationService();
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var host = new AutomationIpcHost(service, pipeName).RunAsync(cancellation.Token);
+
+        try
+        {
+            var client = new AutomationIpcClient(pipeName);
+            for (var index = 0; index < 1_000; index++)
+            {
+                Assert.Empty(await client.ListAsync(cancellation.Token));
+            }
+        }
+        finally
+        {
+            await cancellation.CancelAsync();
+            await host.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [Fact]
     public async Task IpcHost_RejectsAnotherHostForTheSameEndpoint()
     {
-        var pipeName = $"dt-automation-test-{Guid.NewGuid():N}";
+        var pipeName = AutomationTestPipe.CreateName();
         await using var firstService = new TerminalAutomationService();
         await using var secondService = new TerminalAutomationService();
         using var cancellation = new CancellationTokenSource();
@@ -200,7 +234,7 @@ public sealed class AutomationIntegrationTests
     [Fact]
     public async Task IpcClient_UsesNamedPipeForPersistentSessionAndConcurrentInput()
     {
-        var pipeName = $"dt-automation-test-{Guid.NewGuid():N}";
+        var pipeName = AutomationTestPipe.CreateName();
         var connection = new TerminalAutomationServiceTests.FakeConnection();
         await using var service = new TerminalAutomationService(() => connection);
         using var cancellation = new CancellationTokenSource();
@@ -284,7 +318,7 @@ public sealed class AutomationIntegrationTests
     [Fact]
     public async Task IpcHost_CancelledClientsReleaseWaitCapacity()
     {
-        var pipeName = $"dt-automation-test-{Guid.NewGuid():N}";
+        var pipeName = AutomationTestPipe.CreateName();
         var connection = new TerminalAutomationServiceTests.FakeConnection();
         await using var service = new TerminalAutomationService(() => connection);
         using var hostCancellation = new CancellationTokenSource();
@@ -377,7 +411,7 @@ public sealed class AutomationIntegrationTests
     [Fact]
     public async Task TerminalAutomationTools_UseSharedHostForInputWaitAndSnapshots()
     {
-        var pipeName = $"dt-automation-test-{Guid.NewGuid():N}";
+        var pipeName = AutomationTestPipe.CreateName();
         var connection = new TerminalAutomationServiceTests.FakeConnection();
         await using var service = new TerminalAutomationService(() => connection);
         using var cancellation = new CancellationTokenSource();
@@ -459,4 +493,9 @@ public sealed class AutomationIntegrationTests
             ?? throw new InvalidDataException("IPC host returned an invalid response.");
         return (stopped, response);
     }
+}
+
+internal static class AutomationTestPipe
+{
+    internal static string CreateName() => $"dt-t-{Guid.NewGuid():N}";
 }

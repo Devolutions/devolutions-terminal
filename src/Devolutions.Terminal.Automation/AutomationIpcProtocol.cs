@@ -71,7 +71,7 @@ public static class AutomationIpcProtocol
 {
     public const int MaximumMessageCharacters = 1_048_576;
     public const int MaximumCaptureMessageCharacters = 24 * 1024 * 1024;
-    private const string PipePrefix = "Devolutions.Terminal.Automation.";
+    private const string PipePrefix = "DTA.";
 
     public static string PipeName
     {
@@ -328,23 +328,24 @@ public sealed class AutomationIpcHost(TerminalAutomationService service)
         using var capacity = new SemaphoreSlim(MaximumClients, MaximumClients);
         var clients = new ConcurrentDictionary<long, Task>();
         long nextClientId = 0;
+        var listener = CreatePipe();
         try
         {
             while (!lifetime.IsCancellationRequested)
             {
                 await capacity.WaitAsync(lifetime.Token).ConfigureAwait(false);
-                NamedPipeServerStream? pipe = null;
+                var accepted = listener;
+                var transferred = false;
                 try
                 {
-                    pipe = new NamedPipeServerStream(
-                        _pipeName,
-                        PipeDirection.InOut,
-                        NamedPipeServerStream.MaxAllowedServerInstances,
-                        PipeTransmissionMode.Byte,
-                        PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
-                    await pipe.WaitForConnectionAsync(lifetime.Token).ConfigureAwait(false);
+                    await accepted.WaitForConnectionAsync(lifetime.Token).ConfigureAwait(false);
+
+                    // Unix pipe instances share a listening socket. Keep an instance alive
+                    // before a fast client handler can dispose the last connected instance.
+                    listener = CreatePipe();
                     var id = ++nextClientId;
-                    var task = HandleConnectedClientAsync(pipe, lifetime, capacity);
+                    var task = HandleConnectedClientAsync(accepted, lifetime, capacity);
+                    transferred = true;
                     clients[id] = task;
                     _ = task.ContinueWith(
                         completed =>
@@ -359,13 +360,16 @@ public sealed class AutomationIpcHost(TerminalAutomationService service)
                         CancellationToken.None,
                         TaskContinuationOptions.ExecuteSynchronously,
                         TaskScheduler.Default);
-                    pipe = null;
                 }
                 finally
                 {
-                    if (pipe is not null)
+                    if (!transferred)
                     {
-                        await pipe.DisposeAsync().ConfigureAwait(false);
+                        if (!ReferenceEquals(listener, accepted))
+                        {
+                            await accepted.DisposeAsync().ConfigureAwait(false);
+                        }
+
                         capacity.Release();
                     }
                 }
@@ -374,9 +378,20 @@ public sealed class AutomationIpcHost(TerminalAutomationService service)
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
         {
         }
+        finally
+        {
+            await listener.DisposeAsync().ConfigureAwait(false);
+        }
 
         await Task.WhenAll(clients.Values).ConfigureAwait(false);
     }
+
+    private NamedPipeServerStream CreatePipe() => new(
+        _pipeName,
+        PipeDirection.InOut,
+        NamedPipeServerStream.MaxAllowedServerInstances,
+        PipeTransmissionMode.Byte,
+        PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
 
     private async Task HandleConnectedClientAsync(
         NamedPipeServerStream pipe,

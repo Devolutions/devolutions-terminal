@@ -239,7 +239,7 @@ public sealed class AutomationVisualIntegrationTests
     [InlineData("measure", false)]
     public async Task IpcClient_LargerResponseLimitIsSelectedOnlyForCapture(string type, bool accepted)
     {
-        var pipeName = $"dt-automation-test-{Guid.NewGuid():N}";
+        var pipeName = AutomationTestPipe.CreateName();
         await using var server = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1,
             PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
         var frame = new TerminalAutomationFrame(1, new string('A', 64), 1, 1, 1, 1, new(0, 0, 1, 1), 0);
@@ -284,7 +284,7 @@ public sealed class AutomationVisualIntegrationTests
     [Fact]
     public async Task IpcClient_EnsuresHostAfterPreConnectFailureAndDeliversRequestOnce()
     {
-        var pipeName = $"dt-automation-test-{Guid.NewGuid():N}";
+        var pipeName = AutomationTestPipe.CreateName();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var connection = new FakeConnection();
         await using var service = new TerminalAutomationService(() => connection);
@@ -346,7 +346,7 @@ public sealed class AutomationVisualIntegrationTests
     [Fact]
     public async Task IpcClient_DoesNotRetryWhenConnectionFailsAfterRequestDelivery()
     {
-        var pipeName = $"dt-automation-test-{Guid.NewGuid():N}";
+        var pipeName = AutomationTestPipe.CreateName();
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var connection = new FakeConnection();
         await using var service = new TerminalAutomationService(() => connection);
@@ -466,7 +466,7 @@ public sealed class AutomationVisualIntegrationTests
 
         public IsolatedHost()
         {
-            var pipeName = $"dt-automation-test-{Guid.NewGuid():N}";
+            var pipeName = AutomationTestPipe.CreateName();
             Service = new(() => Connection);
             _ipcHost = new(Service, pipeName);
             Client = new(pipeName);
