@@ -728,33 +728,32 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
     {
         if (image.Sixel is { } sixel)
         {
+            var sixelAlpha = sixel.TransparentBackground ? SKAlphaType.Premul : SKAlphaType.Opaque;
             var bitmap = new SKBitmap(
                 sixel.Width,
                 sixel.Height,
                 SKColorType.Bgra8888,
-                SKAlphaType.Premul);
+                sixelAlpha);
             var indices = sixel.PixelIndices.Span;
             var palette = sixel.Palette.Span;
-            var dst = MemoryMarshal.Cast<byte, uint>(bitmap.GetPixelSpan());
+            Span<uint> lut = stackalloc uint[SixelImage.TransparentColorIndex + 1];
             if (BitConverter.IsLittleEndian)
             {
-                for (var index = 0; index < indices.Length; index++)
-                {
-                    var colorIndex = indices[index];
-                    dst[index] = colorIndex == SixelImage.TransparentColorIndex
-                        ? 0u
-                        : palette[colorIndex];
-                }
+                palette.CopyTo(lut);
             }
             else
             {
-                for (var index = 0; index < indices.Length; index++)
+                for (var i = 0; i < palette.Length; i++)
                 {
-                    var colorIndex = indices[index];
-                    dst[index] = colorIndex == SixelImage.TransparentColorIndex
-                        ? 0u
-                        : BinaryPrimitives.ReverseEndianness((palette[colorIndex] << 8) | (palette[colorIndex] >> 24));
+                    lut[i] = BinaryPrimitives.ReverseEndianness((palette[i] << 8) | (palette[i] >> 24));
                 }
+            }
+
+            lut[SixelImage.TransparentColorIndex] = 0u;
+            var dst = MemoryMarshal.Cast<byte, uint>(bitmap.GetPixelSpan());
+            for (var index = 0; index < indices.Length; index++)
+            {
+                dst[index] = lut[indices[index]];
             }
 
             return bitmap;
@@ -767,7 +766,7 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
                 raw.Width,
                 raw.Height,
                 SKColorType.Rgba8888,
-                SKAlphaType.Unpremul);
+                raw.IsOpaque ? SKAlphaType.Opaque : SKAlphaType.Unpremul);
             rgbaPixels.AsSpan(0, raw.Width * raw.Height * 4).CopyTo(bitmap.GetPixelSpan());
             return bitmap;
         }
@@ -797,7 +796,10 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
             return null;
         }
 
-        var decoded = new SKBitmap(codec.Info.Width, codec.Info.Height, SKColorType.Bgra8888, SKAlphaType.Premul);
+        var alphaType = codec.Info.AlphaType == SKAlphaType.Opaque
+            ? SKAlphaType.Opaque
+            : SKAlphaType.Premul;
+        var decoded = new SKBitmap(codec.Info.Width, codec.Info.Height, SKColorType.Bgra8888, alphaType);
         var decodeResult = codec.GetPixels(decoded.Info, decoded.GetPixels());
         if (decodeResult is SKCodecResult.Success or SKCodecResult.IncompleteInput)
         {

@@ -946,6 +946,25 @@ public sealed class SkiaTerminalRendererTests
         Assert.Equal(SKColors.Lime, bitmap.GetPixel(8 + (2 * (int)renderer.CellSize.Width) + 1, 9));
     }
 
+    [Fact]
+    public void RendersOpaqueJpegViaKittyEncodedFormat()
+    {
+        using var source = new SKBitmap(8, 8);
+        source.Erase(SKColors.Red);
+        using var jpeg = source.Encode(SKEncodedImageFormat.Jpeg, 100);
+        var engine = new TerminalEngine(16, 2);
+        engine.Feed($"\u001b_Ga=T,f=100,i=1,c=1,r=1,C=1;{Convert.ToBase64String(jpeg.ToArray())}\u001b\\");
+        var frame = TerminalRenderPlanner.Create(engine.CreateSnapshot(), engine.Scheme);
+        using var renderer = new SkiaTerminalRenderer();
+        using var bitmap = NewBitmap(renderer, frame);
+        using var canvas = new SKCanvas(bitmap);
+
+        DrawImageFrame(renderer, canvas, frame);
+
+        var pixel = bitmap.GetPixel(9, 9);
+        Assert.True(pixel.Red > 200 && pixel.Green < 40 && pixel.Blue < 40, $"expected red JPEG pixel, got {pixel}");
+    }
+
     private static void DrawImageFrame(
         SkiaTerminalRenderer renderer,
         SKCanvas canvas,

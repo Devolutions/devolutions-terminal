@@ -860,4 +860,37 @@ public sealed class KittyGraphicsTests
         Assert.False(KittyGraphicsDecoder.TryDecodeImageData(overDims!, [0xFF, 0xFF], out _, out var overErr));
         Assert.StartsWith("ETOOMANY: image dimensions exceed", overErr, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void QueryDoesNotAdvanceAutoIdAndPrimaryTransmitOnlySurvivesAltScreen()
+    {
+        var (engine, responses) = CreateEngine();
+        engine.Feed(Apc("a=q,f=32,s=1,v=1", "AQIDBA=="));
+        Assert.Equal($"{Esc}_Gi=0;OK{Esc}\\", responses[0]);
+
+        engine.Feed(Apc("a=t,f=32,s=1,v=1", "AQIDBA=="));
+        Assert.Equal($"{Esc}_Gi=1;OK{Esc}\\", responses[1]);
+
+        // Entering cleared alternate screen must not reap unplaced primary a=t image i=1.
+        engine.Feed($"{Esc}[?1049h");
+        engine.Feed(Apc("a=p,i=1,p=1"));
+        Assert.Single(engine.Images);
+        Assert.Equal($"{Esc}_Gi=1;OK{Esc}\\", responses[2]);
+    }
+
+    [Fact]
+    public void ColumnScaledPlacementMovesCursorByAspectPreservedRowsAndRejectsNegativeUnsignedKeys()
+    {
+        Assert.False(KittyGraphicsDecoder.TryParse("a=T,c=-2", out _, out var negColErr));
+        Assert.StartsWith("EINVAL", negColErr, StringComparison.Ordinal);
+        Assert.False(KittyGraphicsDecoder.TryParse("a=d,d=", out _, out var emptyDelErr));
+        Assert.StartsWith("EINVAL", emptyDelErr, StringComparison.Ordinal);
+
+        var (engine, _) = CreateEngine(columns: 80, rows: 24);
+        engine.Resize(80, 24, 10, 20);
+        // 40x20 image scaled to c=2 (20px wide -> aspect-preserved 10px tall = 1 row, not 20px/unclamped).
+        var pixels = new byte[40 * 80 * 4]; // 40x80 scaled to c=2 (20px wide -> 40px tall = 2 rows, not 80/20 = 4 rows!)
+        engine.Feed(Apc("a=T,f=32,s=40,v=80,c=2,i=1", B64(pixels)));
+        Assert.Equal(2, engine.CursorY);
+    }
 }

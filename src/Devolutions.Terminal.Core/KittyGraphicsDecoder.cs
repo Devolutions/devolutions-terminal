@@ -266,6 +266,12 @@ public static class KittyGraphicsDecoder
 
             var key = part[0];
             var value = part[2..];
+            if (value.IsEmpty || value.Contains('='))
+            {
+                error = "EINVAL: malformed control value";
+                return false;
+            }
+
             switch (key)
             {
                 case 'a':
@@ -281,10 +287,16 @@ public static class KittyGraphicsDecoder
                     } : KittyGraphicsAction.Unsupported;
                     break;
                 case 't':
-                    parsed.Medium = value.Length == 1 ? value[0] : '\0';
+                    if (value.Length != 1)
+                    {
+                        error = "EINVAL: bad transmission medium";
+                        return false;
+                    }
+
+                    parsed.Medium = value[0];
                     break;
                 case 'f':
-                    if (!TryInt(value, out var parsedFormat))
+                    if (!TryNonNegativeInt(value, out var parsedFormat))
                     {
                         error = "EINVAL: bad format";
                         return false;
@@ -306,7 +318,7 @@ public static class KittyGraphicsDecoder
 
                     break;
                 case 's':
-                    if (!TryInt(value, out var parsedSourceWidth))
+                    if (!TryNonNegativeInt(value, out var parsedSourceWidth))
                     {
                         error = "EINVAL: bad width";
                         return false;
@@ -315,7 +327,7 @@ public static class KittyGraphicsDecoder
                     parsed.SourceWidth = parsedSourceWidth;
                     break;
                 case 'v':
-                    if (!TryInt(value, out var parsedSourceHeight))
+                    if (!TryNonNegativeInt(value, out var parsedSourceHeight))
                     {
                         error = "EINVAL: bad height";
                         return false;
@@ -351,7 +363,7 @@ public static class KittyGraphicsDecoder
                     parsed.PlacementId = parsedPlacementId;
                     break;
                 case 'c':
-                    if (!TryInt(value, out var parsedColumns))
+                    if (!TryNonNegativeInt(value, out var parsedColumns))
                     {
                         error = "EINVAL: bad columns";
                         return false;
@@ -360,7 +372,7 @@ public static class KittyGraphicsDecoder
                     parsed.Columns = parsedColumns;
                     break;
                 case 'r':
-                    if (!TryInt(value, out var parsedRows))
+                    if (!TryNonNegativeInt(value, out var parsedRows))
                     {
                         error = "EINVAL: bad rows";
                         return false;
@@ -369,7 +381,7 @@ public static class KittyGraphicsDecoder
                     parsed.Rows = parsedRows;
                     break;
                 case 'x':
-                    if (!TryInt(value, out var parsedPixelOffsetX))
+                    if (!TryNonNegativeInt(value, out var parsedPixelOffsetX))
                     {
                         error = "EINVAL: bad x offset";
                         return false;
@@ -378,7 +390,7 @@ public static class KittyGraphicsDecoder
                     parsed.PixelOffsetX = parsedPixelOffsetX;
                     break;
                 case 'y':
-                    if (!TryInt(value, out var parsedPixelOffsetY))
+                    if (!TryNonNegativeInt(value, out var parsedPixelOffsetY))
                     {
                         error = "EINVAL: bad y offset";
                         return false;
@@ -387,7 +399,7 @@ public static class KittyGraphicsDecoder
                     parsed.PixelOffsetY = parsedPixelOffsetY;
                     break;
                 case 'X':
-                    if (!TryInt(value, out var parsedCropX))
+                    if (!TryNonNegativeInt(value, out var parsedCropX))
                     {
                         error = "EINVAL: bad crop x";
                         return false;
@@ -396,7 +408,7 @@ public static class KittyGraphicsDecoder
                     parsed.CropX = parsedCropX;
                     break;
                 case 'Y':
-                    if (!TryInt(value, out var parsedCropY))
+                    if (!TryNonNegativeInt(value, out var parsedCropY))
                     {
                         error = "EINVAL: bad crop y";
                         return false;
@@ -405,7 +417,7 @@ public static class KittyGraphicsDecoder
                     parsed.CropY = parsedCropY;
                     break;
                 case 'w':
-                    if (!TryInt(value, out var parsedCropWidth))
+                    if (!TryNonNegativeInt(value, out var parsedCropWidth))
                     {
                         error = "EINVAL: bad crop width";
                         return false;
@@ -414,7 +426,7 @@ public static class KittyGraphicsDecoder
                     parsed.CropWidth = parsedCropWidth;
                     break;
                 case 'h':
-                    if (!TryInt(value, out var parsedCropHeight))
+                    if (!TryNonNegativeInt(value, out var parsedCropHeight))
                     {
                         error = "EINVAL: bad crop height";
                         return false;
@@ -432,13 +444,13 @@ public static class KittyGraphicsDecoder
                     parsed.ZIndex = parsedZIndex;
                     break;
                 case 'q':
-                    if (!TryUInt(value, out var parsedQuiet) || parsedQuiet > int.MaxValue)
+                    if (!TryNonNegativeInt(value, out var parsedQuiet))
                     {
                         error = "EINVAL: bad quiet flag";
                         return false;
                     }
 
-                    parsed.Quiet = (int)parsedQuiet;
+                    parsed.Quiet = parsedQuiet;
                     break;
                 case 'C':
                     if (value.SequenceEqual("0"))
@@ -473,7 +485,13 @@ public static class KittyGraphicsDecoder
 
                     break;
                 case 'd':
-                    parsed.DeleteWhat = value.Length == 1 ? value[0] : '\0';
+                    if (value.Length != 1)
+                    {
+                        error = "EINVAL: bad delete target";
+                        return false;
+                    }
+
+                    parsed.DeleteWhat = value[0];
                     break;
                 case 'S':
                 case 'O':
@@ -638,7 +656,7 @@ public static class KittyGraphicsDecoder
 
         var rgba = new byte[width * height * 4];
         ExpandRgb24ToRgba32(bytes, rgba);
-        data = new KittyImageData(width, height, rgba);
+        data = new KittyImageData(width, height, rgba) { IsOpaque = true };
         return true;
     }
 
@@ -1077,10 +1095,21 @@ public static class KittyGraphicsDecoder
     private static bool IsValidBase64Char(char ch) =>
         ch is (>= 'A' and <= 'Z') or (>= 'a' and <= 'z') or (>= '0' and <= '9') or '+' or '/' or '=';
 
+    private static bool TryNonNegativeInt(ReadOnlySpan<char> value, out int result)
+    {
+        if (!TryUInt(value, out var parsed) || parsed > int.MaxValue)
+        {
+            result = 0;
+            return false;
+        }
+
+        result = (int)parsed;
+        return true;
+    }
+
     private static bool TryInt(ReadOnlySpan<char> value, out int result)
     {
         result = 0;
-        value = value.Trim();
         if (value.IsEmpty)
         {
             return false;
@@ -1091,10 +1120,6 @@ public static class KittyGraphicsDecoder
         if (value[0] == '-')
         {
             negative = true;
-            index = 1;
-        }
-        else if (value[0] == '+')
-        {
             index = 1;
         }
 
@@ -1127,24 +1152,13 @@ public static class KittyGraphicsDecoder
     private static bool TryUInt(ReadOnlySpan<char> value, out uint result)
     {
         result = 0;
-        value = value.Trim();
         if (value.IsEmpty)
         {
             return false;
         }
 
-        var index = 0;
-        if (value[0] == '+')
-        {
-            index = 1;
-            if (index >= value.Length)
-            {
-                return false;
-            }
-        }
-
         ulong acc = 0;
-        for (; index < value.Length; index++)
+        for (var index = 0; index < value.Length; index++)
         {
             var digit = value[index] - '0';
             if ((uint)digit > 9)

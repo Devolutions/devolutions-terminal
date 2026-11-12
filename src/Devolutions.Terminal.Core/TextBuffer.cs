@@ -486,9 +486,20 @@ public sealed class TextBuffer
             }
         }
 
-        if (anchor.LogicalOffset < line.LogicalOffset ||
-            anchor.LogicalOffset >= line.LogicalOffset + width)
+        if (anchor.LogicalOffset < line.LogicalOffset)
         {
+            column = -1;
+            return false;
+        }
+
+        if (anchor.LogicalOffset >= line.LogicalOffset + width)
+        {
+            if (!HasHistory && line.LogicalOffset == 0 && (row + 1 >= count || _lines[row + 1].LogicalLineId != line.LogicalLineId))
+            {
+                column = Math.Max(0, width - 1);
+                return true;
+            }
+
             column = -1;
             return false;
         }
@@ -1261,6 +1272,50 @@ public sealed class TextBuffer
     {
         CursorX = LeftBound;
         WrapPending = false;
+    }
+
+    internal void AdvanceLines(int count)
+    {
+        if (count <= 0)
+        {
+            return;
+        }
+
+        WrapPending = false;
+        if (CursorY >= ScrollTop && CursorY <= ScrollBottom)
+        {
+            var moveWithinRegion = Math.Min(count, ScrollBottom - CursorY);
+            CursorY += moveWithinRegion;
+            var scrollCount = count - moveWithinRegion;
+            if (scrollCount > 0)
+            {
+                var maxMeaningfulScrolls = ScrollTop == 0 && ScrollBottom == Rows - 1
+                    ? Rows + _historySize + 1
+                    : ScrollBottom - ScrollTop + 1;
+                var boundedScrolls = Math.Min(scrollCount, maxMeaningfulScrolls);
+                for (var i = 0; i < boundedScrolls; i++)
+                {
+                    ScrollUp(1);
+                }
+            }
+
+            return;
+        }
+
+        if (CursorY < ScrollTop)
+        {
+            var stepsToRegion = Math.Min(count, ScrollTop - CursorY);
+            CursorY += stepsToRegion;
+            var remaining = count - stepsToRegion;
+            if (remaining > 0)
+            {
+                AdvanceLines(remaining);
+            }
+
+            return;
+        }
+
+        CursorY = Math.Min(Rows - 1, CursorY + count);
     }
 
     public void LineFeed(bool alsoCarriageReturn = false)

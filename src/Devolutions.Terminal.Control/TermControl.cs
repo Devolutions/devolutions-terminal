@@ -2160,9 +2160,23 @@ public sealed class TermControl : Avalonia.Controls.Control
         return output;
     }
 
-    private static bool IsTextInputCandidate(string? text) =>
-        !string.IsNullOrEmpty(text) &&
-        text.EnumerateRunes().All(static rune => rune.Value is > 0x1F and not 0x7F);
+    private static bool IsTextInputCandidate(string? text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return false;
+        }
+
+        foreach (var rune in text.EnumerateRunes())
+        {
+            if (rune.Value is <= 0x1F or 0x7F)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {

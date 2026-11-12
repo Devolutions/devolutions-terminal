@@ -21,6 +21,15 @@ public sealed class SixelDecoder
         int macroParameter,
         int backgroundSelect,
         int backgroundColor,
+        out SixelImage? image) =>
+        TryDecode(data, macroParameter, backgroundSelect, backgroundColor, usePrivatePalette: false, out image);
+
+    public bool TryDecode(
+        ReadOnlySpan<byte> data,
+        int macroParameter,
+        int backgroundSelect,
+        int backgroundColor,
+        bool usePrivatePalette,
         out SixelImage? image)
     {
         image = null;
@@ -29,7 +38,7 @@ public sealed class SixelDecoder
             return false;
         }
 
-        _palette.AsSpan().CopyTo(_workingPalette);
+        (usePrivatePalette ? DefaultPalette : _palette).AsSpan().CopyTo(_workingPalette);
         using var state = new DecodeState(
             _workingPalette,
             MacroAspectRatio(macroParameter),
@@ -42,7 +51,14 @@ public sealed class SixelDecoder
             var value = data[offset++];
             if (value is >= (byte)'?' and <= (byte)'~')
             {
-                if (!state.WriteSixel(value - '?', 1))
+                var run = 1;
+                while (offset < data.Length && data[offset] == value)
+                {
+                    offset++;
+                    run++;
+                }
+
+                if (!state.WriteSixel(value - '?', run))
                 {
                     return false;
                 }
@@ -105,7 +121,11 @@ public sealed class SixelDecoder
             return false;
         }
 
-        _workingPalette.AsSpan().CopyTo(_palette);
+        if (!usePrivatePalette)
+        {
+            _workingPalette.AsSpan().CopyTo(_palette);
+        }
+
         return true;
     }
 
@@ -157,6 +177,19 @@ public sealed class SixelDecoder
             _imageWidth = Math.Max(_imageWidth, (int)requiredWidth);
             _imageHeight = Math.Max(_imageHeight, (int)requiredHeight);
             _remainingPixelWrites -= pixelWrites;
+            if (value == 0)
+            {
+                _cursorX += repeat;
+                return true;
+            }
+
+            if (value == 0x3F && _cursorX == 0 && repeat == _capacityWidth)
+            {
+                _pixels.AsSpan(_cursorY * _capacityWidth, 6 * _aspectRatio * _capacityWidth).Fill(_foreground);
+                _cursorX += repeat;
+                return true;
+            }
+
             if (repeat == 1 && _aspectRatio == 1)
             {
                 var pixels = _pixels;

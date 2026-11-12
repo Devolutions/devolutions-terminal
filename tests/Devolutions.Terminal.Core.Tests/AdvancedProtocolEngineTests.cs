@@ -900,4 +900,69 @@ public sealed class AdvancedProtocolEngineTests
         Assert.Equal(0, added.AnchorColumn);
         Assert.Equal(engine.Images[^1].AnchorRow, added.AnchorRow);
     }
+
+    [Fact]
+    public void XtsmGraphicsReportsColorRegistersAndPixelGeometry()
+    {
+        var engine = new TerminalEngine(80, 24);
+        engine.Resize(80, 24, 10, 20);
+        var responses = new List<string>();
+        engine.ResponseReady += (_, bytes) => responses.Add(Encoding.ASCII.GetString(bytes));
+
+        engine.Feed("\u001b[?1;1;0S\u001b[?2;1;0S\u001b[?2;4;0S\u001b[?3;1;0S");
+
+        Assert.Equal(
+            ["\u001b[?1;0;256S", "\u001b[?2;0;800;480S", "\u001b[?2;0;4096;4096S", "\u001b[?3;1S"],
+            responses);
+    }
+
+    [Fact]
+    public void SixelPrivateColorRegistersAndCursorRightModesAndDecomOriginWork()
+    {
+        var engine = new TerminalEngine(20, 6);
+        var responses = new List<string>();
+        engine.ResponseReady += (_, bytes) => responses.Add(Encoding.ASCII.GetString(bytes));
+
+        engine.Feed("\u001b[?1070h\u001b[?8452h\u001b[?1070$p\u001b[?8452$p");
+        engine.Feed("\u001b[1;3H\u001bP7q#5;2;100;0;0!25~\u001b\\");
+        // 25px wide = 3 sixel cells -> CursorX moves from col 2 to col 5; private palette leaves next image default.
+        Assert.Equal(5, engine.CursorX);
+        engine.Feed("\u001bP7q#5~\u001b\\");
+        Assert.NotEqual(0xFFFF0000u, engine.Images[^1].Sixel!.Palette.Span[5]);
+        Assert.Equal(["\u001b[?1070;1$y", "\u001b[?8452;1$y"], responses);
+
+        // DECSDM + DECOM places Sixel at scroll-region home.
+        engine.Feed("\u001b[3;5r\u001b[?6h\u001b[?80h\u001bP7q~\u001b\\");
+        Assert.Equal(2, engine.Images[^1].AnchorRow);
+    }
+
+    [Fact]
+    public void EraseInDisplayClearsViewportImagesWhilePreservingScrollback()
+    {
+        var engine = new TerminalEngine(10, 2, historySize: 10);
+        engine.Feed("\u001bP7q~\u001b\\\r\none\r\ntwo");
+        // First image scrolled into history; place second image in live viewport.
+        engine.Feed("\u001bP7q~\u001b\\");
+        Assert.Equal(2, engine.Images.Count);
+
+        engine.Feed("\u001b[2J");
+        Assert.Single(engine.Images);
+
+        engine.Feed("\u001b[3J");
+        Assert.Empty(engine.Images);
+    }
+
+    [Fact]
+    public void AlternateBufferNarrowingClampsImageAnchorAndWideningRestoresColumn()
+    {
+        var engine = new TerminalEngine(20, 4);
+        engine.Feed("\u001b[?1049h\u001b[1;15H\u001bP7q~\u001b\\");
+        Assert.Equal(14, Assert.Single(engine.Images).AnchorColumn);
+
+        engine.Resize(8, 4);
+        Assert.Equal(7, Assert.Single(engine.Images).AnchorColumn);
+
+        engine.Resize(20, 4);
+        Assert.Equal(14, Assert.Single(engine.Images).AnchorColumn);
+    }
 }
