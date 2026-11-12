@@ -106,6 +106,7 @@ public static class KittyGraphicsDecoder
 
     internal static bool TryParseContinuationChunk(
         ReadOnlySpan<char> body,
+        KittyGraphicsAction pendingAction,
         Span<char> carryBuffer,
         ref int carryLength,
         List<byte> payloadTarget,
@@ -146,6 +147,12 @@ public static class KittyGraphicsDecoder
 
             var key = part[0];
             var value = part[2..];
+            if (value.IsEmpty || value.Contains('='))
+            {
+                error = "EINVAL: malformed control value";
+                return false;
+            }
+
             switch (key)
             {
                 case 'a':
@@ -158,13 +165,24 @@ public static class KittyGraphicsDecoder
                         'q' => KittyGraphicsAction.Query,
                         _ => KittyGraphicsAction.Unsupported,
                     } : KittyGraphicsAction.Unsupported;
-                    if (action is KittyGraphicsAction.Delete or KittyGraphicsAction.Put or KittyGraphicsAction.Unsupported)
+                    if (action is KittyGraphicsAction.Delete or KittyGraphicsAction.Put or KittyGraphicsAction.Unsupported ||
+                        action != pendingAction)
                     {
                         chunk = new KittyContinuationChunk(false, 0, 0, 0, IsNonContinuationAction: true);
                         return true;
                     }
 
                     break;
+                case 'f':
+                case 's':
+                case 'v':
+                case 't':
+                case 'o':
+                    // New transmission header keys indicate the previous m=1 transfer was
+                    // abandoned mid-stream (e.g. an oversized chunk was dropped) and a new
+                    // command has begun.
+                    chunk = new KittyContinuationChunk(false, 0, 0, 0, IsNonContinuationAction: true);
+                    return true;
                 case 'i':
                     if (!TryUInt(value, out imageId))
                     {

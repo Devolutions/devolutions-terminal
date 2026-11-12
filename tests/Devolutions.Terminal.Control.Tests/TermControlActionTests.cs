@@ -215,4 +215,37 @@ public sealed class TermControlActionTests
         Assert.Equal("\u001b[27u", control.ProcessKeyDownInput(Key.Escape, KeyModifiers.None, PhysicalKey.Escape, null, disambiguateWithText));
         Assert.Equal("\u001b[27;1:3u", control.ProcessKeyUpInput(Key.Escape, KeyModifiers.None, PhysicalKey.Escape, null, disambiguateWithText));
     }
+
+    [Fact]
+    public void KittyModifierKeyAndReleasedCtrlShortcutDoNotSwallowSubsequentImeTextInput()
+    {
+        var control = new TermControl();
+        var allAndText = new TerminalInputMode(
+            true,
+            false,
+            false,
+            KittyKeyboardFlags.ReportAllKeysAsEscapeCodes |
+            KittyKeyboardFlags.ReportEventTypes |
+            KittyKeyboardFlags.ReportAssociatedText,
+            0,
+            false);
+
+        // Bare LeftCtrl press does not suppress standalone IME commit.
+        Assert.Equal(
+            "\u001b[57442;5u",
+            control.ProcessKeyDownInput(Key.LeftCtrl, KeyModifiers.Control, PhysicalKey.ControlLeft, null, allAndText));
+        Assert.Equal("\u001b[0;;28450u", control.ProcessTextInput("漢", allAndText));
+        Assert.Equal(
+            "\u001b[57442;1:3u",
+            control.ProcessKeyUpInput(Key.LeftCtrl, KeyModifiers.None, PhysicalKey.ControlLeft, null, allAndText));
+
+        // Ctrl+C with no OS TextInput clears suppression upon KeyUp so subsequent IME commit succeeds.
+        Assert.Equal(
+            "\u001b[99;5u",
+            control.ProcessKeyDownInput(Key.C, KeyModifiers.Control, PhysicalKey.C, "c", allAndText));
+        Assert.Equal(
+            "\u001b[99;5:3u",
+            control.ProcessKeyUpInput(Key.C, KeyModifiers.Control, PhysicalKey.C, "c", allAndText));
+        Assert.Equal("\u001b[0;;233u", control.ProcessTextInput("é", allAndText));
+    }
 }

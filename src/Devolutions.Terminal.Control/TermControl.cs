@@ -146,6 +146,7 @@ public sealed class TermControl : Avalonia.Controls.Control
             // KeyUp for keys held while focus leaves goes elsewhere; forget them so
             // the next press isn't reported as an auto-repeat.
             _pressedKeys.Clear();
+            ClearPendingKeyTextSuppression();
             SendFocusChanged(focused: false);
             if (!_cursorOn)
             {
@@ -2035,6 +2036,7 @@ public sealed class TermControl : Avalonia.Controls.Control
         string? keySymbol,
         TerminalInputMode mode)
     {
+        ClearPendingKeyTextSuppression();
         if (!_pressedKeys.Remove((key, physicalKey)))
         {
             return null;
@@ -2077,9 +2079,7 @@ public sealed class TermControl : Avalonia.Controls.Control
         string? keySymbol,
         TerminalInputMode mode)
     {
-        _pendingEncodedTextInput = null;
-        _suppressEncodedKeyTextInput = false;
-        _suppressOptionTextInput = false;
+        ClearPendingKeyTextSuppression();
         var optionAsMeta = OperatingSystem.IsMacOS() &&
                            mode.KittyFlags == KittyKeyboardFlags.None &&
                            !mode.Win32InputMode;
@@ -2112,6 +2112,7 @@ public sealed class TermControl : Avalonia.Controls.Control
         }
 
         if (mode.KittyFlags != KittyKeyboardFlags.None &&
+            !IsModifierOnlyKey(key) &&
             (modifiers.HasFlag(KeyModifiers.Alt) ||
              modifiers.HasFlag(KeyModifiers.Control) ||
              modifiers.HasFlag(KeyModifiers.Meta)))
@@ -2159,6 +2160,19 @@ public sealed class TermControl : Avalonia.Controls.Control
         SetScrollOffset(0);
         return output;
     }
+
+    private void ClearPendingKeyTextSuppression()
+    {
+        _pendingEncodedTextInput = null;
+        _suppressEncodedKeyTextInput = false;
+        _suppressOptionTextInput = false;
+    }
+
+    private static bool IsModifierOnlyKey(Key key) => key is
+        Key.LeftShift or Key.RightShift or
+        Key.LeftCtrl or Key.RightCtrl or
+        Key.LeftAlt or Key.RightAlt or
+        Key.LWin or Key.RWin;
 
     private static bool IsTextInputCandidate(string? text)
     {

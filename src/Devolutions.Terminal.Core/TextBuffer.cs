@@ -476,7 +476,8 @@ public sealed class TextBuffer
         }
 
         var width = EffectiveColumns(line);
-        if (row + 1 < count &&
+        if (line.Wrapped &&
+            row + 1 < count &&
             _lines[row + 1].LogicalLineId == line.LogicalLineId)
         {
             var nextOffset = _lines[row + 1].LogicalOffset;
@@ -527,7 +528,7 @@ public sealed class TextBuffer
     public void SetCurrentLineRendition(LineRendition rendition)
     {
         var line = GetLiveLine(CursorY);
-        if (line.Rendition != rendition)
+        if (line.Rendition != rendition || line.Wrapped)
         {
             ImageAnchorLayoutVersion++;
         }
@@ -2236,10 +2237,36 @@ public sealed class TextBuffer
 
     private void EraseLineRange(int fromY, int toY, bool selective = false)
     {
-        for (var y = Math.Max(0, fromY); y <= Math.Min(toY, Rows - 1); y++)
+        var startY = Math.Max(0, fromY);
+        var endY = Math.Min(toY, Rows - 1);
+        if (startY > endY)
         {
-            EraseCells(GetLiveLine(y).Cells, 0, Columns, selective);
-            GetLiveLine(y).Wrapped = false;
+            return;
+        }
+
+        if (!selective)
+        {
+            ImageAnchorLayoutVersion++;
+            if (startY > 0)
+            {
+                var preceding = GetLiveLine(startY - 1);
+                if (preceding.Wrapped && preceding.LogicalLineId == GetLiveLine(startY).LogicalLineId)
+                {
+                    preceding.Wrapped = false;
+                }
+            }
+        }
+
+        for (var y = startY; y <= endY; y++)
+        {
+            var line = GetLiveLine(y);
+            EraseCells(line.Cells, 0, Columns, selective);
+            line.Wrapped = false;
+            if (!selective)
+            {
+                line.LogicalLineId = ++_nextLogicalLineId;
+                line.LogicalOffset = 0;
+            }
         }
     }
 
@@ -3124,6 +3151,12 @@ public sealed class TextBuffer
                     cursorOffset,
                     out var relativeLine,
                     out var relativeColumn);
+                if (line.Wrapped &&
+                    lineIndex + 1 < source.Count &&
+                    source[lineIndex + 1].LogicalLineId == line.LogicalLineId)
+                {
+                    result[^1].Wrapped = true;
+                }
                 foreach (var (offset, mark) in paragraphMarks)
                 {
                     var destination = paragraphStart + Math.Min(
@@ -3262,9 +3295,26 @@ public sealed class TextBuffer
                 line.LogicalLineId >= minAnchorId &&
                 line.LogicalLineId <= maxAnchorId)
             {
+                var lineWidth = line.Rendition == LineRendition.SingleWidth
+                    ? line.Cells.Length
+                    : Math.Max(1, line.Cells.Length / 2);
+                if (line.Wrapped &&
+                    index + 1 < lines.Count &&
+                    lines[index + 1].LogicalLineId == line.LogicalLineId)
+                {
+                    var nextOffset = lines[index + 1].LogicalOffset;
+                    if (nextOffset > line.LogicalOffset)
+                    {
+                        lineWidth = Math.Min(lineWidth, nextOffset - line.LogicalOffset);
+                    }
+                }
+
                 for (var anchorIndex = 0; anchorIndex < retainedAnchors!.Count; anchorIndex++)
                 {
-                    if (retainedAnchors[anchorIndex].LogicalLineId == line.LogicalLineId)
+                    var anchor = retainedAnchors[anchorIndex];
+                    if (anchor.LogicalLineId == line.LogicalLineId &&
+                        anchor.LogicalOffset >= line.LogicalOffset &&
+                        anchor.LogicalOffset < line.LogicalOffset + lineWidth)
                     {
                         return index;
                     }

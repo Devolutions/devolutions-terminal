@@ -1791,6 +1791,7 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         {
             if (!KittyGraphicsDecoder.TryParseContinuationChunk(
                     body,
+                    pendingControl.Action,
                     _kittyChunkCarry,
                     ref _kittyChunkCarryLength,
                     _kittyChunkPayload,
@@ -2033,6 +2034,7 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
 
     private void ExecuteKittyDelete(KittyGraphicsCommand command)
     {
+        PruneEvictedImages();
         var targetImageId = ResolveKittyImageId(command.ImageId, command.ImageNumber);
         switch (command.DeleteWhat)
         {
@@ -3670,6 +3672,7 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         _sixelDisplayMode = false;
         _sixelPrivateColorRegisters = false;
         _sixelScrollingLeavesCursorRight = false;
+        ResetKittyChunkState();
         _vt52Graphics = false;
         _rectangularAttributeExtent = false;
         _sgr = CellAttributes.Default;

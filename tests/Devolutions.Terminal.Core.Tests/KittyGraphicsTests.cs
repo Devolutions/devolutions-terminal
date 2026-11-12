@@ -893,4 +893,57 @@ public sealed class KittyGraphicsTests
         engine.Feed(Apc("a=T,f=32,s=40,v=80,c=2,i=1", B64(pixels)));
         Assert.Equal(2, engine.CursorY);
     }
+
+    [Fact]
+    public void ContinuationChunkValidatesValuesHandlesInterruptedTransfersAndSoftResetClearsState()
+    {
+        var (engine, responses) = CreateEngine();
+
+        // Empty value (`a=`) on continuation chunk rejects with initial chunk's image ID & quiet flag.
+        engine.Feed(Apc("a=T,f=32,s=1,v=1,i=31,q=1,m=1", "AQID"));
+        engine.Feed(Apc("a=,m=0", "BA=="));
+        Assert.Equal($"{Esc}_Gi=31;EINVAL: malformed control value{Esc}\\", Assert.Single(responses));
+        responses.Clear();
+
+        // Query probe `a=q` during incomplete `m=1` aborts pending transfer and answers probe.
+        engine.Feed(Apc("a=T,f=32,s=2,v=2,i=32,m=1", "AQIDBA=="));
+        engine.Feed(Apc("a=q,f=32,s=1,v=1,i=33", "AQIDBA=="));
+        Assert.Equal([$"{Esc}_Gi=33;OK{Esc}\\"], responses);
+        Assert.Empty(engine.Images);
+        responses.Clear();
+
+        // Fresh transmission after dropped oversized chunk aborts stale transfer and succeeds.
+        engine.Feed(Apc("a=T,f=32,s=2,v=2,i=34,m=1", "AQIDBA=="));
+        engine.Feed($"{Esc}_Gm=1;{new string('A', (1024 * 1024) + 8)}{Esc}\\");
+        engine.Feed(Apc("a=T,f=32,s=1,v=1,i=35,C=1", "AQIDBA=="));
+        Assert.Equal(35u, Assert.Single(engine.Images).Kitty!.ImageId);
+        Assert.Equal([$"{Esc}_Gi=35;OK{Esc}\\"], responses);
+        responses.Clear();
+
+        // DECSTR soft reset (`CSI ! p`) clears incomplete chunk state.
+        engine.Feed(Apc("a=t,f=32,s=1,v=1,i=36,m=1", "AQID"));
+        engine.Feed($"{Esc}[!p");
+        engine.Feed(Apc("a=t,f=32,s=1,v=1,i=37", "AQIDBA=="));
+        Assert.Equal([$"{Esc}_Gi=37;OK{Esc}\\"], responses);
+    }
+
+    [Fact]
+    public void UppercaseDeletePrunesSameFeedScrollbackEvictedPlacementsBeforeFreeingImageData()
+    {
+        var smallEngine = new TerminalEngine(10, 2, historySize: 1);
+        var smallResponses = new List<string>();
+        smallEngine.ResponseReady += (_, bytes) => smallResponses.Add(Encoding.UTF8.GetString(bytes));
+
+        smallEngine.Feed(Apc("a=t,f=32,s=1,v=1,i=1", "AQIDBA=="));
+        smallEngine.Feed(Apc("a=p,i=1,p=1"));
+        // In one Feed batch: scroll p=1 out of history, place p=2, then uppercase-delete p=2.
+        smallEngine.Feed(
+            "\r\none\r\ntwo\r\nthree" +
+            Apc("a=p,i=1,p=2") +
+            Apc("a=d,d=P,i=1,p=2"));
+
+        Assert.Empty(smallEngine.Images);
+        smallEngine.Feed(Apc("a=p,i=1,p=3"));
+        Assert.Contains("ENOENT", smallResponses[^1], StringComparison.Ordinal);
+    }
 }

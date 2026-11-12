@@ -965,4 +965,28 @@ public sealed class AdvancedProtocolEngineTests
         engine.Resize(20, 4);
         Assert.Equal(14, Assert.Single(engine.Images).AnchorColumn);
     }
+
+    [Fact]
+    public void ImageAnchorOnUnwrappedOrClearedLineDoesNotSpillIntoFormerContinuationRow()
+    {
+        // Scenario 1: DECDWL wraps onto row 1, then row 0 returns to DECSWL and places an image at col 50.
+        var engine = new TerminalEngine(80, 6);
+        engine.Feed("\u001b#6" + new string('A', 45));
+        engine.Feed("\u001b[1;1H\u001b#5\u001b[1;51H\u001bP7q~\u001b\\");
+
+        var renditionAnchor = Assert.Single(engine.Images);
+        Assert.Equal(0, renditionAnchor.AnchorRow);
+        Assert.Equal(50, renditionAnchor.AnchorColumn);
+
+        // Scenario 2: Wrapped line cleared by CSI 2 J, widened via Resize, then image placed at col 90.
+        var resized = new TerminalEngine(80, 6);
+        resized.Feed(new string('B', 85));
+        resized.Feed("\u001b[2J");
+        resized.Resize(120, 6);
+        resized.Feed("\u001b[1;91H\u001bP7q~\u001b\\");
+
+        var clearedAnchor = Assert.Single(resized.Images);
+        Assert.Equal(0, clearedAnchor.AnchorRow);
+        Assert.Equal(90, clearedAnchor.AnchorColumn);
+    }
 }

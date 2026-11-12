@@ -364,16 +364,16 @@ public sealed class SixelDecoder
                 : height;
             if ((long)targetWidth * targetHeight > TerminalImageLimits.MaximumPixelCount)
             {
-                targetWidth = width;
-                targetHeight = height;
+                targetWidth = Math.Max(_capacityWidth, width);
+                targetHeight = Math.Max(_capacityHeight, height);
             }
 
             var newWidth = Grow(_capacityWidth, targetWidth);
             var newHeight = Grow(_capacityHeight, targetHeight);
             if ((long)newWidth * newHeight > TerminalImageLimits.MaximumPixelCount)
             {
-                newWidth = width;
-                newHeight = height;
+                newWidth = Math.Max(_capacityWidth, width);
+                newHeight = Math.Max(_capacityHeight, height);
                 if ((long)newWidth * newHeight > TerminalImageLimits.MaximumPixelCount)
                 {
                     return false;
