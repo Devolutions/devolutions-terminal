@@ -91,11 +91,13 @@ public sealed class SixelImage
 
     public uint[] ToRgba32()
     {
-        var pixels = new uint[_indices.Length];
+        ReadOnlySpan<ushort> indices = _indices;
+        ReadOnlySpan<uint> palette = _palette;
+        var pixels = new uint[indices.Length];
         for (var index = 0; index < pixels.Length; index++)
         {
-            var colorIndex = _indices[index];
-            pixels[index] = colorIndex == TransparentColorIndex ? 0u : _palette[colorIndex];
+            var colorIndex = indices[index];
+            pixels[index] = (uint)colorIndex < (uint)palette.Length ? palette[colorIndex] : 0u;
         }
 
         return pixels;

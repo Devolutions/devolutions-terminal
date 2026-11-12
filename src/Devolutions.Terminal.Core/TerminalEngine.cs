@@ -60,6 +60,8 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
     private bool _hasLastPrintedRune;
     private long _nextImageId;
     private long _retainedImageBytes;
+    private long _lastPrunedPrimaryLayoutVersion = -1;
+    private long _lastPrunedAlternateLayoutVersion = -1;
     private bool _vt52Graphics;
     private bool _rectangularAttributeExtent;
     private string? _drcsDesignator;
@@ -70,8 +72,10 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
     private int _macroBytes;
     private int _macroDepth;
     private int _macroExpandedBytes;
-    private readonly Stack<KittyKeyboardFlags> _kittyKeyboardStack = new(16);
-    private KittyKeyboardFlags _kittyKeyboardFlags;
+    private readonly List<KittyKeyboardFlags> _primaryKittyKeyboardStack = new(16);
+    private readonly List<KittyKeyboardFlags> _alternateKittyKeyboardStack = new(16);
+    private KittyKeyboardFlags _primaryKittyKeyboardFlags;
+    private KittyKeyboardFlags _alternateKittyKeyboardFlags;
     private int _modifyOtherKeys;
     private bool _win32InputMode;
     private bool _allowKittyKeyboard = true;
@@ -144,9 +148,36 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         AnsiMode,
         ApplicationCursorKeys,
         ApplicationKeypad,
-        _kittyKeyboardFlags,
+        ActiveKittyKeyboardFlags,
         _modifyOtherKeys,
         _win32InputMode);
+
+    private KittyKeyboardFlags ActiveKittyKeyboardFlags
+    {
+        get => AlternateBufferActive ? _alternateKittyKeyboardFlags : _primaryKittyKeyboardFlags;
+        set
+        {
+            if (AlternateBufferActive)
+            {
+                _alternateKittyKeyboardFlags = value;
+            }
+            else
+            {
+                _primaryKittyKeyboardFlags = value;
+            }
+        }
+    }
+
+    private List<KittyKeyboardFlags> ActiveKittyKeyboardStack =>
+        AlternateBufferActive ? _alternateKittyKeyboardStack : _primaryKittyKeyboardStack;
+
+    private void ResetAllKittyKeyboardState()
+    {
+        _primaryKittyKeyboardFlags = KittyKeyboardFlags.None;
+        _alternateKittyKeyboardFlags = KittyKeyboardFlags.None;
+        _primaryKittyKeyboardStack.Clear();
+        _alternateKittyKeyboardStack.Clear();
+    }
     public bool AllowClipboardWrite { get; private set; }
     public bool AllowNotifications { get; private set; }
     public int Columns => Buffer.Columns;
@@ -201,17 +232,11 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         _primary.Resize(
             columns,
             rows,
-            _images
-                .Where(static image => !image.AlternateBuffer)
-                .Select(static image => image.LogicalAnchor)
-                .ToArray());
+            ExtractBufferAnchors(alternateBuffer: false));
         _alternate.Resize(
             columns,
             rows,
-            _images
-                .Where(static image => image.AlternateBuffer)
-                .Select(static image => image.LogicalAnchor)
-                .ToArray(),
+            ExtractBufferAnchors(alternateBuffer: true),
             reflow: false);
         PruneEvictedImages();
         if (_inBandResize)
@@ -246,8 +271,7 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         ReverseVideo = false;
         AnsiMode = true;
         ApplicationKeypad = false;
-        _kittyKeyboardFlags = KittyKeyboardFlags.None;
-        _kittyKeyboardStack.Clear();
+        ResetAllKittyKeyboardState();
         _modifyOtherKeys = 0;
         _win32InputMode = false;
         _cursorStyle = 0;
@@ -282,6 +306,8 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
 
         _images.Clear();
         _retainedImageBytes = 0;
+        _lastPrunedPrimaryLayoutVersion = -1;
+        _lastPrunedAlternateLayoutVersion = -1;
         _kittyImages.Clear();
         _kittyImageOrder.Clear();
         _kittyImageStoreBytes = 0;
@@ -303,8 +329,7 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         _allowKittyKeyboard = allowKittyKeyboard;
         if (!allowKittyKeyboard)
         {
-            _kittyKeyboardFlags = KittyKeyboardFlags.None;
-            _kittyKeyboardStack.Clear();
+            ResetAllKittyKeyboardState();
         }
     }
 
@@ -1989,50 +2014,35 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         switch (command.DeleteWhat)
         {
             case 'a':
-                RemoveKittyOverlays(overlay => overlay.AlternateBuffer == AlternateBufferActive);
+                RemoveKittyOverlays(activeBufferOnly: true);
                 break;
             case 'A':
-                RemoveKittyOverlays(overlay => overlay.AlternateBuffer == AlternateBufferActive);
+                RemoveKittyOverlays(activeBufferOnly: true);
                 ReapUnplacedKittyImages();
                 break;
             case 'i':
-                if (targetImageId == 0)
-                {
-                    break;
-                }
-
-                if (command.PlacementId != 0)
+                if (targetImageId != 0)
                 {
                     RemoveKittyOverlays(
-                        overlay => overlay.Kitty!.ImageId == targetImageId &&
-                                   overlay.Kitty.PlacementId == command.PlacementId);
-                }
-                else
-                {
-                    RemoveKittyOverlays(overlay => overlay.Kitty!.ImageId == targetImageId);
+                        activeBufferOnly: false,
+                        imageId: targetImageId,
+                        placementId: command.PlacementId,
+                        matchPlacementId: command.PlacementId != 0);
                 }
 
                 break;
             case 'I':
-                if (targetImageId == 0)
-                {
-                    break;
-                }
-
-                if (command.PlacementId != 0)
+                if (targetImageId != 0)
                 {
                     RemoveKittyOverlays(
-                        overlay => overlay.Kitty!.ImageId == targetImageId &&
-                                   overlay.Kitty.PlacementId == command.PlacementId);
-                    if (!HasAnyKittyPlacement(targetImageId))
+                        activeBufferOnly: false,
+                        imageId: targetImageId,
+                        placementId: command.PlacementId,
+                        matchPlacementId: command.PlacementId != 0);
+                    if (command.PlacementId == 0 || !HasAnyKittyPlacement(targetImageId))
                     {
                         RemoveKittyImage(targetImageId);
                     }
-                }
-                else
-                {
-                    RemoveKittyOverlays(overlay => overlay.Kitty!.ImageId == targetImageId);
-                    RemoveKittyImage(targetImageId);
                 }
 
                 break;
@@ -2040,8 +2050,10 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
                 if (targetImageId != 0)
                 {
                     RemoveKittyOverlays(
-                        overlay => overlay.Kitty!.ImageId == targetImageId &&
-                                   overlay.Kitty.PlacementId == command.PlacementId);
+                        activeBufferOnly: false,
+                        imageId: targetImageId,
+                        placementId: command.PlacementId,
+                        matchPlacementId: true);
                 }
 
                 break;
@@ -2049,8 +2061,10 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
                 if (targetImageId != 0)
                 {
                     RemoveKittyOverlays(
-                        overlay => overlay.Kitty!.ImageId == targetImageId &&
-                                   overlay.Kitty.PlacementId == command.PlacementId);
+                        activeBufferOnly: false,
+                        imageId: targetImageId,
+                        placementId: command.PlacementId,
+                        matchPlacementId: true);
                     if (!HasAnyKittyPlacement(targetImageId))
                     {
                         RemoveKittyImage(targetImageId);
@@ -2059,8 +2073,6 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
 
                 break;
             default:
-                // Cell/z-index/number-targeted deletes are not supported; deletes
-                // have no response, so this is a silent no-op.
                 break;
         }
     }
@@ -2080,23 +2092,25 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
 
     private void ReapUnplacedKittyImages()
     {
-        if (_kittyImages.Count == 0)
+        var count = _kittyImages.Count;
+        if (count == 0)
         {
             return;
         }
 
-        var stale = new List<uint>();
+        Span<uint> stale = count <= 128 ? stackalloc uint[count] : new uint[count];
+        var staleCount = 0;
         foreach (var id in _kittyImages.Keys)
         {
             if (!HasAnyKittyPlacement(id))
             {
-                stale.Add(id);
+                stale[staleCount++] = id;
             }
         }
 
-        foreach (var id in stale)
+        for (var i = 0; i < staleCount; i++)
         {
-            RemoveKittyImage(id);
+            RemoveKittyImage(stale[i]);
         }
     }
 
@@ -2109,9 +2123,10 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         if (command.PlacementId != 0)
         {
             RemoveKittyOverlays(
-                overlay => overlay.AlternateBuffer == AlternateBufferActive &&
-                           overlay.Kitty!.ImageId == imageId &&
-                           overlay.Kitty.PlacementId == command.PlacementId);
+                activeBufferOnly: true,
+                imageId: imageId,
+                placementId: command.PlacementId,
+                matchPlacementId: true);
         }
 
         var kitty = new KittyImage(imageId, command.PlacementId, data)
@@ -2159,12 +2174,32 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         }
     }
 
-    private void RemoveKittyOverlays(Func<TerminalImageOverlay, bool> predicate)
+    private void RemoveKittyOverlays(
+        bool activeBufferOnly,
+        uint imageId = 0,
+        uint placementId = 0,
+        bool matchPlacementId = false)
     {
+        var activeAlt = AlternateBufferActive;
         for (var index = _images.Count - 1; index >= 0; index--)
         {
             var image = _images[index];
-            if (image.Kitty is null || !predicate(image))
+            if (image.Kitty is not { } kitty)
+            {
+                continue;
+            }
+
+            if (activeBufferOnly && image.AlternateBuffer != activeAlt)
+            {
+                continue;
+            }
+
+            if (imageId != 0 && kitty.ImageId != imageId)
+            {
+                continue;
+            }
+
+            if (matchPlacementId && kitty.PlacementId != placementId)
             {
                 continue;
             }
@@ -2174,36 +2209,7 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         }
     }
 
-    private void ReapKittyImageStore()
-    {
-        if (_kittyImages.Count == 0)
-        {
-            return;
-        }
-
-        var live = new HashSet<uint>();
-        foreach (var image in _images)
-        {
-            if (image.Kitty is { } kitty)
-            {
-                live.Add(kitty.ImageId);
-            }
-        }
-
-        var stale = new List<uint>();
-        foreach (var id in _kittyImages.Keys)
-        {
-            if (!live.Contains(id))
-            {
-                stale.Add(id);
-            }
-        }
-
-        foreach (var id in stale)
-        {
-            RemoveKittyImage(id);
-        }
-    }
+    private void ReapKittyImageStore() => ReapUnplacedKittyImages();
 
     private uint _nextKittyImageIdValue;
     private uint NextKittyImageId()
@@ -2303,7 +2309,39 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
 
         _images.Add(image);
         _retainedImageBytes += addedBytes;
+        _lastPrunedPrimaryLayoutVersion = -1;
+        _lastPrunedAlternateLayoutVersion = -1;
         ImageAdded?.Invoke(this, image);
+    }
+
+    private IReadOnlyList<TerminalImageAnchor>? ExtractBufferAnchors(bool alternateBuffer)
+    {
+        var count = 0;
+        for (var i = 0; i < _images.Count; i++)
+        {
+            if (_images[i].AlternateBuffer == alternateBuffer)
+            {
+                count++;
+            }
+        }
+
+        if (count == 0)
+        {
+            return null;
+        }
+
+        var anchors = new TerminalImageAnchor[count];
+        var writeIndex = 0;
+        for (var i = 0; i < _images.Count; i++)
+        {
+            var image = _images[i];
+            if (image.AlternateBuffer == alternateBuffer)
+            {
+                anchors[writeIndex++] = image.LogicalAnchor;
+            }
+        }
+
+        return anchors;
     }
 
     private static long IncrementalImageByteSize(TerminalImageOverlay image) =>
@@ -2337,28 +2375,35 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
             return [];
         }
 
-        var result = new List<TerminalImageOverlay>(_images.Count);
-        foreach (var image in _images)
+        var result = new TerminalImageOverlay[_images.Count];
+        for (var i = 0; i < _images.Count; i++)
         {
+            var image = _images[i];
             var buffer = image.AlternateBuffer ? _alternate : _primary;
-            if (!buffer.TryResolveImageAnchor(image.LogicalAnchor, out var absoluteRow, out var column))
-            {
-                continue;
-            }
-
             var firstRow = includeHistory ? 0 : buffer.ViewportStart - buffer.ScrollOffset;
-            result.Add(image with
-            {
-                AnchorColumn = column,
-                AnchorRow = absoluteRow - firstRow,
-            });
+            result[i] = firstRow == 0
+                ? image
+                : image with { AnchorRow = image.AnchorRow - firstRow };
         }
 
-        return result.ToArray();
+        return result;
     }
 
     private void PruneEvictedImages()
     {
+        if (_images.Count == 0)
+        {
+            return;
+        }
+
+        var primaryVersion = _primary.ImageAnchorLayoutVersion;
+        var alternateVersion = _alternate.ImageAnchorLayoutVersion;
+        if (_lastPrunedPrimaryLayoutVersion == primaryVersion &&
+            _lastPrunedAlternateLayoutVersion == alternateVersion)
+        {
+            return;
+        }
+
         for (var index = _images.Count - 1; index >= 0; index--)
         {
             var image = _images[index];
@@ -2382,6 +2427,9 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
             ReleaseOverlayBytes(image);
             _images.RemoveAt(index);
         }
+
+        _lastPrunedPrimaryLayoutVersion = primaryVersion;
+        _lastPrunedAlternateLayoutVersion = alternateVersion;
     }
 
     private static long ImageByteSize(TerminalImageOverlay image) =>
@@ -2609,32 +2657,49 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
             switch (privateMarker)
             {
                 case (byte)'?':
-                    Respond($"\u001b[?{(int)_kittyKeyboardFlags}u");
+                    Respond($"\u001b[?{(int)ActiveKittyKeyboardFlags}u");
                     return true;
                 case (byte)'>':
-                    if (_kittyKeyboardStack.Count < 16)
+                    var pushStack = ActiveKittyKeyboardStack;
+                    if (pushStack.Count == 16)
                     {
-                        _kittyKeyboardStack.Push(_kittyKeyboardFlags);
+                        pushStack.RemoveAt(0);
                     }
 
-                    _kittyKeyboardFlags = (KittyKeyboardFlags)Param(parameters, 0, 0) & supported;
+                    pushStack.Add(ActiveKittyKeyboardFlags);
+                    ActiveKittyKeyboardFlags = (KittyKeyboardFlags)Param(parameters, 0, 0) & supported;
                     return true;
                 case (byte)'<':
+                    var popStack = ActiveKittyKeyboardStack;
                     var count = Math.Max(1, Param(parameters, 0, 1));
-                    while (count-- > 0 && _kittyKeyboardStack.TryPop(out var restored))
+                    if (count > popStack.Count)
                     {
-                        _kittyKeyboardFlags = restored;
+                        popStack.Clear();
+                        ActiveKittyKeyboardFlags = KittyKeyboardFlags.None;
+                    }
+                    else
+                    {
+                        var newCount = popStack.Count - count;
+                        ActiveKittyKeyboardFlags = popStack[newCount];
+                        popStack.RemoveRange(newCount, count);
                     }
 
                     return true;
                 case (byte)'=':
                     var flags = (KittyKeyboardFlags)Param(parameters, 0, 0) & supported;
-                    _kittyKeyboardFlags = Param(parameters, 1, 1) switch
+                    switch (Param(parameters, 1, 1))
                     {
-                        2 => _kittyKeyboardFlags | flags,
-                        3 => _kittyKeyboardFlags & ~flags,
-                        _ => flags,
-                    };
+                        case 1:
+                            ActiveKittyKeyboardFlags = flags;
+                            break;
+                        case 2:
+                            ActiveKittyKeyboardFlags |= flags;
+                            break;
+                        case 3:
+                            ActiveKittyKeyboardFlags &= ~flags;
+                            break;
+                    }
+
                     return true;
                 default:
                     return false;
@@ -3155,6 +3220,8 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
             if (clearOnEnter)
             {
                 _alternate.Reset(keepHistory: false);
+                _alternateKittyKeyboardFlags = KittyKeyboardFlags.None;
+                _alternateKittyKeyboardStack.Clear();
                 RemoveImages(alternateBuffer: true);
             }
 
@@ -3419,8 +3486,7 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         NewLineMode = false;
         ReverseVideo = false;
         AnsiMode = true;
-        _kittyKeyboardFlags = KittyKeyboardFlags.None;
-        _kittyKeyboardStack.Clear();
+        ResetAllKittyKeyboardState();
         _modifyOtherKeys = 0;
         _win32InputMode = false;
         _cursorStyle = 0;

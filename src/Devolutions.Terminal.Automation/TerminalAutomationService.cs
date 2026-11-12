@@ -587,14 +587,62 @@ public sealed partial class TerminalAutomationService : IAsyncDisposable
             {
                 MouseTrackingMode = _engine.MouseTrackingMode,
                 InputMode = _engine.InputMode,
-                Images = snapshot.Images
-                    .Where(image => image.AlternateBuffer == snapshot.AlternateBufferActive)
-                    .Select(static image => new TerminalAutomationImage(
-                    image.Id, image.Protocol.ToString(), image.AnchorColumn, image.AnchorRow,
-                    image.Sixel?.Width ?? (image.Kitty is { Data.Width: > 0 } kittyWidth ? kittyWidth.Data.Width : null),
-                    image.Sixel?.Height ?? (image.Kitty is { Data.Height: > 0 } kittyHeight ? kittyHeight.Data.Height : null))).ToArray(),
+                Images = CreateObservedImages(snapshot.Images, snapshot.AlternateBufferActive),
                 Diagnostics = _diagnostics.ToArray(),
             };
+        }
+
+        private static TerminalAutomationImage[] CreateObservedImages(
+            IReadOnlyList<TerminalImageOverlay> images,
+            bool alternateBufferActive)
+        {
+            if (images.Count == 0)
+            {
+                return [];
+            }
+
+            var matching = 0;
+            for (var i = 0; i < images.Count; i++)
+            {
+                if (images[i].AlternateBuffer == alternateBufferActive)
+                {
+                    matching++;
+                }
+            }
+
+            if (matching == 0)
+            {
+                return [];
+            }
+
+            var observed = new TerminalAutomationImage[matching];
+            var writeIndex = 0;
+            for (var i = 0; i < images.Count; i++)
+            {
+                var image = images[i];
+                if (image.AlternateBuffer != alternateBufferActive)
+                {
+                    continue;
+                }
+
+                var protocolName = image.Protocol switch
+                {
+                    TerminalImageProtocol.Sixel => nameof(TerminalImageProtocol.Sixel),
+                    TerminalImageProtocol.Iterm2Inline => nameof(TerminalImageProtocol.Iterm2Inline),
+                    TerminalImageProtocol.ConEmuInline => nameof(TerminalImageProtocol.ConEmuInline),
+                    TerminalImageProtocol.KittyGraphics => nameof(TerminalImageProtocol.KittyGraphics),
+                    _ => image.Protocol.ToString(),
+                };
+                observed[writeIndex++] = new TerminalAutomationImage(
+                    image.Id,
+                    protocolName,
+                    image.AnchorColumn,
+                    image.AnchorRow,
+                    image.Sixel?.Width ?? (image.Kitty is { Data.Width: > 0 } kittyWidth ? kittyWidth.Data.Width : null),
+                    image.Sixel?.Height ?? (image.Kitty is { Data.Height: > 0 } kittyHeight ? kittyHeight.Data.Height : null));
+            }
+
+            return observed;
         }
 
         private void OnDiagnostic(object? sender, TerminalEngineDiagnostic diagnostic)

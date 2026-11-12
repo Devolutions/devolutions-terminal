@@ -289,7 +289,7 @@ public static class KeyMapper
              (key is Key.Return or Key.LineFeed or Key.Tab or Key.Back &&
               modifiers != KeyModifiers.None) ||
              (textKey && altOrControl) ||
-             codepoint >= 57344);
+             (codepoint >= 57344 && !IsModifierKey(key)));
         var release = eventType == TerminalKeyEventType.Release &&
                       flags.HasFlag(KittyKeyboardFlags.ReportEventTypes);
         if (!allKeys && !disambiguated && !release)
@@ -302,17 +302,16 @@ public static class KeyMapper
                           eventType != TerminalKeyEventType.Press
             ? $":{(int)eventType}"
             : string.Empty;
-        var associatedText = flags.HasFlag(KittyKeyboardFlags.ReportAssociatedText) &&
+        var associatedText = allKeys &&
+                             flags.HasFlag(KittyKeyboardFlags.ReportAssociatedText) &&
                              eventType != TerminalKeyEventType.Release &&
-                             TrySingleRune(keySymbol, out var associatedRune) &&
-                             IsKittyText(associatedRune) &&
                              !modifiers.HasFlag(KeyModifiers.Control)
-            ? associatedRune.Value
-            : 0;
+            ? FormatAssociatedText(keySymbol)
+            : null;
         var modifierField = modifier != 1 || eventSuffix.Length > 0
             ? modifier.ToString(CultureInfo.InvariantCulture) + eventSuffix
             : string.Empty;
-        if (associatedText != 0)
+        if (associatedText is not null)
         {
             return string.Create(
                 CultureInfo.InvariantCulture,
@@ -329,7 +328,36 @@ public static class KeyMapper
             $"\u001b[{codepoint};{modifierField}u");
     }
 
-    private readonly record struct LegacyFunctionalKeyForm(char? Letter, int? TildeNumber);
+    private static string? FormatAssociatedText(string? keySymbol)
+    {
+        if (string.IsNullOrEmpty(keySymbol))
+        {
+            return null;
+        }
+
+        if (TrySingleRune(keySymbol, out var singleRune))
+        {
+            return IsKittyText(singleRune) ? singleRune.Value.ToString(CultureInfo.InvariantCulture) : null;
+        }
+
+        var parts = new List<int>();
+        foreach (var rune in keySymbol.EnumerateRunes())
+        {
+            if (!IsKittyText(rune))
+            {
+                return null;
+            }
+
+            parts.Add(rune.Value);
+        }
+
+        return parts.Count == 0 ? null : string.Join(':', parts);
+    }
+
+    private readonly record struct LegacyFunctionalKeyForm(
+        char? Letter,
+        int? TildeNumber,
+        bool UnmodifiedUsesSs3 = false);
 
     private static bool TryLegacyFunctionalKey(Key key, out LegacyFunctionalKeyForm form)
     {
@@ -345,11 +373,11 @@ public static class KeyMapper
             Key.Delete => new LegacyFunctionalKeyForm(null, 3),
             Key.PageUp => new LegacyFunctionalKeyForm(null, 5),
             Key.PageDown => new LegacyFunctionalKeyForm(null, 6),
-            Key.F1 => new LegacyFunctionalKeyForm('P', null),
-            Key.F2 => new LegacyFunctionalKeyForm('Q', null),
+            Key.F1 => new LegacyFunctionalKeyForm('P', null, UnmodifiedUsesSs3: true),
+            Key.F2 => new LegacyFunctionalKeyForm('Q', null, UnmodifiedUsesSs3: true),
             // F3 has no letter form: "CSI R" conflicts with Cursor Position Report.
             Key.F3 => new LegacyFunctionalKeyForm(null, 13),
-            Key.F4 => new LegacyFunctionalKeyForm('S', null),
+            Key.F4 => new LegacyFunctionalKeyForm('S', null, UnmodifiedUsesSs3: true),
             Key.F5 => new LegacyFunctionalKeyForm(null, 15),
             Key.F6 => new LegacyFunctionalKeyForm(null, 17),
             Key.F7 => new LegacyFunctionalKeyForm(null, 18),
@@ -379,9 +407,12 @@ public static class KeyMapper
 
         if (form.Letter is char letter)
         {
-            return modifierField.Length == 0
-                ? $"\u001b[{letter}"
-                : $"\u001b[1;{modifierField}{letter}";
+            if (modifierField.Length == 0)
+            {
+                return form.UnmodifiedUsesSs3 ? $"\u001bO{letter}" : $"\u001b[{letter}";
+            }
+
+            return $"\u001b[1;{modifierField}{letter}";
         }
 
         return modifierField.Length == 0
@@ -450,7 +481,7 @@ public static class KeyMapper
             return physicalCodepoint;
         }
 
-        return TrySingleRune(keySymbol, out var rune) ? rune.Value : 0;
+        return TrySingleRune(keySymbol, out var rune) ? Rune.ToLowerInvariant(rune).Value : 0;
     }
 
     private static bool IsKittyText(Rune rune) =>
@@ -465,6 +496,27 @@ public static class KeyMapper
         Key.Return or Key.LineFeed => 13,
         Key.Tab => 9,
         Key.Back => 127,
+        Key.CapsLock => 57358,
+        Key.Scroll => 57359,
+        Key.NumLock => 57360,
+        Key.PrintScreen or Key.Snapshot => 57361,
+        Key.Pause => 57362,
+        Key.Apps => 57363,
+        >= Key.F13 and <= Key.F24 => 57376 + (key - Key.F13),
+        >= Key.NumPad0 and <= Key.NumPad9 => 57399 + (key - Key.NumPad0),
+        Key.Decimal => 57409,
+        Key.Divide => 57410,
+        Key.Multiply => 57411,
+        Key.Subtract => 57412,
+        Key.Add => 57413,
+        Key.LeftShift => 57441,
+        Key.LeftCtrl => 57442,
+        Key.LeftAlt => 57443,
+        Key.LWin => 57444,
+        Key.RightShift => 57447,
+        Key.RightCtrl => 57448,
+        Key.RightAlt => 57449,
+        Key.RWin => 57450,
         _ => 0,
     };
 

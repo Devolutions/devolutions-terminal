@@ -190,4 +190,29 @@ public sealed class TermControlActionTests
 
         Assert.Equal("b", control.ProcessTextInput("b", mode));
     }
+
+    [Fact]
+    public void KittyTextInputRequiresReportAllKeysAndUnpressedKeyUpIsSuppressed()
+    {
+        var control = new TermControl();
+        var disambiguateWithText = new TerminalInputMode(
+            true,
+            false,
+            false,
+            KittyKeyboardFlags.DisambiguateEscapeCodes |
+            KittyKeyboardFlags.ReportEventTypes |
+            KittyKeyboardFlags.ReportAssociatedText,
+            0,
+            false);
+
+        // Plain 'a' must remain plain "a" when ReportAllKeysAsEscapeCodes is not set.
+        Assert.Equal("a", control.ProcessTextInput("a", disambiguateWithText));
+
+        // Orphan KeyUp (e.g. shortcut consumed KeyDown) does not emit a release sequence.
+        Assert.Null(control.ProcessKeyUpInput(Key.C, KeyModifiers.None, PhysicalKey.C, "c", disambiguateWithText));
+
+        // Pressed key emits release once, and distinct physical keys with Key.None do not collide.
+        Assert.Equal("\u001b[27u", control.ProcessKeyDownInput(Key.Escape, KeyModifiers.None, PhysicalKey.Escape, null, disambiguateWithText));
+        Assert.Equal("\u001b[27;1:3u", control.ProcessKeyUpInput(Key.Escape, KeyModifiers.None, PhysicalKey.Escape, null, disambiguateWithText));
+    }
 }

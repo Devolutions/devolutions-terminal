@@ -116,6 +116,39 @@ public sealed class UnicodeLegacyParityTests
     }
 
     [Fact]
+    public void KittyKeyboardMaintainsSeparateScreenStacksAndPopEmptyResetsFlags()
+    {
+        var engine = new TerminalEngine();
+        engine.Feed("\u001b[=1u");
+        Assert.Equal(KittyKeyboardFlags.DisambiguateEscapeCodes, engine.InputMode.KittyFlags);
+
+        // Alternate screen starts clean and exiting restores main screen flags.
+        engine.Feed("\u001b[?1049h\u001b[>11u");
+        Assert.Equal(
+            KittyKeyboardFlags.DisambiguateEscapeCodes |
+            KittyKeyboardFlags.ReportEventTypes |
+            KittyKeyboardFlags.ReportAllKeysAsEscapeCodes,
+            engine.InputMode.KittyFlags);
+        engine.Feed("\u001b[?1049l");
+        Assert.Equal(KittyKeyboardFlags.DisambiguateEscapeCodes, engine.InputMode.KittyFlags);
+
+        // Unknown CSI = mode (99) is ignored; popping past bottom resets to None.
+        engine.Feed("\u001b[=8;99u");
+        Assert.Equal(KittyKeyboardFlags.DisambiguateEscapeCodes, engine.InputMode.KittyFlags);
+        engine.Feed("\u001b[<u");
+        Assert.Equal(KittyKeyboardFlags.None, engine.InputMode.KittyFlags);
+
+        // Full stack (17 pushes) evicts oldest entry so popping 1 restores the 16th entry.
+        for (var i = 0; i < 16; i++)
+        {
+            engine.Feed("\u001b[>1u");
+        }
+
+        engine.Feed("\u001b[>8u\u001b[<1u");
+        Assert.Equal(KittyKeyboardFlags.DisambiguateEscapeCodes, engine.InputMode.KittyFlags);
+    }
+
+    [Fact]
     public void KittyModeHonorsProfileCapabilityGate()
     {
         var engine = new TerminalEngine();

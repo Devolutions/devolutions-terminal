@@ -121,6 +121,8 @@ public sealed class TextBuffer
     // For tests: the combining table's size, which compaction keeps bounded.
     internal int CombiningIdCount => _combiningTable.Count;
     public long CoordinateVersion { get; private set; }
+    internal long ImageAnchorLayoutVersion { get; private set; }
+    private bool _historyHasOutOfOrderIds;
     public CellAttributes CurrentAttributes
     {
         get => _currentAttributes;
@@ -171,6 +173,7 @@ public sealed class TextBuffer
         Columns = columns;
         Rows = rows;
         CoordinateVersion++;
+        ImageAnchorLayoutVersion++;
         _tabStops = ResizeTabStops(_tabStops, columns);
         ScrollTop = 0;
         ScrollBottom = rows - 1;
@@ -239,6 +242,7 @@ public sealed class TextBuffer
         }
 
         _lines.ResetCapacity(rows + _historySize, reflowed);
+        UpdateHistoryOrderFlag();
         _activeMark = activeMark;
         var dropped = Math.Max(0, reflowed.Count - _lines.Count);
         cursorLine = Math.Max(0, cursorLine - dropped);
@@ -367,6 +371,8 @@ public sealed class TextBuffer
         }
 
         _lines.ResetCapacity(Rows + _historySize, replacement);
+        ImageAnchorLayoutVersion++;
+        UpdateHistoryOrderFlag();
         CompactCombiningIfNeeded();
         CursorX = Math.Clamp(cursorX, 0, Columns - 1);
         CursorY = Math.Clamp(cursorY, 0, Rows - 1);
@@ -389,33 +395,66 @@ public sealed class TextBuffer
         out int absoluteRow,
         out int column)
     {
-        for (var row = 0; row < _lines.Count; row++)
+        var count = _lines.Count;
+        var viewportStart = ViewportStart;
+        for (var row = viewportStart; row < count; row++)
         {
-            var line = _lines[row];
-            if (line.LogicalLineId != anchor.LogicalLineId)
+            if (TryMatchAnchorAtRow(anchor, row, count, out column))
             {
-                continue;
+                absoluteRow = row;
+                return true;
             }
+        }
 
-            var width = EffectiveColumns(line);
-            if (row + 1 < _lines.Count &&
-                _lines[row + 1].LogicalLineId == line.LogicalLineId)
+        if (viewportStart > 0)
+        {
+            if (!_historyHasOutOfOrderIds)
             {
-                var nextOffset = _lines[row + 1].LogicalOffset;
-                if (nextOffset > line.LogicalOffset)
+                var low = 0;
+                var high = viewportStart - 1;
+                var first = -1;
+                while (low <= high)
                 {
-                    width = Math.Min(width, nextOffset - line.LogicalOffset);
+                    var mid = low + ((high - low) >> 1);
+                    var midId = _lines[mid].LogicalLineId;
+                    if (midId < anchor.LogicalLineId)
+                    {
+                        low = mid + 1;
+                    }
+                    else
+                    {
+                        if (midId == anchor.LogicalLineId)
+                        {
+                            first = mid;
+                        }
+
+                        high = mid - 1;
+                    }
+                }
+
+                if (first >= 0)
+                {
+                    for (var row = first; row < viewportStart && _lines[row].LogicalLineId == anchor.LogicalLineId; row++)
+                    {
+                        if (TryMatchAnchorAtRow(anchor, row, count, out column))
+                        {
+                            absoluteRow = row;
+                            return true;
+                        }
+                    }
                 }
             }
-            if (anchor.LogicalOffset < line.LogicalOffset ||
-                anchor.LogicalOffset >= line.LogicalOffset + width)
+            else
             {
-                continue;
+                for (var row = viewportStart - 1; row >= 0; row--)
+                {
+                    if (TryMatchAnchorAtRow(anchor, row, count, out column))
+                    {
+                        absoluteRow = row;
+                        return true;
+                    }
+                }
             }
-
-            absoluteRow = row;
-            column = anchor.LogicalOffset - line.LogicalOffset;
-            return true;
         }
 
         absoluteRow = -1;
@@ -423,11 +462,65 @@ public sealed class TextBuffer
         return false;
     }
 
+    private bool TryMatchAnchorAtRow(
+        TerminalImageAnchor anchor,
+        int row,
+        int count,
+        out int column)
+    {
+        var line = _lines[row];
+        if (line.LogicalLineId != anchor.LogicalLineId)
+        {
+            column = -1;
+            return false;
+        }
+
+        var width = EffectiveColumns(line);
+        if (row + 1 < count &&
+            _lines[row + 1].LogicalLineId == line.LogicalLineId)
+        {
+            var nextOffset = _lines[row + 1].LogicalOffset;
+            if (nextOffset > line.LogicalOffset)
+            {
+                width = Math.Min(width, nextOffset - line.LogicalOffset);
+            }
+        }
+
+        if (anchor.LogicalOffset < line.LogicalOffset ||
+            anchor.LogicalOffset >= line.LogicalOffset + width)
+        {
+            column = -1;
+            return false;
+        }
+
+        column = anchor.LogicalOffset - line.LogicalOffset;
+        return true;
+    }
+
+    private void UpdateHistoryOrderFlag()
+    {
+        _historyHasOutOfOrderIds = false;
+        var historyEnd = ViewportStart;
+        for (var i = 1; i < historyEnd; i++)
+        {
+            if (_lines[i].LogicalLineId < _lines[i - 1].LogicalLineId)
+            {
+                _historyHasOutOfOrderIds = true;
+                return;
+            }
+        }
+    }
+
     public LineRendition CurrentLineRendition => GetLiveLine(CursorY).Rendition;
 
     public void SetCurrentLineRendition(LineRendition rendition)
     {
         var line = GetLiveLine(CursorY);
+        if (line.Rendition != rendition)
+        {
+            ImageAnchorLayoutVersion++;
+        }
+
         line.Rendition = rendition;
         line.Wrapped = false;
         var width = EffectiveColumns(line);
@@ -1369,6 +1462,7 @@ public sealed class TextBuffer
             Attributes = CellAttributes.Default,
             StoredWidth = 1,
         };
+        ImageAnchorLayoutVersion++;
         for (var y = 0; y < Rows; y++)
         {
             var line = GetLiveLine(y);
@@ -1654,6 +1748,7 @@ public sealed class TextBuffer
             return;
         }
 
+        ImageAnchorLayoutVersion++;
         count = Math.Min(Math.Max(1, count), ScrollBottom - CursorY + 1);
         var start = ViewportStart + CursorY;
         var bottom = ViewportStart + ScrollBottom;
@@ -1675,6 +1770,7 @@ public sealed class TextBuffer
             return;
         }
 
+        ImageAnchorLayoutVersion++;
         count = Math.Min(Math.Max(1, count), ScrollBottom - CursorY + 1);
         var start = ViewportStart + CursorY;
         var bottom = ViewportStart + ScrollBottom;
@@ -1759,10 +1855,12 @@ public sealed class TextBuffer
     public void ScrollUp(int count)
     {
         count = Math.Min(Math.Max(1, count), ScrollBottom - ScrollTop + 1);
+        ImageAnchorLayoutVersion++;
         for (var i = 0; i < count; i++)
         {
             if (ScrollTop == 0 && ScrollBottom == Rows - 1 && HasHistory)
             {
+                var previousViewportStart = ViewportStart;
                 if (_lines.Count == Rows + _historySize)
                 {
                     CoordinateVersion++;
@@ -1773,6 +1871,15 @@ public sealed class TextBuffer
                 _lines.AddLast(_lines.Count == _lines.Capacity
                     ? RecycleLine(_lines.RemoveFirst(), CurrentAttributes)
                     : NewBlankLine(CurrentAttributes));
+                var newHistoryTail = ViewportStart - 1;
+                if (!_historyHasOutOfOrderIds &&
+                    newHistoryTail > 0 &&
+                    previousViewportStart >= 0 &&
+                    _lines[newHistoryTail].LogicalLineId < _lines[newHistoryTail - 1].LogicalLineId)
+                {
+                    _historyHasOutOfOrderIds = true;
+                }
+
                 ScrollOffset = 0;
             }
             else
@@ -1791,6 +1898,7 @@ public sealed class TextBuffer
     public void ScrollDown(int count)
     {
         count = Math.Min(Math.Max(1, count), ScrollBottom - ScrollTop + 1);
+        ImageAnchorLayoutVersion++;
         for (var i = 0; i < count; i++)
         {
             var top = ViewportStart + ScrollTop;
@@ -1843,9 +1951,11 @@ public sealed class TextBuffer
         MarginRight = Columns - 1;
         ScrollOffset = 0;
         _tabStops = CreateDefaultTabStops(Columns);
+        ImageAnchorLayoutVersion++;
         if (!keepHistory)
         {
             _lines.Clear();
+            _historyHasOutOfOrderIds = false;
         }
 
         EnsureViewportLines();
@@ -1974,6 +2084,7 @@ public sealed class TextBuffer
         if (_lines.Count > Rows)
         {
             CoordinateVersion++;
+            ImageAnchorLayoutVersion++;
         }
 
         while (_lines.Count > Rows)
@@ -1981,6 +2092,7 @@ public sealed class TextBuffer
             _lines.RemoveFirst();
         }
 
+        _historyHasOutOfOrderIds = false;
         ScrollOffset = 0;
     }
 
@@ -2033,6 +2145,7 @@ public sealed class TextBuffer
 
     private void ContinueLogicalLine(BufferLine source)
     {
+        ImageAnchorLayoutVersion++;
         var destination = GetLiveLine(CursorY);
         destination.LogicalLineId = source.LogicalLineId;
         destination.LogicalOffset = source.LogicalOffset + EffectiveColumns(source);
@@ -2883,6 +2996,7 @@ public sealed class TextBuffer
         var paragraphRendition = LineRendition.SingleWidth;
         var paragraphLogicalLineId = 0L;
         var paragraphLogicalOffset = 0;
+        GetAnchorIdBounds(retainedAnchors, out var minAnchorId, out var maxAnchorId);
 
         for (var lineIndex = 0; lineIndex < source.Count; lineIndex++)
         {
@@ -2898,7 +3012,9 @@ public sealed class TextBuffer
                 ? oldColumns
                 : Math.Max(1, oldColumns / 2);
             var used = line.Wrapped ? sourceColumns : Math.Min(sourceColumns, LastContentColumn(line.Cells) + 1);
-            if (retainedAnchors is not null)
+            if (retainedAnchors is { Count: > 0 } &&
+                line.LogicalLineId >= minAnchorId &&
+                line.LogicalLineId <= maxAnchorId)
             {
                 for (var anchorIndex = 0; anchorIndex < retainedAnchors.Count; anchorIndex++)
                 {
@@ -3070,6 +3186,8 @@ public sealed class TextBuffer
         IReadOnlyList<BufferLine> lines,
         IReadOnlyList<TerminalImageAnchor>? retainedAnchors)
     {
+        GetAnchorIdBounds(retainedAnchors, out var minAnchorId, out var maxAnchorId);
+        var hasAnchors = retainedAnchors is { Count: > 0 };
         for (var index = lines.Count - 1; index >= 0; index--)
         {
             var line = lines[index];
@@ -3085,11 +3203,13 @@ public sealed class TextBuffer
                 }
             }
 
-            if (retainedAnchors is not null)
+            if (hasAnchors &&
+                line.LogicalLineId >= minAnchorId &&
+                line.LogicalLineId <= maxAnchorId)
             {
-                foreach (var anchor in retainedAnchors)
+                for (var anchorIndex = 0; anchorIndex < retainedAnchors!.Count; anchorIndex++)
                 {
-                    if (anchor.LogicalLineId == line.LogicalLineId)
+                    if (retainedAnchors[anchorIndex].LogicalLineId == line.LogicalLineId)
                     {
                         return index;
                     }
@@ -3098,6 +3218,34 @@ public sealed class TextBuffer
         }
 
         return -1;
+    }
+
+    private static void GetAnchorIdBounds(
+        IReadOnlyList<TerminalImageAnchor>? anchors,
+        out long minId,
+        out long maxId)
+    {
+        if (anchors is not { Count: > 0 })
+        {
+            minId = long.MaxValue;
+            maxId = long.MinValue;
+            return;
+        }
+
+        minId = anchors[0].LogicalLineId;
+        maxId = minId;
+        for (var i = 1; i < anchors.Count; i++)
+        {
+            var id = anchors[i].LogicalLineId;
+            if (id < minId)
+            {
+                minId = id;
+            }
+            else if (id > maxId)
+            {
+                maxId = id;
+            }
+        }
     }
 
     private static int LastContentColumn(CellRow cells)

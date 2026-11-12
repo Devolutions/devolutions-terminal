@@ -848,4 +848,16 @@ public sealed class KittyGraphicsTests
         Assert.False(primary.AlternateBuffer);
         Assert.Equal(1u, primary.Kitty!.ImageId);
     }
+
+    [Fact]
+    public void CompressedRawWithMissingOrOversizedDimensionsFailsBeforeDecompression()
+    {
+        Assert.True(KittyGraphicsDecoder.TryParse("a=t,f=32,o=z", out var missingDims, out _));
+        Assert.False(KittyGraphicsDecoder.TryDecodeImageData(missingDims!, [0xFF, 0xFF], out _, out var missingErr));
+        Assert.StartsWith("EINVAL: raw formats require s and v", missingErr, StringComparison.Ordinal);
+
+        Assert.True(KittyGraphicsDecoder.TryParse("a=t,f=32,o=z,s=5000,v=1", out var overDims, out _));
+        Assert.False(KittyGraphicsDecoder.TryDecodeImageData(overDims!, [0xFF, 0xFF], out _, out var overErr));
+        Assert.StartsWith("ETOOMANY: image dimensions exceed", overErr, StringComparison.Ordinal);
+    }
 }

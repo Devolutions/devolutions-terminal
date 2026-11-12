@@ -63,8 +63,9 @@ public sealed class TermControl : Avalonia.Controls.Control
     private bool _isMarkMode;
     private readonly List<TerminalScrollMark> _userScrollMarks = [];
     private readonly HashSet<(int Line, TerminalScrollMarkKind Kind)> _clearedScrollMarks = [];
-    private readonly HashSet<Key> _pressedKeys = [];
+    private readonly HashSet<(Key Key, PhysicalKey PhysicalKey)> _pressedKeys = [];
     private string? _pendingEncodedTextInput;
+    private bool _suppressEncodedKeyTextInput;
     private bool _suppressOptionTextInput;
     private TerminalCompositionOverlay? _composition;
     private readonly TerminalTextInputMethodClient _textInputMethodClient;
@@ -2014,25 +2015,49 @@ public sealed class TermControl : Avalonia.Controls.Control
 
     protected override void OnKeyUp(KeyEventArgs e)
     {
-        _pressedKeys.Remove(e.Key);
-        var mode = Engine.InputMode;
-        if (mode.Win32InputMode || mode.KittyFlags.HasFlag(KittyKeyboardFlags.ReportEventTypes))
-        {
-            var vt = KeyMapper.ToVt(
+        if (ProcessKeyUpInput(
                 e.Key,
                 e.KeyModifiers,
                 e.PhysicalKey,
                 e.KeySymbol,
-                mode,
-                TerminalKeyEventType.Release);
-            if (vt is not null)
-            {
-                TryWriteInput(vt);
-                e.Handled = true;
-            }
+                Engine.InputMode) is not null)
+        {
+            e.Handled = true;
         }
 
         base.OnKeyUp(e);
+    }
+
+    internal string? ProcessKeyUpInput(
+        Key key,
+        KeyModifiers modifiers,
+        PhysicalKey physicalKey,
+        string? keySymbol,
+        TerminalInputMode mode)
+    {
+        if (!_pressedKeys.Remove((key, physicalKey)))
+        {
+            return null;
+        }
+
+        if (!mode.Win32InputMode && !mode.KittyFlags.HasFlag(KittyKeyboardFlags.ReportEventTypes))
+        {
+            return null;
+        }
+
+        var vt = KeyMapper.ToVt(
+            key,
+            modifiers,
+            physicalKey,
+            keySymbol,
+            mode,
+            TerminalKeyEventType.Release);
+        if (vt is not null)
+        {
+            TryWriteInput(vt);
+        }
+
+        return vt;
     }
 
     protected override void OnTextInput(TextInputEventArgs e)
@@ -2053,12 +2078,13 @@ public sealed class TermControl : Avalonia.Controls.Control
         TerminalInputMode mode)
     {
         _pendingEncodedTextInput = null;
+        _suppressEncodedKeyTextInput = false;
         _suppressOptionTextInput = false;
         var optionAsMeta = OperatingSystem.IsMacOS() &&
                            mode.KittyFlags == KittyKeyboardFlags.None &&
                            !mode.Win32InputMode;
         keySymbol = KeyMapper.NormalizeOptionAsMetaSymbol(key, modifiers, keySymbol, optionAsMeta);
-        var eventType = _pressedKeys.Add(key)
+        var eventType = _pressedKeys.Add((key, physicalKey))
             ? TerminalKeyEventType.Press
             : TerminalKeyEventType.Repeat;
         var vt = KeyMapper.ToVt(
@@ -2085,6 +2111,14 @@ public sealed class TermControl : Avalonia.Controls.Control
             _suppressOptionTextInput = true;
         }
 
+        if (mode.KittyFlags != KittyKeyboardFlags.None &&
+            (modifiers.HasFlag(KeyModifiers.Alt) ||
+             modifiers.HasFlag(KeyModifiers.Control) ||
+             modifiers.HasFlag(KeyModifiers.Meta)))
+        {
+            _suppressEncodedKeyTextInput = true;
+        }
+
         if (IsTextInputCandidate(keySymbol) &&
             (mode.Win32InputMode ||
              mode.ModifyOtherKeys > 0 ||
@@ -2099,9 +2133,10 @@ public sealed class TermControl : Avalonia.Controls.Control
 
     internal string? ProcessTextInput(string? text, TerminalInputMode mode)
     {
-        if (_suppressOptionTextInput)
+        if (_suppressOptionTextInput || _suppressEncodedKeyTextInput)
         {
             _suppressOptionTextInput = false;
+            _suppressEncodedKeyTextInput = false;
             return null;
         }
 
@@ -2117,7 +2152,9 @@ public sealed class TermControl : Avalonia.Controls.Control
             return null;
         }
 
-        var output = KeyMapper.EncodeKittyTextInput(text, mode.KittyFlags) ?? text;
+        var output = mode.KittyFlags.HasFlag(KittyKeyboardFlags.ReportAllKeysAsEscapeCodes)
+            ? KeyMapper.EncodeKittyTextInput(text, mode.KittyFlags) ?? text
+            : text;
         TryWriteInput(output);
         SetScrollOffset(0);
         return output;

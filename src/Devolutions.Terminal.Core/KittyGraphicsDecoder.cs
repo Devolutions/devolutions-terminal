@@ -585,19 +585,25 @@ public static class KittyGraphicsDecoder
         var bytesPerPixel = command.Format == 32 ? 4 : 3;
         var width = command.SourceWidth;
         var height = command.SourceHeight;
-        var hasValidDimensions = width > 0 && height > 0;
-        var exceedsPixelLimits = hasValidDimensions &&
-            (width > TerminalImageLimits.MaximumPixelDimension ||
-             height > TerminalImageLimits.MaximumPixelDimension ||
-             (long)width * height > TerminalImageLimits.MaximumPixelCount);
-        var exactExpected = hasValidDimensions && !exceedsPixelLimits
-            ? (long)width * height * bytesPerPixel
-            : -1L;
+        if (width <= 0 || height <= 0)
+        {
+            error = "EINVAL: raw formats require s and v pixel dimensions";
+            return false;
+        }
 
+        if (width > TerminalImageLimits.MaximumPixelDimension ||
+            height > TerminalImageLimits.MaximumPixelDimension ||
+            (long)width * height > TerminalImageLimits.MaximumPixelCount)
+        {
+            error = "ETOOMANY: image dimensions exceed the pixel limits";
+            return false;
+        }
+
+        var exactExpected = (long)width * height * bytesPerPixel;
         var bytes = payload;
         if (command.Compressed)
         {
-            var inflateExpected = exactExpected > 0 && exactExpected <= TerminalImageLimits.MaximumKittyImageBytes
+            var inflateExpected = exactExpected <= TerminalImageLimits.MaximumKittyImageBytes
                 ? (int)exactExpected
                 : -1;
             if (!TryInflate(payload, inflateExpected, out bytes, out var tooManyRaw))
@@ -612,18 +618,6 @@ public static class KittyGraphicsDecoder
         if (bytes.Length > TerminalImageLimits.MaximumKittyImageBytes)
         {
             error = "ETOOMANY: image data exceeds the size limit";
-            return false;
-        }
-
-        if (!hasValidDimensions)
-        {
-            error = "EINVAL: raw formats require s and v pixel dimensions";
-            return false;
-        }
-
-        if (exceedsPixelLimits)
-        {
-            error = "ETOOMANY: image dimensions exceed the pixel limits";
             return false;
         }
 

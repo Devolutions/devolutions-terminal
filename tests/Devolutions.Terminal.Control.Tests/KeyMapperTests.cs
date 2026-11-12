@@ -509,4 +509,49 @@ public sealed class KeyMapperTests
 
         Assert.Equal("\u001b[97;9u", sequence);
     }
+
+    [Theory]
+    [InlineData(Key.F1, KeyModifiers.None, "\u001bOP")]
+    [InlineData(Key.F2, KeyModifiers.None, "\u001bOQ")]
+    [InlineData(Key.F4, KeyModifiers.None, "\u001bOS")]
+    [InlineData(Key.F1, KeyModifiers.Control, "\u001b[1;5P")]
+    public void KittyF1F2F4UseSs3WhenUnmodifiedAndCsiWhenModified(
+        Key key,
+        KeyModifiers modifiers,
+        string expected)
+    {
+        var mode = new TerminalInputMode(
+            true,
+            false,
+            false,
+            KittyKeyboardFlags.DisambiguateEscapeCodes,
+            0,
+            false);
+
+        Assert.Equal(expected, KeyMapper.ToVt(key, modifiers, PhysicalKey.None, null, mode));
+    }
+
+    [Fact]
+    public void KittyEncodesExtendedFunctionalKeysLowercasesUnicodeBaseAndMultiRuneText()
+    {
+        var disambiguateOnly = new TerminalInputMode(
+            true, false, false, KittyKeyboardFlags.DisambiguateEscapeCodes, 0, false);
+        var allAndText = new TerminalInputMode(
+            true,
+            false,
+            false,
+            KittyKeyboardFlags.ReportAllKeysAsEscapeCodes | KittyKeyboardFlags.ReportAssociatedText,
+            0,
+            false);
+
+        Assert.Equal("\u001b[57376u", KeyMapper.ToVt(Key.F13, KeyModifiers.None, PhysicalKey.None, null, disambiguateOnly));
+        Assert.Equal("\u001b[57399u", KeyMapper.ToVt(Key.NumPad0, KeyModifiers.None, PhysicalKey.None, null, disambiguateOnly));
+        // Bare modifier keys are not emitted in disambiguate-only mode, only with ReportAllKeysAsEscapeCodes.
+        Assert.Null(KeyMapper.ToVt(Key.LeftShift, KeyModifiers.Shift, PhysicalKey.ShiftLeft, null, disambiguateOnly));
+        Assert.Equal("\u001b[57441;2u", KeyMapper.ToVt(Key.LeftShift, KeyModifiers.Shift, PhysicalKey.ShiftLeft, null, allAndText));
+        // Non-ASCII shifted 'Ä' (196) reports lowercase base 'ä' (228) and associated text 196.
+        Assert.Equal("\u001b[228;2;196u", KeyMapper.ToVt(Key.None, KeyModifiers.Shift, PhysicalKey.None, "Ä", allAndText));
+        // Multi-rune keySymbol ("e\u0301") colon-joins codepoints.
+        Assert.Equal("\u001b[101;;101:769u", KeyMapper.ToVt(Key.E, KeyModifiers.None, PhysicalKey.E, "e\u0301", allAndText));
+    }
 }
