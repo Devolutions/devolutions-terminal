@@ -15,7 +15,11 @@ param(
     [ValidateScript({ -not [string]::IsNullOrWhiteSpace($_) -and $_ -notmatch '[\r\n]' })]
     [string] $ExpectedPublisher = "CN=Devolutions Inc.",
 
-    [switch] $AllowUntrustedRoot
+    [switch] $AllowUntrustedRoot,
+
+    # Requires each MSIX to embed an App Installer feed that updates from this GitHub repository's Releases.
+    [ValidatePattern('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')]
+    [string] $UpdateRepository
 )
 
 begin {
@@ -110,6 +114,62 @@ begin {
         throw "Signature validation failed for '$Path'."
     }
 
+    function Test-AutoUpdate {
+        param(
+            [string] $Path,
+            [string] $ExtractPath,
+            [xml] $Manifest,
+            $Identity
+        )
+
+        $namespace = [Xml.XmlNamespaceManager]::new($Manifest.NameTable)
+        $namespace.AddNamespace("f", "http://schemas.microsoft.com/appx/manifest/foundation/windows10")
+        $namespace.AddNamespace("uap13", "http://schemas.microsoft.com/appx/manifest/uap/windows10/13")
+        $reference = $Manifest.SelectSingleNode("/f:Package/f:Properties/uap13:AutoUpdate/uap13:AppInstaller", $namespace)
+        $embeddedPath = Join-Path $ExtractPath "Update.appinstaller"
+        $embedded = Test-Path -LiteralPath $embeddedPath -PathType Leaf
+
+        if ([string]::IsNullOrWhiteSpace($UpdateRepository)) {
+            Assert-Condition (($null -eq $reference) -and -not $embedded) "'$Path' unexpectedly embeds an App Installer update feed."
+            return
+        }
+
+        Assert-Condition ($null -ne $reference -and $reference.GetAttribute("File") -ceq "Update.appinstaller") "'$Path' must reference Update.appinstaller through uap13:AutoUpdate."
+        Assert-Condition $embedded "Update.appinstaller is missing from '$Path'."
+
+        [xml] $feed = Get-Content -LiteralPath $embeddedPath -Raw -Encoding utf8
+        $installer = $feed.DocumentElement
+        $architecture = $Identity.ProcessorArchitecture
+        $feedName = "$($Identity.Name)_$architecture.appinstaller"
+        Assert-Condition ($installer.LocalName -ceq "AppInstaller" -and
+            $installer.NamespaceURI -ceq "http://schemas.microsoft.com/appx/appinstaller/2021") "Unexpected App Installer schema in '$Path'."
+        Assert-Condition ($installer.GetAttribute("Version") -ceq $Identity.Version) "App Installer feed version does not match '$Path'."
+        Assert-Condition (
+            $installer.GetAttribute("Uri") -ceq "https://github.com/$UpdateRepository/releases/latest/download/$feedName"
+        ) "The App Installer feed in '$Path' must use the stable latest-release URL."
+
+        $main = @($installer.ChildNodes | Where-Object LocalName -eq "MainPackage")
+        Assert-Condition ($main.Count -eq 1) "The App Installer feed in '$Path' must describe exactly one MainPackage."
+        foreach ($attribute in "Name", "Publisher", "Version", "ProcessorArchitecture") {
+            Assert-Condition ($main[0].GetAttribute($attribute) -ceq $Identity.GetAttribute($attribute)) "App Installer MainPackage $attribute does not match '$Path'."
+        }
+        $packageUri = [uri] $main[0].GetAttribute("Uri")
+        Assert-Condition ($packageUri.IsAbsoluteUri -and $packageUri.Scheme -eq "https" -and
+            $packageUri.AbsoluteUri.StartsWith("https://github.com/$UpdateRepository/releases/download/", [StringComparison]::Ordinal)) "The App Installer feed in '$Path' must download from a GitHub release."
+        Assert-Condition ([uri]::UnescapeDataString($packageUri.Segments[-1]) -ceq [IO.Path]::GetFileName($Path)) "The App Installer feed in '$Path' must download this package's file name."
+
+        $onLaunch = @($installer.ChildNodes | Where-Object LocalName -eq "UpdateSettings" | ForEach-Object { $_.ChildNodes } | Where-Object LocalName -eq "OnLaunch")
+        Assert-Condition ($onLaunch.Count -eq 1 -and $onLaunch[0].GetAttribute("HoursBetweenUpdateChecks") -ceq "0" -and
+            $onLaunch[0].GetAttribute("UpdateBlocksActivation") -ceq "false") "The App Installer feed in '$Path' must check on every launch without blocking activation."
+
+        $published = Join-Path ([IO.Path]::GetDirectoryName($Path)) $feedName
+        if (Test-Path -LiteralPath $published -PathType Leaf) {
+            Assert-Condition (
+                (Get-FileHash -LiteralPath $published).Hash -ceq (Get-FileHash -LiteralPath $embeddedPath).Hash
+            ) "The embedded App Installer feed differs from '$published'."
+        }
+    }
+
     function Test-Msix {
         param([string] $Path)
 
@@ -179,6 +239,7 @@ begin {
                 (@($manifest.SelectNodes("//desktop5:ItemType", $namespace) | ForEach-Object Type) -join "|") -eq "Directory|Directory\Background"
             ) "Unexpected Explorer context-menu item types."
             Assert-Condition ($null -ne $manifest.SelectSingleNode("//rescap:Capability[@Name='runFullTrust']", $namespace)) "The runFullTrust capability is missing."
+            Test-AutoUpdate -Path $Path -ExtractPath $extractPath -Manifest $manifest -Identity $identity
 
             foreach ($asset in @(
                 "StoreLogo.png",

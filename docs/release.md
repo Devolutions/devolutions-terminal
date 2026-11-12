@@ -322,6 +322,18 @@ Changing publishers changes the package family, so a signed production package i
 If MSIX signing or validation fails after packaging, the workflow retains the pre-signing unsigned packages, generated manifest, and recent AppxPackaging events in `DevolutionsTerminal-MSIX-failure-diagnostics` for seven days.
 HRESULT `0x8007000B` alone is not diagnostic: AppxPackaging events distinguish publisher mismatch (150), hash mismatch (151), and block-map mismatch (152).
 
+### MSIX automatic updates
+
+Release builds pass `-UpdateRepository` and `-ReleaseTag` to `Build-Packages.ps1`, which uses `New-AppInstaller.ps1` to write one App Installer feed per architecture (`Devolutions.Terminal_x64.appinstaller`, `Devolutions.Terminal_arm64.appinstaller`).
+Each feed's own URI is GitHub's stable `releases/latest/download/<feed>` redirect, while its `MainPackage` points at the immutable MSIX of the release that produced it.
+The release job uploads the feeds with the packages, so each new release advances the stable URL to the newest MSIX.
+Feeds check on every launch without blocking activation or prompting, and enable the App Installer background update task; downgrades are not allowed.
+
+The same feed is embedded in each MSIX as `Update.appinstaller` and referenced by `uap13:AutoUpdate`, so an MSIX installed directly also enrolls in updates on Windows versions that support that element (older versions ignore it).
+Installing through `https://github.com/Devolutions/devolutions-terminal/releases/latest/download/Devolutions.Terminal_x64.appinstaller` (or `_arm64`) enrolls on all supported Windows versions.
+`Test-Packages.ps1 -UpdateRepository` verifies the embedded feed matches the package identity, architecture, file name, and the published feed beside it.
+Updates require a published GitHub Release that GitHub marks as latest; dry runs build feeds but publish nothing.
+
 The release job always publishes `Devolutions.Terminal.App` and
 `Devolutions.Terminal.Control` to NuGet.org through OIDC trusted publishing
 on non-dry-run tag and manual releases. The distribution consists of a small
