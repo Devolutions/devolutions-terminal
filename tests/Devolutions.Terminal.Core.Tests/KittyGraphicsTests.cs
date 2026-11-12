@@ -654,4 +654,17 @@ public sealed class KittyGraphicsTests
         Assert.Contains("EINVAL", response, StringComparison.Ordinal);
         Assert.Empty(engine.Images);
     }
+
+    [Fact]
+    public void DelInsideApcIsIgnoredAndOversizedApcIgnoresBelAndStartsFollowingEscape()
+    {
+        var (engine, responses) = CreateEngine(columns: 10, rows: 2);
+        engine.Feed($"{Esc}_Ga=T,f=32,s=1,v=1,i=1,C=1;AQ\u007fIDBA=={Esc}\\");
+        Assert.Single(engine.Images);
+        Assert.Equal([$"{Esc}_Gi=1;OK{Esc}\\"], responses);
+
+        engine.Feed($"{Esc}_Ga=T,i=2;{new string('A', 1024 * 1024 + 4)}\aNOTPRINTED{Esc}[1mZ");
+        Assert.Equal("Z", engine.Buffer.GetCell(0, 0).Text);
+        Assert.Equal(CellFlags.Bold, engine.Buffer.GetCell(0, 0).Attributes.Flags);
+    }
 }

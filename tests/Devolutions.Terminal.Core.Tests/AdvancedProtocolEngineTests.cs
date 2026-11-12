@@ -870,4 +870,34 @@ public sealed class AdvancedProtocolEngineTests
         Assert.Equal("\u001b[?69;1$y", responses[0]);
         Assert.Equal("\u001bP1$r5;20s\u001b\\", responses[1]);
     }
+
+    [Fact]
+    public void MultiLineFormattedSixelDoesNotExecuteC0LineFeedsDuringDcs()
+    {
+        var engine = new TerminalEngine(10, 4);
+        engine.Feed("\u001b[2;3H\u001b[?80l\u001bP7q#2;2;100;0;0\r\n!3~\r\n\u001b\\");
+
+        var overlay = Assert.Single(engine.Images);
+        Assert.Equal(2, overlay.AnchorColumn);
+        Assert.Equal(1, overlay.AnchorRow);
+        Assert.Equal(1, engine.CursorY);
+    }
+
+    [Fact]
+    public void SixelResolvesPendingWrapAndReportsPostScrollAnchorRow()
+    {
+        var engine = new TerminalEngine(4, 2, historySize: 1);
+        TerminalImageOverlay? added = null;
+        engine.ImageAdded += (_, image) => added = image;
+
+        engine.Feed("1234\r\nabcd");
+        Assert.True(engine.Buffer.WrapPending);
+
+        engine.Feed("\u001bP7q\"1;1;1;40~\u001b\\");
+
+        Assert.NotNull(added);
+        Assert.False(engine.Buffer.WrapPending);
+        Assert.Equal(0, added.AnchorColumn);
+        Assert.Equal(engine.Images[^1].AnchorRow, added.AnchorRow);
+    }
 }

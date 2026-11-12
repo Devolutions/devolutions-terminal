@@ -1144,6 +1144,26 @@ public sealed class TextBuffer
         }
     }
 
+    public void ResolvePendingWrap(bool autoWrap)
+    {
+        if (!WrapPending)
+        {
+            return;
+        }
+
+        if (!autoWrap)
+        {
+            WrapPending = false;
+            return;
+        }
+
+        var source = GetLiveLine(CursorY);
+        source.Wrapped = true;
+        CarriageReturn();
+        LineFeed();
+        ContinueLogicalLine(source);
+    }
+
     public void CarriageReturn()
     {
         CursorX = LeftBound;

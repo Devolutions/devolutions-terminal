@@ -1,3 +1,6 @@
+using System.Buffers;
+using System.Numerics;
+
 namespace Devolutions.Terminal.Core;
 
 public sealed class SixelDecoder
@@ -5,9 +8,13 @@ public sealed class SixelDecoder
     private const int MaximumColors = 256;
     private const int MaximumAspectRatio = 20;
 
-    private readonly uint[] _palette = CreateDefaultPalette();
+    private static readonly uint[] DefaultPalette = CreateDefaultPalette();
+    private static readonly byte[] PercentToByteTable = CreatePercentToByteTable();
 
-    public void Reset() => CreateDefaultPalette().CopyTo(_palette, 0);
+    private readonly uint[] _palette = (uint[])DefaultPalette.Clone();
+    private readonly uint[] _workingPalette = new uint[MaximumColors];
+
+    public void Reset() => DefaultPalette.AsSpan().CopyTo(_palette);
 
     public bool TryDecode(
         ReadOnlySpan<byte> data,
@@ -22,13 +29,13 @@ public sealed class SixelDecoder
             return false;
         }
 
-        var workingPalette = (uint[])_palette.Clone();
-        var state = new DecodeState(
-            workingPalette,
+        _palette.AsSpan().CopyTo(_workingPalette);
+        using var state = new DecodeState(
+            _workingPalette,
             MacroAspectRatio(macroParameter),
             backgroundSelect == 1,
             backgroundColor);
-        var parameters = new int[5];
+        Span<int> parameters = stackalloc int[5];
         var offset = 0;
         while (offset < data.Length)
         {
@@ -47,8 +54,13 @@ public sealed class SixelDecoder
             {
                 case (byte)'!':
                     {
-                        var parameterCount = ReadParameters(data, ref offset, parameters.AsSpan(0, 1));
-                        var repeat = Parameter(parameters.AsSpan(0, parameterCount), 0, 1);
+                        var parameterCount = ReadParameters(data, ref offset, parameters[..1]);
+                        var repeat = Parameter(parameters[..parameterCount], 0, 1);
+                        while (offset < data.Length && IsIgnoredByte(data[offset]))
+                        {
+                            offset++;
+                        }
+
                         if (offset < data.Length && data[offset] is >= (byte)'?' and <= (byte)'~')
                         {
                             if (!state.WriteSixel(data[offset++] - '?', Math.Max(1, repeat)))
@@ -62,13 +74,13 @@ public sealed class SixelDecoder
                 case (byte)'#':
                     {
                         var parameterCount = ReadParameters(data, ref offset, parameters);
-                        state.SelectColor(parameters.AsSpan(0, parameterCount));
+                        state.SelectColor(parameters[..parameterCount]);
                         break;
                     }
                 case (byte)'"':
                     {
-                        var parameterCount = ReadParameters(data, ref offset, parameters.AsSpan(0, 4));
-                        if (!state.SetRasterAttributes(parameters.AsSpan(0, parameterCount)))
+                        var parameterCount = ReadParameters(data, ref offset, parameters[..4]);
+                        if (!state.SetRasterAttributes(parameters[..parameterCount]))
                         {
                             return false;
                         }
@@ -93,15 +105,16 @@ public sealed class SixelDecoder
             return false;
         }
 
-        workingPalette.CopyTo(_palette, 0);
+        _workingPalette.AsSpan().CopyTo(_palette);
         return true;
     }
 
-    private sealed class DecodeState
+    private sealed class DecodeState : IDisposable
     {
         private readonly uint[] _palette;
         private readonly bool _transparentBackground;
         private ushort[] _pixels = [];
+        private bool _pixelsRented;
         private int _capacityWidth;
         private int _capacityHeight;
         private int _cursorX;
@@ -113,6 +126,7 @@ public sealed class SixelDecoder
         private int _aspectRatio;
         private ushort _foreground = 15;
         private readonly ushort _background;
+        private bool _hasSixelData;
         private long _remainingPixelWrites = TerminalImageLimits.MaximumSixelPixelWrites;
 
         public DecodeState(uint[] palette, int aspectRatio, bool transparentBackground, int backgroundColor)
@@ -120,7 +134,7 @@ public sealed class SixelDecoder
             _palette = palette;
             _aspectRatio = aspectRatio;
             _transparentBackground = transparentBackground;
-            _background = (ushort)Math.Clamp(backgroundColor, 0, MaximumColors - 1);
+            _background = (ushort)NormalizeColorIndex(backgroundColor);
         }
 
         public bool WriteSixel(int value, int repeat)
@@ -131,7 +145,7 @@ public sealed class SixelDecoder
             }
             var requiredWidth = (long)_cursorX + repeat;
             var requiredHeight = (long)_cursorY + (6L * _aspectRatio);
-            var pixelWrites = (long)CountSetBits(value) * _aspectRatio * repeat;
+            var pixelWrites = Math.Max(1L, (long)CountSetBits(value) * _aspectRatio) * repeat;
             if (!DimensionsAllowed(requiredWidth, requiredHeight) ||
                 pixelWrites > _remainingPixelWrites ||
                 !EnsureCapacity((int)requiredWidth, (int)requiredHeight))
@@ -139,20 +153,43 @@ public sealed class SixelDecoder
                 return false;
             }
 
+            _hasSixelData = true;
             _imageWidth = Math.Max(_imageWidth, (int)requiredWidth);
             _imageHeight = Math.Max(_imageHeight, (int)requiredHeight);
             _remainingPixelWrites -= pixelWrites;
-            for (var bit = 0; bit < 6; bit++)
+            if (repeat == 1 && _aspectRatio == 1)
             {
-                if ((value & (1 << bit)) == 0)
+                var pixels = _pixels;
+                var stride = _capacityWidth;
+                var rowOffset = (_cursorY * stride) + _cursorX;
+                var fg = _foreground;
+                for (var bit = 0; bit < 6; bit++)
                 {
-                    continue;
-                }
+                    if ((value & (1 << bit)) != 0)
+                    {
+                        pixels[rowOffset] = fg;
+                    }
 
-                var firstRow = _cursorY + (bit * _aspectRatio);
-                for (var row = 0; row < _aspectRatio; row++)
+                    rowOffset += stride;
+                }
+            }
+            else
+            {
+                var pixelsSpan = _pixels.AsSpan();
+                var stride = _capacityWidth;
+                var fg = _foreground;
+                for (var bit = 0; bit < 6; bit++)
                 {
-                    _pixels.AsSpan(((firstRow + row) * _capacityWidth) + _cursorX, repeat).Fill(_foreground);
+                    if ((value & (1 << bit)) == 0)
+                    {
+                        continue;
+                    }
+
+                    var firstRow = _cursorY + (bit * _aspectRatio);
+                    for (var row = 0; row < _aspectRatio; row++)
+                    {
+                        pixelsSpan.Slice(((firstRow + row) * stride) + _cursorX, repeat).Fill(fg);
+                    }
                 }
             }
 
@@ -162,7 +199,7 @@ public sealed class SixelDecoder
 
         public void SelectColor(ReadOnlySpan<int> parameters)
         {
-            var color = Math.Clamp(Parameter(parameters, 0, 0), 0, MaximumColors - 1);
+            var color = NormalizeColorIndex(Parameter(parameters, 0, 0));
             if (parameters.Length >= 2)
             {
                 var model = Parameter(parameters, 1, 0);
@@ -184,9 +221,16 @@ public sealed class SixelDecoder
 
         public bool SetRasterAttributes(ReadOnlySpan<int> parameters)
         {
+            if (_hasSixelData)
+            {
+                return true;
+            }
+
             var numerator = Parameter(parameters, 0, 0);
-            var denominator = Parameter(parameters, 1, 0);
-            if (denominator > 0)
+            var denominator = numerator > 0 && (parameters.Length < 2 || parameters[1] < 0)
+                ? 1
+                : Parameter(parameters, 1, 0);
+            if (numerator > 0 && denominator > 0)
             {
                 _aspectRatio = Math.Clamp((numerator + denominator - 1) / denominator, 1, MaximumAspectRatio);
             }
@@ -203,7 +247,6 @@ public sealed class SixelDecoder
                 _rasterHeight = height;
             }
 
-            CarriageReturn();
             return DimensionsAllowed(
                 Math.Max(_imageWidth, _rasterWidth),
                 Math.Max(_imageHeight, _rasterHeight));
@@ -213,6 +256,7 @@ public sealed class SixelDecoder
 
         public bool NextLine()
         {
+            _hasSixelData = true;
             _cursorX = 0;
             var next = (long)_cursorY + (6L * _aspectRatio);
             if (next > TerminalImageLimits.MaximumPixelDimension)
@@ -235,22 +279,20 @@ public sealed class SixelDecoder
             }
 
             var result = new ushort[checked(width * height)];
-            Array.Fill(result, _transparentBackground ? SixelImage.TransparentColorIndex : _background);
+            var emptyColor = _transparentBackground ? SixelImage.TransparentColorIndex : _background;
             for (var row = 0; row < _imageHeight; row++)
             {
-                _pixels.AsSpan(row * _capacityWidth, _imageWidth)
-                    .CopyTo(result.AsSpan(row * width, _imageWidth));
+                var dstRow = result.AsSpan(row * width, width);
+                _pixels.AsSpan(row * _capacityWidth, _imageWidth).CopyTo(dstRow);
+                if (emptyColor != 0 && width > _imageWidth)
+                {
+                    dstRow[_imageWidth..].Fill(emptyColor);
+                }
             }
 
-            if (!_transparentBackground)
+            if (emptyColor != 0 && height > _imageHeight)
             {
-                for (var index = 0; index < result.Length; index++)
-                {
-                    if (result[index] == SixelImage.TransparentColorIndex)
-                    {
-                        result[index] = _background;
-                    }
-                }
+                result.AsSpan(_imageHeight * width, (height - _imageHeight) * width).Fill(emptyColor);
             }
 
             image = new SixelImage(
@@ -264,6 +306,16 @@ public sealed class SixelDecoder
             return true;
         }
 
+        public void Dispose()
+        {
+            if (_pixelsRented)
+            {
+                ArrayPool<ushort>.Shared.Return(_pixels);
+                _pixels = [];
+                _pixelsRented = false;
+            }
+        }
+
         private bool EnsureCapacity(int width, int height)
         {
             if (width <= _capacityWidth && height <= _capacityHeight)
@@ -271,8 +323,20 @@ public sealed class SixelDecoder
                 return true;
             }
 
-            var newWidth = Grow(_capacityWidth, width);
-            var newHeight = Grow(_capacityHeight, height);
+            var targetWidth = _capacityWidth == 0 && _rasterWidth > width && _rasterWidth <= TerminalImageLimits.MaximumPixelDimension
+                ? _rasterWidth
+                : width;
+            var targetHeight = _capacityHeight == 0 && _rasterHeight > height && _rasterHeight <= TerminalImageLimits.MaximumPixelDimension
+                ? _rasterHeight
+                : height;
+            if ((long)targetWidth * targetHeight > TerminalImageLimits.MaximumPixelCount)
+            {
+                targetWidth = width;
+                targetHeight = height;
+            }
+
+            var newWidth = Grow(_capacityWidth, targetWidth);
+            var newHeight = Grow(_capacityHeight, targetHeight);
             if ((long)newWidth * newHeight > TerminalImageLimits.MaximumPixelCount)
             {
                 newWidth = width;
@@ -283,15 +347,38 @@ public sealed class SixelDecoder
                 }
             }
 
-            var replacement = new ushort[checked(newWidth * newHeight)];
-            Array.Fill(replacement, SixelImage.TransparentColorIndex);
-            for (var row = 0; row < _capacityHeight; row++)
+            var requiredLength = checked(newWidth * newHeight);
+            var replacement = ArrayPool<ushort>.Shared.Rent(requiredLength);
+            var emptyColor = _transparentBackground ? SixelImage.TransparentColorIndex : _background;
+            if (_capacityWidth == 0 || _capacityHeight == 0)
             {
-                _pixels.AsSpan(row * _capacityWidth, _capacityWidth)
-                    .CopyTo(replacement.AsSpan(row * newWidth, _capacityWidth));
+                replacement.AsSpan(0, requiredLength).Fill(emptyColor);
+            }
+            else
+            {
+                for (var row = 0; row < _capacityHeight; row++)
+                {
+                    var dstRow = replacement.AsSpan(row * newWidth, newWidth);
+                    _pixels.AsSpan(row * _capacityWidth, _capacityWidth).CopyTo(dstRow);
+                    if (newWidth > _capacityWidth)
+                    {
+                        dstRow[_capacityWidth..].Fill(emptyColor);
+                    }
+                }
+
+                if (newHeight > _capacityHeight)
+                {
+                    replacement.AsSpan(_capacityHeight * newWidth, (newHeight - _capacityHeight) * newWidth).Fill(emptyColor);
+                }
+            }
+
+            if (_pixelsRented)
+            {
+                ArrayPool<ushort>.Shared.Return(_pixels);
             }
 
             _pixels = replacement;
+            _pixelsRented = true;
             _capacityWidth = newWidth;
             _capacityHeight = newHeight;
             return true;
@@ -308,40 +395,30 @@ public sealed class SixelDecoder
             return value;
         }
 
-        private static int CountSetBits(int value)
-        {
-            var count = 0;
-            while (value != 0)
-            {
-                count += value & 1;
-                value >>= 1;
-            }
-
-            return count;
-        }
+        private static int CountSetBits(int value) => BitOperations.PopCount((uint)value);
     }
 
     private static int ReadParameters(ReadOnlySpan<byte> data, ref int offset, Span<int> parameters)
     {
         parameters.Fill(-1);
-        var count = 0;
+        var index = 0;
         var hasParameterByte = false;
-        var ignoreRemainder = false;
         while (offset < data.Length)
         {
             var value = data[offset];
+            if (IsIgnoredByte(value))
+            {
+                offset++;
+                continue;
+            }
+
             if (value is >= (byte)'0' and <= (byte)'9')
             {
                 hasParameterByte = true;
-                if (count == 0)
+                if (index < parameters.Length)
                 {
-                    count = 1;
-                }
-
-                if (!ignoreRemainder)
-                {
-                    parameters[count - 1] = Math.Min(
-                        (Math.Max(0, parameters[count - 1]) * 10) + (value - '0'),
+                    parameters[index] = Math.Min(
+                        (Math.Max(0, parameters[index]) * 10) + (value - '0'),
                         65535);
                 }
 
@@ -350,15 +427,7 @@ public sealed class SixelDecoder
             else if (value == (byte)';')
             {
                 hasParameterByte = true;
-                if (count < parameters.Length)
-                {
-                    count++;
-                }
-                else
-                {
-                    ignoreRemainder = true;
-                }
-
+                index++;
                 offset++;
             }
             else
@@ -367,8 +436,13 @@ public sealed class SixelDecoder
             }
         }
 
-        return hasParameterByte ? Math.Max(1, count) : 0;
+        return hasParameterByte ? Math.Min(index + 1, parameters.Length) : 0;
     }
+
+    private static bool IsIgnoredByte(byte value) => value <= 0x20 || value == 0x7F;
+
+    private static int NormalizeColorIndex(int color) =>
+        ((color % MaximumColors) + MaximumColors) % MaximumColors;
 
     private static int Parameter(ReadOnlySpan<int> parameters, int index, int defaultValue) =>
         (uint)index < (uint)parameters.Length && parameters[index] >= 0 ? parameters[index] : defaultValue;
@@ -394,7 +468,8 @@ public sealed class SixelDecoder
 
     private static uint HlsToRgba(int hue, int lightness, int saturation)
     {
-        var h = ((Math.Clamp(hue, 0, 360) + 240) % 360) / 360d;
+        var normalizedHue = ((hue % 360) + 360) % 360;
+        var h = ((normalizedHue + 240) % 360) / 360d;
         var l = Math.Clamp(lightness, 0, 100) / 100d;
         var s = Math.Clamp(saturation, 0, 100) / 100d;
         if (s == 0)
@@ -436,7 +511,18 @@ public sealed class SixelDecoder
     }
 
     private static byte PercentToByte(int value) =>
-        (byte)Math.Round(Math.Clamp(value, 0, 100) * 255d / 100d);
+        PercentToByteTable[Math.Clamp(value, 0, 100)];
+
+    private static byte[] CreatePercentToByteTable()
+    {
+        var table = new byte[101];
+        for (var i = 0; i <= 100; i++)
+        {
+            table[i] = (byte)Math.Round(i * 255d / 100d);
+        }
+
+        return table;
+    }
 
     private static byte UnitToByte(double value) => (byte)Math.Round(Math.Clamp(value, 0, 1) * 255);
 

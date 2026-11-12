@@ -472,6 +472,11 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
 
     void IVtDispatch.ExecuteC0(byte control)
     {
+        if (_parser.IsInDcs)
+        {
+            return;
+        }
+
         switch (control)
         {
             case 0x07:
@@ -798,21 +803,21 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
             return;
         }
 
+        if (!_sixelDisplayMode)
+        {
+            Buffer.ResolvePendingWrap(AutoWrap);
+            if (Buffer.CursorY > Buffer.ScrollBottom)
+            {
+                ReportDiagnostic(
+                    "image.sixel.rejected",
+                    "The Sixel origin was below the active scrolling margin.");
+                return;
+            }
+        }
+
         var anchorColumn = _sixelDisplayMode ? 0 : Buffer.CursorX;
         var anchorRow = _sixelDisplayMode ? 0 : Buffer.CursorY;
-        var overlay = new TerminalImageOverlay(
-            ++_nextImageId,
-            TerminalImageProtocol.Sixel,
-            AlternateBufferActive,
-            anchorColumn,
-            Buffer.ViewportStart + anchorRow,
-            image,
-            null)
-        {
-            LogicalAnchor = Buffer.CreateImageAnchor(anchorColumn, anchorRow),
-            CellGeometry = new TerminalImageCellGeometry(_cellWidth, _cellHeight),
-        };
-        AddImage(overlay);
+        var logicalAnchor = Buffer.CreateImageAnchor(anchorColumn, anchorRow);
 
         if (!_sixelDisplayMode)
         {
@@ -830,6 +835,25 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
                 Buffer.LineFeed();
             }
         }
+
+        if (!Buffer.TryResolveImageAnchor(logicalAnchor, out var resolvedRow, out var resolvedColumn))
+        {
+            return;
+        }
+
+        var overlay = new TerminalImageOverlay(
+            ++_nextImageId,
+            TerminalImageProtocol.Sixel,
+            AlternateBufferActive,
+            resolvedColumn,
+            resolvedRow,
+            image,
+            null)
+        {
+            LogicalAnchor = logicalAnchor,
+            CellGeometry = new TerminalImageCellGeometry(_cellWidth, _cellHeight),
+        };
+        AddImage(overlay);
     }
 
     private void DispatchRequestSetting(ReadOnlySpan<byte> data)
