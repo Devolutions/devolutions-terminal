@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Unicode;
 using System.Globalization;
 using System.Collections.ObjectModel;
 
@@ -41,8 +42,10 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
     private readonly TextBuffer _alternate;
     private readonly List<TerminalImageOverlay> _images = [];
     private readonly Dictionary<uint, KittyImageData> _kittyImages = [];
-    private readonly List<uint> _kittyImageOrder = [];
+    private readonly LinkedList<uint> _kittyImageOrder = new();
     private readonly List<byte> _kittyChunkPayload = [];
+    private readonly char[] _kittyChunkCarry = new char[3];
+    private int _kittyChunkCarryLength;
     private KittyGraphicsCommand? _kittyChunkControl;
     private long _kittyImageStoreBytes;
     private readonly Dictionary<int, DrcsGlyph> _drcsGlyphs = [];
@@ -269,12 +272,21 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         _scheme = _defaultScheme;
         _hasLastPrintedRune = false;
         _sixelDecoder.Reset();
+        foreach (var existingOverlay in _images)
+        {
+            if (existingOverlay.Kitty is { Data: var kittyData })
+            {
+                kittyData.OverlayReferenceCount = 0;
+            }
+        }
+
         _images.Clear();
         _retainedImageBytes = 0;
         _kittyImages.Clear();
         _kittyImageOrder.Clear();
         _kittyImageStoreBytes = 0;
         _kittyChunkControl = null;
+        _kittyChunkCarryLength = 0;
         _kittyChunkPayload.Clear();
         _primary.Reset(keepHistory: false);
         _alternate.Reset(keepHistory: false);
@@ -1722,76 +1734,127 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
 
     private void DispatchKittyImage(ReadOnlySpan<char> body)
     {
-        if (!KittyGraphicsDecoder.TryParse(body, out var parsed, out var parseError) || parsed is null)
+        var pendingControl = _kittyChunkControl;
+        if (pendingControl is not null)
         {
-            var rejectedId = _kittyChunkControl?.ImageId ?? 0;
-            _kittyChunkControl = null;
-            _kittyChunkPayload.Clear();
-            ReportDiagnostic("image.kitty.rejected", parseError ?? "The kitty graphics control data was malformed.");
-            RespondKitty(rejectedId, parseError ?? "EINVAL: malformed control data", quiet: 0, isError: true);
-            return;
-        }
-
-        var command = parsed;
-        var payload = command.Payload;
-        if (command.MoreChunks || _kittyChunkControl is not null)
-        {
-            // Chunked transmission: the first chunk carries the metadata, later
-            // chunks append payload and may only re-assert i and m.
-            if (_kittyChunkControl is null)
+            if (!KittyGraphicsDecoder.TryParseContinuationChunk(
+                    body,
+                    _kittyChunkCarry,
+                    ref _kittyChunkCarryLength,
+                    _kittyChunkPayload,
+                    out var continuation,
+                    out var contErrorId,
+                    out var contErrorNumber,
+                    out var contErrorQuiet,
+                    out var contParseError))
             {
-                if (!command.MoreChunks)
+                var rejectedId = contErrorId != 0 ? contErrorId : pendingControl.ImageId;
+                var rejectedNumber = contErrorNumber != 0 ? contErrorNumber : pendingControl.ImageNumber;
+                var rejectedQuiet = contErrorQuiet != 0 ? contErrorQuiet : pendingControl.Quiet;
+                ResetKittyChunkState();
+                ReportDiagnostic("image.kitty.rejected", contParseError ?? "The kitty graphics control data was malformed.");
+                RespondKitty(rejectedId, contParseError ?? "EINVAL: malformed control data", rejectedQuiet, isError: true, rejectedNumber);
+                return;
+            }
+
+            if (continuation.IsNonContinuationAction)
+            {
+                ResetKittyChunkState();
+                ReportDiagnostic("image.kitty.rejected", "An incomplete chunked kitty transmission was interrupted by another action.");
+            }
+            else
+            {
+                var effectiveQuiet = continuation.Quiet != 0 ? continuation.Quiet : pendingControl.Quiet;
+                var effectiveNumber = continuation.ImageNumber != 0 ? continuation.ImageNumber : pendingControl.ImageNumber;
+                if (continuation.ImageId != 0 &&
+                    pendingControl.ImageId != 0 &&
+                    continuation.ImageId != pendingControl.ImageId)
                 {
-                    // Unreachable in this branch, kept as a guard.
-                    _kittyChunkPayload.Clear();
+                    var pendingId = pendingControl.ImageId;
+                    ResetKittyChunkState();
+                    ReportDiagnostic("image.kitty.rejected", "The kitty continuation image id did not match the first chunk.");
+                    RespondKitty(pendingId, "EINVAL: mismatched chunk image id", effectiveQuiet, isError: true, effectiveNumber);
                     return;
                 }
 
-                _kittyChunkControl = command;
-                _kittyChunkPayload.Clear();
-                _kittyChunkPayload.AddRange(command.Payload);
+                if (_kittyChunkPayload.Count > TerminalImageLimits.MaximumKittyImageBytes * 2)
+                {
+                    var pendingId = pendingControl.ImageId;
+                    ResetKittyChunkState();
+                    ReportDiagnostic("image.kitty.rejected", "The chunked kitty image exceeded the size limit.");
+                    RespondKitty(pendingId, "ETOOMANY: chunked image exceeds the size limit", effectiveQuiet, isError: true, effectiveNumber);
+                    return;
+                }
+
+                if (continuation.MoreChunks)
+                {
+                    return;
+                }
+
+                var assembledCommand = pendingControl;
+                if (continuation.ImageId != 0)
+                {
+                    assembledCommand.ImageId = continuation.ImageId;
+                }
+
+                if (continuation.ImageNumber != 0)
+                {
+                    assembledCommand.ImageNumber = continuation.ImageNumber;
+                }
+
+                if (continuation.Quiet != 0)
+                {
+                    assembledCommand.Quiet = continuation.Quiet;
+                }
+
+                var assembledPayload = _kittyChunkPayload.ToArray();
+                ResetKittyChunkState();
+                ExecuteKittyCommand(assembledCommand, assembledPayload);
                 return;
             }
-
-            if (command.ImageId != 0 &&
-                _kittyChunkControl.ImageId != 0 &&
-                command.ImageId != _kittyChunkControl.ImageId)
-            {
-                var pendingId = _kittyChunkControl.ImageId;
-                _kittyChunkControl = null;
-                _kittyChunkPayload.Clear();
-                ReportDiagnostic("image.kitty.rejected", "The kitty continuation image id did not match the first chunk.");
-                RespondKitty(pendingId, "EINVAL: mismatched chunk image id", command.Quiet, isError: true);
-                return;
-            }
-
-            _kittyChunkPayload.AddRange(command.Payload);
-            if (_kittyChunkPayload.Count > TerminalImageLimits.MaximumKittyImageBytes * 2)
-            {
-                var pendingId = _kittyChunkControl.ImageId;
-                _kittyChunkControl = null;
-                _kittyChunkPayload.Clear();
-                ReportDiagnostic("image.kitty.rejected", "The chunked kitty image exceeded the size limit.");
-                RespondKitty(pendingId, "ETOOMANY: chunked image exceeds the size limit", command.Quiet, isError: true);
-                return;
-            }
-
-            if (command.MoreChunks)
-            {
-                return;
-            }
-
-            command = _kittyChunkControl;
-            _kittyChunkControl = null;
-            if (parsed.ImageId != 0)
-            {
-                command.ImageId = parsed.ImageId;
-            }
-
-            payload = [.. _kittyChunkPayload];
-            _kittyChunkPayload.Clear();
         }
 
+        if (!KittyGraphicsDecoder.TryParseChunk(
+                body,
+                ReadOnlySpan<char>.Empty,
+                out var parsed,
+                out var errorImageId,
+                out var errorImageNumber,
+                out var errorQuiet,
+                out var parseError) ||
+            parsed is null)
+        {
+            ReportDiagnostic("image.kitty.rejected", parseError ?? "The kitty graphics control data was malformed.");
+            RespondKitty(errorImageId, parseError ?? "EINVAL: malformed control data", errorQuiet, isError: true, errorImageNumber);
+            return;
+        }
+
+        if (parsed.MoreChunks)
+        {
+            _kittyChunkControl = parsed;
+            _kittyChunkCarryLength = parsed.TrailingBase64.Length;
+            parsed.TrailingBase64.AsSpan().CopyTo(_kittyChunkCarry);
+            _kittyChunkPayload.Clear();
+            _kittyChunkPayload.AddRange(parsed.Payload);
+            return;
+        }
+
+        ExecuteKittyCommand(parsed, parsed.Payload);
+    }
+
+    private void ResetKittyChunkState()
+    {
+        _kittyChunkControl = null;
+        _kittyChunkCarryLength = 0;
+        _kittyChunkPayload.Clear();
+        if (_kittyChunkPayload.Capacity > 256 * 1024)
+        {
+            _kittyChunkPayload.TrimExcess();
+        }
+    }
+
+    private void ExecuteKittyCommand(KittyGraphicsCommand command, byte[] payload)
+    {
         switch (command.Action)
         {
             case KittyGraphicsAction.Delete:
@@ -1799,7 +1862,7 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
                 return;
             case KittyGraphicsAction.Unsupported:
                 ReportDiagnostic("image.kitty.rejected", "The kitty graphics action is not supported.");
-                RespondKitty(command.ImageId, "ENOTSUP: unsupported action", command.Quiet, isError: true);
+                RespondKitty(command.ImageId, "ENOTSUP: unsupported action", command.Quiet, isError: true, command.ImageNumber);
                 return;
             case KittyGraphicsAction.Put:
                 ExecuteKittyPut(command);
@@ -1818,27 +1881,28 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
             imageId = NextKittyImageId();
         }
 
-        if (!KittyGraphicsDecoder.TryDecodeImageData(command, payload, out var data, out var error) || data is null)
+        if (!KittyGraphicsDecoder.TryDecodeImageData(command, payload, takePayloadOwnership: true, out var data, out var error) || data is null)
         {
             ReportDiagnostic("image.kitty.rejected", error ?? "The kitty image payload was rejected.");
-            RespondKitty(imageId, error ?? "EINVAL: rejected payload", command.Quiet, isError: true);
+            RespondKitty(imageId, error ?? "EINVAL: rejected payload", command.Quiet, isError: true, command.ImageNumber);
             return;
         }
 
         if (command.Action == KittyGraphicsAction.Query)
         {
             // Support probe: validate and acknowledge without storing.
-            RespondKitty(imageId, "OK", command.Quiet, isError: false);
+            RespondKitty(imageId, "OK", command.Quiet, isError: false, command.ImageNumber);
             return;
         }
 
+        data.ImageNumber = command.ImageNumber;
         StoreKittyImage(imageId, data);
         if (command.Action == KittyGraphicsAction.TransmitAndDisplay)
         {
             CreateKittyPlacement(command, imageId, data, moveCursor: !command.NoCursorMove);
         }
 
-        RespondKitty(imageId, "OK", command.Quiet, isError: false);
+        RespondKitty(imageId, "OK", command.Quiet, isError: false, command.ImageNumber);
     }
 
     // Transmit-only images must survive until an explicit delete: clients transmit
@@ -1850,20 +1914,23 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         if (_kittyImages.TryGetValue(imageId, out var existing))
         {
             _kittyImageStoreBytes -= existing.EstimatedByteSize;
-        }
-        else
-        {
-            _kittyImageOrder.Add(imageId);
+            if (existing.StoreOrderNode is { } existingNode)
+            {
+                _kittyImageOrder.Remove(existingNode);
+                existing.StoreOrderNode = null;
+            }
         }
 
+        data.StoreOrderNode = _kittyImageOrder.AddLast(imageId);
         _kittyImages[imageId] = data;
         _kittyImageStoreBytes += data.EstimatedByteSize;
-        while (_kittyImageOrder.Count > 0 && _kittyImageStoreBytes > TerminalImageLimits.MaximumRetainedImageBytes)
+        while (_kittyImageOrder.First is { } oldestNode && _kittyImageStoreBytes > TerminalImageLimits.MaximumRetainedImageBytes)
         {
-            var oldest = _kittyImageOrder[0];
-            _kittyImageOrder.RemoveAt(0);
+            var oldest = oldestNode.Value;
+            _kittyImageOrder.RemoveFirst();
             if (_kittyImages.Remove(oldest, out var removed))
             {
+                removed.StoreOrderNode = null;
                 _kittyImageStoreBytes -= removed.EstimatedByteSize;
             }
         }
@@ -1874,58 +1941,163 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         if (_kittyImages.Remove(imageId, out var removed))
         {
             _kittyImageStoreBytes -= removed.EstimatedByteSize;
-            _kittyImageOrder.Remove(imageId);
+            if (removed.StoreOrderNode is { } node)
+            {
+                _kittyImageOrder.Remove(node);
+                removed.StoreOrderNode = null;
+            }
         }
+    }
+
+    private uint ResolveKittyImageId(uint imageId, uint imageNumber)
+    {
+        if (imageId != 0 || imageNumber == 0)
+        {
+            return imageId;
+        }
+
+        for (var node = _kittyImageOrder.Last; node is not null; node = node.Previous)
+        {
+            var candidateId = node.Value;
+            if (_kittyImages.TryGetValue(candidateId, out var data) && data.ImageNumber == imageNumber)
+            {
+                return candidateId;
+            }
+        }
+
+        return 0;
     }
 
     private void ExecuteKittyPut(KittyGraphicsCommand command)
     {
-        if (command.ImageId == 0 || !_kittyImages.TryGetValue(command.ImageId, out var data))
+        var imageId = ResolveKittyImageId(command.ImageId, command.ImageNumber);
+        if (imageId == 0 || !_kittyImages.TryGetValue(imageId, out var data))
         {
             ReportDiagnostic("image.kitty.rejected", "The kitty put referenced an unknown image id.");
-            RespondKitty(command.ImageId, "ENOENT: no image with that id", command.Quiet, isError: true);
+            RespondKitty(command.ImageId, "ENOENT: no image with that id", command.Quiet, isError: true, command.ImageNumber);
             return;
         }
 
         // Put leaves the cursor in place (kitty semantics).
-        CreateKittyPlacement(command, command.ImageId, data, moveCursor: false);
-        RespondKitty(command.ImageId, "OK", command.Quiet, isError: false);
+        CreateKittyPlacement(command, imageId, data, moveCursor: false);
+        RespondKitty(imageId, "OK", command.Quiet, isError: false, command.ImageNumber);
     }
 
     private void ExecuteKittyDelete(KittyGraphicsCommand command)
     {
+        var targetImageId = ResolveKittyImageId(command.ImageId, command.ImageNumber);
         switch (command.DeleteWhat)
         {
             case 'a':
-                RemoveKittyOverlays(static _ => true);
+                RemoveKittyOverlays(overlay => overlay.AlternateBuffer == AlternateBufferActive);
                 break;
             case 'A':
-                RemoveKittyOverlays(static _ => true);
-                _kittyImages.Clear();
-                _kittyImageOrder.Clear();
-                _kittyImageStoreBytes = 0;
+                RemoveKittyOverlays(overlay => overlay.AlternateBuffer == AlternateBufferActive);
+                ReapUnplacedKittyImages();
                 break;
             case 'i':
-                RemoveKittyOverlays(kitty => kitty.ImageId == command.ImageId);
+                if (targetImageId == 0)
+                {
+                    break;
+                }
+
+                if (command.PlacementId != 0)
+                {
+                    RemoveKittyOverlays(
+                        overlay => overlay.Kitty!.ImageId == targetImageId &&
+                                   overlay.Kitty.PlacementId == command.PlacementId);
+                }
+                else
+                {
+                    RemoveKittyOverlays(overlay => overlay.Kitty!.ImageId == targetImageId);
+                }
+
                 break;
             case 'I':
-                RemoveKittyOverlays(kitty => kitty.ImageId == command.ImageId);
-                RemoveKittyImage(command.ImageId);
+                if (targetImageId == 0)
+                {
+                    break;
+                }
+
+                if (command.PlacementId != 0)
+                {
+                    RemoveKittyOverlays(
+                        overlay => overlay.Kitty!.ImageId == targetImageId &&
+                                   overlay.Kitty.PlacementId == command.PlacementId);
+                    if (!HasAnyKittyPlacement(targetImageId))
+                    {
+                        RemoveKittyImage(targetImageId);
+                    }
+                }
+                else
+                {
+                    RemoveKittyOverlays(overlay => overlay.Kitty!.ImageId == targetImageId);
+                    RemoveKittyImage(targetImageId);
+                }
+
                 break;
             case 'p':
+                if (targetImageId != 0)
+                {
+                    RemoveKittyOverlays(
+                        overlay => overlay.Kitty!.ImageId == targetImageId &&
+                                   overlay.Kitty.PlacementId == command.PlacementId);
+                }
+
+                break;
             case 'P':
-                RemoveKittyOverlays(
-                    kitty => kitty.ImageId == command.ImageId && kitty.PlacementId == command.PlacementId);
+                if (targetImageId != 0)
+                {
+                    RemoveKittyOverlays(
+                        overlay => overlay.Kitty!.ImageId == targetImageId &&
+                                   overlay.Kitty.PlacementId == command.PlacementId);
+                    if (!HasAnyKittyPlacement(targetImageId))
+                    {
+                        RemoveKittyImage(targetImageId);
+                    }
+                }
+
                 break;
             default:
                 // Cell/z-index/number-targeted deletes are not supported; deletes
                 // have no response, so this is a silent no-op.
                 break;
         }
+    }
 
-        // Lowercase deletes remove placements, not transmitted image data.
-        // Explicit uppercase deletes free data; retained unplaced images remain
-        // subject to the independent kitty store byte budget.
+    private bool HasAnyKittyPlacement(uint imageId)
+    {
+        for (var index = 0; index < _images.Count; index++)
+        {
+            if (_images[index].Kitty is { } kitty && kitty.ImageId == imageId)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void ReapUnplacedKittyImages()
+    {
+        if (_kittyImages.Count == 0)
+        {
+            return;
+        }
+
+        var stale = new List<uint>();
+        foreach (var id in _kittyImages.Keys)
+        {
+            if (!HasAnyKittyPlacement(id))
+            {
+                stale.Add(id);
+            }
+        }
+
+        foreach (var id in stale)
+        {
+            RemoveKittyImage(id);
+        }
     }
 
     private void CreateKittyPlacement(
@@ -1934,6 +2106,14 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         KittyImageData data,
         bool moveCursor)
     {
+        if (command.PlacementId != 0)
+        {
+            RemoveKittyOverlays(
+                overlay => overlay.AlternateBuffer == AlternateBufferActive &&
+                           overlay.Kitty!.ImageId == imageId &&
+                           overlay.Kitty.PlacementId == command.PlacementId);
+        }
+
         var kitty = new KittyImage(imageId, command.PlacementId, data)
         {
             Columns = Math.Clamp(command.Columns, 0, Buffer.Columns),
@@ -1979,17 +2159,17 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         }
     }
 
-    private void RemoveKittyOverlays(Func<KittyImage, bool> predicate)
+    private void RemoveKittyOverlays(Func<TerminalImageOverlay, bool> predicate)
     {
         for (var index = _images.Count - 1; index >= 0; index--)
         {
             var image = _images[index];
-            if (image.Kitty is null || !predicate(image.Kitty))
+            if (image.Kitty is null || !predicate(image))
             {
                 continue;
             }
 
-            _retainedImageBytes -= ImageByteSize(image);
+            ReleaseOverlayBytes(image);
             _images.RemoveAt(index);
         }
     }
@@ -2037,14 +2217,30 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         return _nextKittyImageIdValue;
     }
 
-    private void RespondKitty(uint imageId, string message, int quiet, bool isError)
+    private void RespondKitty(uint imageId, string message, int quiet, bool isError, uint imageNumber = 0)
     {
-        if (isError ? quiet >= 2 : quiet >= 1)
+        if ((isError ? quiet >= 2 : quiet >= 1) || ResponseReady is not { } handler)
         {
             return;
         }
 
-        Respond($"\u001b_Gi={imageId};{message}\u001b\\");
+        Span<byte> buffer = stackalloc byte[160];
+        var written = imageNumber != 0
+            ? Utf8.TryWrite(buffer, $"\u001b_Gi={imageId},I={imageNumber};{message}\u001b\\", out var lenWithNum)
+                ? lenWithNum
+                : -1
+            : Utf8.TryWrite(buffer, $"\u001b_Gi={imageId};{message}\u001b\\", out var len)
+                ? len
+                : -1;
+        if (written >= 0)
+        {
+            handler.Invoke(this, buffer[..written].ToArray());
+            return;
+        }
+
+        Respond(imageNumber != 0
+            ? $"\u001b_Gi={imageId},I={imageNumber};{message}\u001b\\"
+            : $"\u001b_Gi={imageId};{message}\u001b\\");
     }
 
     private static TerminalImageDimension ParseInlineDimension(ReadOnlySpan<char> value)
@@ -2079,24 +2275,59 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
 
     private void AddImage(TerminalImageOverlay image)
     {
-        var imageBytes = ImageByteSize(image);
-        if (imageBytes > TerminalImageLimits.MaximumRetainedImageBytes)
+        var singleImageBytes = ImageByteSize(image);
+        if (singleImageBytes > TerminalImageLimits.MaximumRetainedImageBytes)
         {
             return;
         }
 
-        while (_images.Count > 0 &&
-               (_images.Count >= TerminalImageLimits.MaximumRetainedImages ||
-                _retainedImageBytes + imageBytes > TerminalImageLimits.MaximumRetainedImageBytes))
+        while (_images.Count > 0)
         {
+            var incrementalBytes = IncrementalImageByteSize(image);
+            if (_images.Count < TerminalImageLimits.MaximumRetainedImages &&
+                _retainedImageBytes + incrementalBytes <= TerminalImageLimits.MaximumRetainedImageBytes)
+            {
+                break;
+            }
+
             var removed = _images[0];
-            _retainedImageBytes -= ImageByteSize(removed);
+            ReleaseOverlayBytes(removed);
             _images.RemoveAt(0);
         }
 
+        var addedBytes = IncrementalImageByteSize(image);
+        if (image.Kitty is { Data: var kittyData })
+        {
+            kittyData.OverlayReferenceCount++;
+        }
+
         _images.Add(image);
-        _retainedImageBytes += imageBytes;
+        _retainedImageBytes += addedBytes;
         ImageAdded?.Invoke(this, image);
+    }
+
+    private static long IncrementalImageByteSize(TerminalImageOverlay image) =>
+        image.Kitty is { Data: var kittyData }
+            ? (kittyData.OverlayReferenceCount == 0 ? kittyData.EstimatedByteSize : 0)
+            : ImageByteSize(image);
+
+    private void ReleaseOverlayBytes(TerminalImageOverlay image)
+    {
+        if (image.Kitty is { Data: var kittyData })
+        {
+            if (kittyData.OverlayReferenceCount > 0)
+            {
+                kittyData.OverlayReferenceCount--;
+                if (kittyData.OverlayReferenceCount == 0)
+                {
+                    _retainedImageBytes -= kittyData.EstimatedByteSize;
+                }
+            }
+
+            return;
+        }
+
+        _retainedImageBytes -= ImageByteSize(image);
     }
 
     private TerminalImageOverlay[] CreateSnapshotImages(bool includeHistory)
@@ -2148,7 +2379,7 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
                 continue;
             }
 
-            _retainedImageBytes -= ImageByteSize(image);
+            ReleaseOverlayBytes(image);
             _images.RemoveAt(index);
         }
     }
@@ -2955,7 +3186,7 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
             }
 
             var image = _images[index];
-            _retainedImageBytes -= ImageByteSize(image);
+            ReleaseOverlayBytes(image);
             _images.RemoveAt(index);
         }
 

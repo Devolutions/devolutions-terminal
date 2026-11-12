@@ -109,6 +109,27 @@ public sealed class KittyGraphicsTests
     }
 
     [Fact]
+    public void RgbFormatExpandsToRgbaAcrossSimdAndScalarTail()
+    {
+        Assert.True(KittyGraphicsDecoder.TryParse("a=t,f=24,s=10,v=1", out var command, out _));
+        var rgb = new byte[30];
+        for (var i = 0; i < rgb.Length; i++)
+        {
+            rgb[i] = (byte)(i + 1);
+        }
+
+        Assert.True(KittyGraphicsDecoder.TryDecodeImageData(command!, rgb, out var data, out _));
+        Assert.Equal(10, data!.Width);
+        for (var pixel = 0; pixel < 10; pixel++)
+        {
+            Assert.Equal((byte)((pixel * 3) + 1), data.Rgba32Pixels![(pixel * 4)]);
+            Assert.Equal((byte)((pixel * 3) + 2), data.Rgba32Pixels![(pixel * 4) + 1]);
+            Assert.Equal((byte)((pixel * 3) + 3), data.Rgba32Pixels![(pixel * 4) + 2]);
+            Assert.Equal((byte)0xFF, data.Rgba32Pixels![(pixel * 4) + 3]);
+        }
+    }
+
+    [Fact]
     public void RgbaFormatPassesThrough()
     {
         Assert.True(KittyGraphicsDecoder.TryParse("a=t,f=32,s=1,v=1", out var command, out _));
@@ -666,5 +687,165 @@ public sealed class KittyGraphicsTests
         engine.Feed($"{Esc}_Ga=T,i=2;{new string('A', 1024 * 1024 + 4)}\aNOTPRINTED{Esc}[1mZ");
         Assert.Equal("Z", engine.Buffer.GetCell(0, 0).Text);
         Assert.Equal(CellFlags.Bold, engine.Buffer.GetCell(0, 0).Attributes.Flags);
+    }
+
+    [Fact]
+    public void NonQuantumAlignedChunkedBase64AssemblesCleanly()
+    {
+        var (engine, responses) = CreateEngine();
+        // "AQIDBA==" (8 chars) split as 5 + 2 + 1 across chunks.
+        engine.Feed(Apc("a=T,f=32,s=1,v=1,i=15,C=1,m=1", "AQIDB"));
+        engine.Feed(Apc("m=1", "A="));
+        engine.Feed(Apc("m=0", "="));
+
+        var overlay = Assert.Single(engine.Images);
+        Assert.Equal([1, 2, 3, 4], overlay.Kitty!.Data.Rgba32Pixels);
+        Assert.Equal([$"{Esc}_Gi=15;OK{Esc}\\"], responses);
+    }
+
+    [Fact]
+    public void ParseFailurePreservesImageIdAndHonorsQuietFlags()
+    {
+        var (engine, responses) = CreateEngine();
+        engine.Feed(Apc("a=T,i=42,q=2", "!!!not-base64!!!"));
+        Assert.Empty(responses);
+
+        engine.Feed(Apc("a=T,i=42,q=1", "!!!not-base64!!!"));
+        Assert.Equal($"{Esc}_Gi=42;EINVAL: payload is not valid base64{Esc}\\", Assert.Single(responses));
+    }
+
+    [Fact]
+    public void ContinuationChunkErrorsInheritInitialQuietFlag()
+    {
+        var (engine, responses) = CreateEngine();
+        engine.Feed(Apc("a=T,f=32,s=1,v=1,i=9,q=2,m=1", "AQID"));
+        engine.Feed(Apc("i=10,m=0", "BA=="));
+        Assert.Empty(responses);
+
+        engine.Feed(Apc("a=T,f=32,s=1,v=1,i=9,q=2,m=1", "AQID"));
+        engine.Feed(Apc("i=9,m=0", "!!!"));
+        Assert.Empty(responses);
+    }
+
+    [Fact]
+    public void DeleteDuringIncompleteChunkAbortsTransferAndExecutesDelete()
+    {
+        var (engine, _) = CreateEngine();
+        engine.Feed(Apc("a=T,f=32,s=1,v=1,i=1,C=1", "AQIDBA=="));
+        Assert.Single(engine.Images);
+
+        engine.Feed(Apc("a=T,f=32,s=1,v=1,i=2,m=1", "AQIDB"));
+        engine.Feed(Apc("a=d,d=a"));
+
+        Assert.Empty(engine.Images);
+    }
+
+    [Fact]
+    public void ImageNumberValidatesAndResolvesPutAndDelete()
+    {
+        Assert.False(KittyGraphicsDecoder.TryParse("a=t,I=bad", out _, out var badNumberError));
+        Assert.StartsWith("EINVAL", badNumberError, StringComparison.Ordinal);
+
+        var (engine, responses) = CreateEngine();
+        engine.Feed(Apc("a=t,f=32,s=1,v=1,I=77", "AQIDBA=="));
+        Assert.Equal($"{Esc}_Gi=1,I=77;OK{Esc}\\", Assert.Single(responses));
+
+        engine.Feed(Apc("a=p,I=77,p=3"));
+        Assert.Single(engine.Images);
+        Assert.Equal($"{Esc}_Gi=1,I=77;OK{Esc}\\", responses[^1]);
+
+        engine.Feed(Apc("a=d,d=I,I=77"));
+        Assert.Empty(engine.Images);
+    }
+
+    [Fact]
+    public void ReusingNonZeroPlacementIdReplacesExistingPlacement()
+    {
+        var (engine, _) = CreateEngine();
+        engine.Feed(Apc("a=t,f=32,s=1,v=1,i=8", "AQIDBA=="));
+        engine.Feed(Apc("a=p,i=8,p=5,c=2,r=1"));
+        engine.Feed("\u001b[2;4H");
+        engine.Feed(Apc("a=p,i=8,p=5,c=4,r=2"));
+
+        var overlay = Assert.Single(engine.Images);
+        Assert.Equal(3, overlay.AnchorColumn);
+        Assert.Equal(1, overlay.AnchorRow);
+        Assert.Equal(4, overlay.Kitty!.Columns);
+        Assert.Equal(2, overlay.Kitty.Rows);
+    }
+
+    [Fact]
+    public void MultiplePlacementsSharingKittyImageDataDoNotTriggerFalseByteEviction()
+    {
+        var (engine, _) = CreateEngine();
+        // 12 MiB decompressed image (1536 x 2048 x 4 = 12,582,912 bytes):
+        // 8 placements = 96 MiB if double-counted > 64 MiB limit.
+        byte[] compressed;
+        using (var output = new MemoryStream())
+        {
+            using (var zlib = new ZLibStream(output, CompressionMode.Compress, leaveOpen: true))
+            {
+                zlib.Write(new byte[1536 * 2048 * 4]);
+            }
+
+            compressed = output.ToArray();
+        }
+
+        engine.Feed(Apc("a=t,f=32,o=z,s=1536,v=2048,i=1", B64(compressed)));
+        for (uint p = 1; p <= 8; p++)
+        {
+            engine.Feed(Apc($"a=p,i=1,p={p},c=1,r=1"));
+        }
+
+        Assert.Equal(8, engine.Images.Count);
+    }
+
+    [Theory]
+    [InlineData("a=t,o=x,f=100", "ENOTSUP")]
+    [InlineData("a=t,C=2,f=100", "EINVAL")]
+    [InlineData("a=t,m=2,f=100", "EINVAL")]
+    [InlineData("a=t,q=-1,f=100", "EINVAL")]
+    public void RejectsUnknownCompressionAndInvalidControlFlags(string control, string expectedPrefix)
+    {
+        if (!KittyGraphicsDecoder.TryParse(control, out var command, out var parseError))
+        {
+            Assert.StartsWith(expectedPrefix, parseError, StringComparison.Ordinal);
+            return;
+        }
+
+        Assert.False(KittyGraphicsDecoder.TryDecodeImageData(command!, [1, 2, 3], out _, out var decodeError));
+        Assert.StartsWith(expectedPrefix, decodeError, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DeleteByIdWithPlacementPreservesSiblingPlacementsAndUppercasePlacementDeleteFreesUnreferencedData()
+    {
+        var (engine, responses) = CreateEngine();
+        engine.Feed(Apc("a=t,f=32,s=1,v=1,i=20", "AQIDBA=="));
+        engine.Feed(Apc("a=p,i=20,p=1"));
+        engine.Feed(Apc("a=p,i=20,p=2"));
+
+        engine.Feed(Apc("a=d,d=i,i=20,p=1"));
+        Assert.Equal(2u, Assert.Single(engine.Images).Kitty!.PlacementId);
+
+        engine.Feed(Apc("a=d,d=P,i=20,p=2"));
+        Assert.Empty(engine.Images);
+        engine.Feed(Apc("a=p,i=20,p=3"));
+        Assert.Contains("ENOENT", responses[^1], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DeleteAllInAlternateBufferPreservesPrimaryBufferPlacements()
+    {
+        var (engine, _) = CreateEngine();
+        engine.Feed(Apc("a=T,f=32,s=1,v=1,i=1,C=1", "AQIDBA=="));
+        engine.Feed($"{Esc}[?1049h");
+        engine.Feed(Apc("a=T,f=32,s=1,v=1,i=2,C=1", "AQIDBA=="));
+        engine.Feed(Apc("a=d,d=A"));
+        engine.Feed($"{Esc}[?1049l");
+
+        var primary = Assert.Single(engine.Images);
+        Assert.False(primary.AlternateBuffer);
+        Assert.Equal(1u, primary.Kitty!.ImageId);
     }
 }

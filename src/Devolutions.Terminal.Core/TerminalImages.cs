@@ -127,6 +127,9 @@ public sealed class KittyImageData
     public byte[]? Rgba32Pixels { get; }
     public byte[]? EncodedData { get; }
     public long EstimatedByteSize => Rgba32Pixels?.Length ?? EncodedData?.Length ?? 0;
+    internal int OverlayReferenceCount { get; set; }
+    internal uint ImageNumber { get; set; }
+    internal LinkedListNode<uint>? StoreOrderNode { get; set; }
 }
 
 /// <summary>
