@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Unicode;
 using System.Globalization;
 using System.Collections.ObjectModel;
 
@@ -41,8 +42,10 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
     private readonly TextBuffer _alternate;
     private readonly List<TerminalImageOverlay> _images = [];
     private readonly Dictionary<uint, KittyImageData> _kittyImages = [];
-    private readonly List<uint> _kittyImageOrder = [];
+    private readonly LinkedList<uint> _kittyImageOrder = new();
     private readonly List<byte> _kittyChunkPayload = [];
+    private readonly char[] _kittyChunkCarry = new char[3];
+    private int _kittyChunkCarryLength;
     private KittyGraphicsCommand? _kittyChunkControl;
     private long _kittyImageStoreBytes;
     private readonly Dictionary<int, DrcsGlyph> _drcsGlyphs = [];
@@ -57,6 +60,8 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
     private bool _hasLastPrintedRune;
     private long _nextImageId;
     private long _retainedImageBytes;
+    private long _lastPrunedPrimaryLayoutVersion = -1;
+    private long _lastPrunedAlternateLayoutVersion = -1;
     private bool _vt52Graphics;
     private bool _rectangularAttributeExtent;
     private string? _drcsDesignator;
@@ -67,12 +72,29 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
     private int _macroBytes;
     private int _macroDepth;
     private int _macroExpandedBytes;
-    private readonly Stack<KittyKeyboardFlags> _kittyKeyboardStack = new(16);
-    private KittyKeyboardFlags _kittyKeyboardFlags;
+    private static readonly byte[][] KittyKeyboardQueryResponses = CreateKittyKeyboardQueryResponses();
+
+    private static byte[][] CreateKittyKeyboardQueryResponses()
+    {
+        var table = new byte[32][];
+        for (var i = 0; i < table.Length; i++)
+        {
+            table[i] = Encoding.ASCII.GetBytes($"\u001b[?{i}u");
+        }
+
+        return table;
+    }
+
+    private readonly List<KittyKeyboardFlags> _primaryKittyKeyboardStack = new(16);
+    private readonly List<KittyKeyboardFlags> _alternateKittyKeyboardStack = new(16);
+    private KittyKeyboardFlags _primaryKittyKeyboardFlags;
+    private KittyKeyboardFlags _alternateKittyKeyboardFlags;
     private int _modifyOtherKeys;
     private bool _win32InputMode;
     private bool _allowKittyKeyboard = true;
     private bool _sixelDisplayMode;
+    private bool _sixelPrivateColorRegisters;
+    private bool _sixelScrollingLeavesCursorRight;
     private double _cellWidth = 10;
     private double _cellHeight = 20;
     private int _cursorStyle;
@@ -141,9 +163,36 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         AnsiMode,
         ApplicationCursorKeys,
         ApplicationKeypad,
-        _kittyKeyboardFlags,
+        ActiveKittyKeyboardFlags,
         _modifyOtherKeys,
         _win32InputMode);
+
+    private KittyKeyboardFlags ActiveKittyKeyboardFlags
+    {
+        get => AlternateBufferActive ? _alternateKittyKeyboardFlags : _primaryKittyKeyboardFlags;
+        set
+        {
+            if (AlternateBufferActive)
+            {
+                _alternateKittyKeyboardFlags = value;
+            }
+            else
+            {
+                _primaryKittyKeyboardFlags = value;
+            }
+        }
+    }
+
+    private List<KittyKeyboardFlags> ActiveKittyKeyboardStack =>
+        AlternateBufferActive ? _alternateKittyKeyboardStack : _primaryKittyKeyboardStack;
+
+    private void ResetAllKittyKeyboardState()
+    {
+        _primaryKittyKeyboardFlags = KittyKeyboardFlags.None;
+        _alternateKittyKeyboardFlags = KittyKeyboardFlags.None;
+        _primaryKittyKeyboardStack.Clear();
+        _alternateKittyKeyboardStack.Clear();
+    }
     public bool AllowClipboardWrite { get; private set; }
     public bool AllowNotifications { get; private set; }
     public int Columns => Buffer.Columns;
@@ -198,17 +247,11 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         _primary.Resize(
             columns,
             rows,
-            _images
-                .Where(static image => !image.AlternateBuffer)
-                .Select(static image => image.LogicalAnchor)
-                .ToArray());
+            ExtractBufferAnchors(alternateBuffer: false));
         _alternate.Resize(
             columns,
             rows,
-            _images
-                .Where(static image => image.AlternateBuffer)
-                .Select(static image => image.LogicalAnchor)
-                .ToArray(),
+            ExtractBufferAnchors(alternateBuffer: true),
             reflow: false);
         PruneEvictedImages();
         if (_inBandResize)
@@ -243,8 +286,7 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         ReverseVideo = false;
         AnsiMode = true;
         ApplicationKeypad = false;
-        _kittyKeyboardFlags = KittyKeyboardFlags.None;
-        _kittyKeyboardStack.Clear();
+        ResetAllKittyKeyboardState();
         _modifyOtherKeys = 0;
         _win32InputMode = false;
         _cursorStyle = 0;
@@ -253,6 +295,8 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         _inBandResize = false;
         _titleStack.Clear();
         _sixelDisplayMode = false;
+        _sixelPrivateColorRegisters = false;
+        _sixelScrollingLeavesCursorRight = false;
         _vt52Graphics = false;
         _rectangularAttributeExtent = false;
         _drcsDesignator = null;
@@ -269,12 +313,23 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         _scheme = _defaultScheme;
         _hasLastPrintedRune = false;
         _sixelDecoder.Reset();
+        foreach (var existingOverlay in _images)
+        {
+            if (existingOverlay.Kitty is { Data: var kittyData })
+            {
+                kittyData.OverlayReferenceCount = 0;
+            }
+        }
+
         _images.Clear();
         _retainedImageBytes = 0;
+        _lastPrunedPrimaryLayoutVersion = -1;
+        _lastPrunedAlternateLayoutVersion = -1;
         _kittyImages.Clear();
         _kittyImageOrder.Clear();
         _kittyImageStoreBytes = 0;
         _kittyChunkControl = null;
+        _kittyChunkCarryLength = 0;
         _kittyChunkPayload.Clear();
         _primary.Reset(keepHistory: false);
         _alternate.Reset(keepHistory: false);
@@ -291,8 +346,7 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         _allowKittyKeyboard = allowKittyKeyboard;
         if (!allowKittyKeyboard)
         {
-            _kittyKeyboardFlags = KittyKeyboardFlags.None;
-            _kittyKeyboardStack.Clear();
+            ResetAllKittyKeyboardState();
         }
     }
 
@@ -472,6 +526,11 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
 
     void IVtDispatch.ExecuteC0(byte control)
     {
+        if (_parser.IsInDcs)
+        {
+            return;
+        }
+
         switch (control)
         {
             case 0x07:
@@ -791,6 +850,7 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
                 // P3 is the horizontal grid size, not a colour; the background
                 // of a non-transparent image is colour register 0.
                 backgroundColor: 0,
+                usePrivatePalette: _sixelPrivateColorRegisters,
                 out var image) ||
             image is null)
         {
@@ -798,21 +858,25 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
             return;
         }
 
-        var anchorColumn = _sixelDisplayMode ? 0 : Buffer.CursorX;
-        var anchorRow = _sixelDisplayMode ? 0 : Buffer.CursorY;
-        var overlay = new TerminalImageOverlay(
-            ++_nextImageId,
-            TerminalImageProtocol.Sixel,
-            AlternateBufferActive,
-            anchorColumn,
-            Buffer.ViewportStart + anchorRow,
-            image,
-            null)
+        if (!_sixelDisplayMode)
         {
-            LogicalAnchor = Buffer.CreateImageAnchor(anchorColumn, anchorRow),
-            CellGeometry = new TerminalImageCellGeometry(_cellWidth, _cellHeight),
-        };
-        AddImage(overlay);
+            Buffer.ResolvePendingWrap(AutoWrap);
+            if (Buffer.CursorY > Buffer.ScrollBottom)
+            {
+                ReportDiagnostic(
+                    "image.sixel.rejected",
+                    "The Sixel origin was below the active scrolling margin.");
+                return;
+            }
+        }
+
+        var anchorColumn = _sixelDisplayMode
+            ? (Buffer.OriginMode ? Buffer.LeftBound : 0)
+            : Buffer.CursorX;
+        var anchorRow = _sixelDisplayMode
+            ? (Buffer.OriginMode ? Buffer.ScrollTop : 0)
+            : Buffer.CursorY;
+        var logicalAnchor = Buffer.CreateImageAnchor(anchorColumn, anchorRow);
 
         if (!_sixelDisplayMode)
         {
@@ -825,11 +889,35 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
                 ? 0
                 : Buffer.ScrollBottom - anchorRow + overflowRows;
             var lineFeeds = Math.Max(finalCursorRows, extentLineFeeds);
-            for (var row = 0; row < lineFeeds; row++)
+            Buffer.AdvanceLines(lineFeeds);
+
+            if (_sixelScrollingLeavesCursorRight)
             {
-                Buffer.LineFeed();
+                const int sixelCellWidth = 10;
+                var rightBound = Buffer.LeftRightMargins ? Buffer.MarginRight : Buffer.Columns - 1;
+                var sixelColumns = (image.Width + sixelCellWidth - 1) / sixelCellWidth;
+                Buffer.CursorX = Math.Clamp(anchorColumn + sixelColumns, Buffer.LeftBound, rightBound);
             }
         }
+
+        if (!Buffer.TryResolveImageAnchor(logicalAnchor, out var resolvedRow, out var resolvedColumn))
+        {
+            return;
+        }
+
+        var overlay = new TerminalImageOverlay(
+            ++_nextImageId,
+            TerminalImageProtocol.Sixel,
+            AlternateBufferActive,
+            resolvedColumn,
+            resolvedRow,
+            image,
+            null)
+        {
+            LogicalAnchor = logicalAnchor,
+            CellGeometry = new TerminalImageCellGeometry(_cellWidth, _cellHeight),
+        };
+        AddImage(overlay);
     }
 
     private void DispatchRequestSetting(ReadOnlySpan<byte> data)
@@ -1698,76 +1786,128 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
 
     private void DispatchKittyImage(ReadOnlySpan<char> body)
     {
-        if (!KittyGraphicsDecoder.TryParse(body, out var parsed, out var parseError) || parsed is null)
+        var pendingControl = _kittyChunkControl;
+        if (pendingControl is not null)
         {
-            var rejectedId = _kittyChunkControl?.ImageId ?? 0;
-            _kittyChunkControl = null;
-            _kittyChunkPayload.Clear();
-            ReportDiagnostic("image.kitty.rejected", parseError ?? "The kitty graphics control data was malformed.");
-            RespondKitty(rejectedId, parseError ?? "EINVAL: malformed control data", quiet: 0, isError: true);
-            return;
-        }
-
-        var command = parsed;
-        var payload = command.Payload;
-        if (command.MoreChunks || _kittyChunkControl is not null)
-        {
-            // Chunked transmission: the first chunk carries the metadata, later
-            // chunks append payload and may only re-assert i and m.
-            if (_kittyChunkControl is null)
+            if (!KittyGraphicsDecoder.TryParseContinuationChunk(
+                    body,
+                    pendingControl.Action,
+                    _kittyChunkCarry,
+                    ref _kittyChunkCarryLength,
+                    _kittyChunkPayload,
+                    out var continuation,
+                    out var contErrorId,
+                    out var contErrorNumber,
+                    out var contErrorQuiet,
+                    out var contParseError))
             {
-                if (!command.MoreChunks)
+                var rejectedId = contErrorId != 0 ? contErrorId : pendingControl.ImageId;
+                var rejectedNumber = contErrorNumber != 0 ? contErrorNumber : pendingControl.ImageNumber;
+                var rejectedQuiet = contErrorQuiet != 0 ? contErrorQuiet : pendingControl.Quiet;
+                ResetKittyChunkState();
+                ReportDiagnostic("image.kitty.rejected", contParseError ?? "The kitty graphics control data was malformed.");
+                RespondKitty(rejectedId, contParseError ?? "EINVAL: malformed control data", rejectedQuiet, isError: true, rejectedNumber);
+                return;
+            }
+
+            if (continuation.IsNonContinuationAction)
+            {
+                ResetKittyChunkState();
+                ReportDiagnostic("image.kitty.rejected", "An incomplete chunked kitty transmission was interrupted by another action.");
+            }
+            else
+            {
+                var effectiveQuiet = continuation.Quiet != 0 ? continuation.Quiet : pendingControl.Quiet;
+                var effectiveNumber = continuation.ImageNumber != 0 ? continuation.ImageNumber : pendingControl.ImageNumber;
+                if (continuation.ImageId != 0 &&
+                    pendingControl.ImageId != 0 &&
+                    continuation.ImageId != pendingControl.ImageId)
                 {
-                    // Unreachable in this branch, kept as a guard.
-                    _kittyChunkPayload.Clear();
+                    var pendingId = pendingControl.ImageId;
+                    ResetKittyChunkState();
+                    ReportDiagnostic("image.kitty.rejected", "The kitty continuation image id did not match the first chunk.");
+                    RespondKitty(pendingId, "EINVAL: mismatched chunk image id", effectiveQuiet, isError: true, effectiveNumber);
                     return;
                 }
 
-                _kittyChunkControl = command;
-                _kittyChunkPayload.Clear();
-                _kittyChunkPayload.AddRange(command.Payload);
+                if (_kittyChunkPayload.Count > TerminalImageLimits.MaximumKittyImageBytes * 2)
+                {
+                    var pendingId = pendingControl.ImageId;
+                    ResetKittyChunkState();
+                    ReportDiagnostic("image.kitty.rejected", "The chunked kitty image exceeded the size limit.");
+                    RespondKitty(pendingId, "ETOOMANY: chunked image exceeds the size limit", effectiveQuiet, isError: true, effectiveNumber);
+                    return;
+                }
+
+                if (continuation.MoreChunks)
+                {
+                    return;
+                }
+
+                var assembledCommand = pendingControl;
+                if (continuation.ImageId != 0)
+                {
+                    assembledCommand.ImageId = continuation.ImageId;
+                }
+
+                if (continuation.ImageNumber != 0)
+                {
+                    assembledCommand.ImageNumber = continuation.ImageNumber;
+                }
+
+                if (continuation.Quiet != 0)
+                {
+                    assembledCommand.Quiet = continuation.Quiet;
+                }
+
+                var assembledPayload = _kittyChunkPayload.ToArray();
+                ResetKittyChunkState();
+                ExecuteKittyCommand(assembledCommand, assembledPayload);
                 return;
             }
-
-            if (command.ImageId != 0 &&
-                _kittyChunkControl.ImageId != 0 &&
-                command.ImageId != _kittyChunkControl.ImageId)
-            {
-                var pendingId = _kittyChunkControl.ImageId;
-                _kittyChunkControl = null;
-                _kittyChunkPayload.Clear();
-                ReportDiagnostic("image.kitty.rejected", "The kitty continuation image id did not match the first chunk.");
-                RespondKitty(pendingId, "EINVAL: mismatched chunk image id", command.Quiet, isError: true);
-                return;
-            }
-
-            _kittyChunkPayload.AddRange(command.Payload);
-            if (_kittyChunkPayload.Count > TerminalImageLimits.MaximumKittyImageBytes * 2)
-            {
-                var pendingId = _kittyChunkControl.ImageId;
-                _kittyChunkControl = null;
-                _kittyChunkPayload.Clear();
-                ReportDiagnostic("image.kitty.rejected", "The chunked kitty image exceeded the size limit.");
-                RespondKitty(pendingId, "ETOOMANY: chunked image exceeds the size limit", command.Quiet, isError: true);
-                return;
-            }
-
-            if (command.MoreChunks)
-            {
-                return;
-            }
-
-            command = _kittyChunkControl;
-            _kittyChunkControl = null;
-            if (parsed.ImageId != 0)
-            {
-                command.ImageId = parsed.ImageId;
-            }
-
-            payload = [.. _kittyChunkPayload];
-            _kittyChunkPayload.Clear();
         }
 
+        if (!KittyGraphicsDecoder.TryParseChunk(
+                body,
+                ReadOnlySpan<char>.Empty,
+                out var parsed,
+                out var errorImageId,
+                out var errorImageNumber,
+                out var errorQuiet,
+                out var parseError) ||
+            parsed is null)
+        {
+            ReportDiagnostic("image.kitty.rejected", parseError ?? "The kitty graphics control data was malformed.");
+            RespondKitty(errorImageId, parseError ?? "EINVAL: malformed control data", errorQuiet, isError: true, errorImageNumber);
+            return;
+        }
+
+        if (parsed.MoreChunks)
+        {
+            _kittyChunkControl = parsed;
+            _kittyChunkCarryLength = parsed.TrailingBase64.Length;
+            parsed.TrailingBase64.AsSpan().CopyTo(_kittyChunkCarry);
+            _kittyChunkPayload.Clear();
+            _kittyChunkPayload.AddRange(parsed.Payload);
+            return;
+        }
+
+        ExecuteKittyCommand(parsed, parsed.Payload);
+    }
+
+    private void ResetKittyChunkState()
+    {
+        _kittyChunkControl = null;
+        _kittyChunkCarryLength = 0;
+        _kittyChunkPayload.Clear();
+        if (_kittyChunkPayload.Capacity > 256 * 1024)
+        {
+            _kittyChunkPayload.TrimExcess();
+        }
+    }
+
+    private void ExecuteKittyCommand(KittyGraphicsCommand command, byte[] payload)
+    {
         switch (command.Action)
         {
             case KittyGraphicsAction.Delete:
@@ -1775,7 +1915,7 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
                 return;
             case KittyGraphicsAction.Unsupported:
                 ReportDiagnostic("image.kitty.rejected", "The kitty graphics action is not supported.");
-                RespondKitty(command.ImageId, "ENOTSUP: unsupported action", command.Quiet, isError: true);
+                RespondKitty(command.ImageId, "ENOTSUP: unsupported action", command.Quiet, isError: true, command.ImageNumber);
                 return;
             case KittyGraphicsAction.Put:
                 ExecuteKittyPut(command);
@@ -1788,33 +1928,30 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
 
     private void ExecuteKittyTransmission(KittyGraphicsCommand command, byte[] payload)
     {
-        var imageId = command.ImageId;
-        if (imageId == 0)
-        {
-            imageId = NextKittyImageId();
-        }
-
-        if (!KittyGraphicsDecoder.TryDecodeImageData(command, payload, out var data, out var error) || data is null)
+        if (!KittyGraphicsDecoder.TryDecodeImageData(command, payload, takePayloadOwnership: true, out var data, out var error) || data is null)
         {
             ReportDiagnostic("image.kitty.rejected", error ?? "The kitty image payload was rejected.");
-            RespondKitty(imageId, error ?? "EINVAL: rejected payload", command.Quiet, isError: true);
+            RespondKitty(command.ImageId, error ?? "EINVAL: rejected payload", command.Quiet, isError: true, command.ImageNumber);
             return;
         }
 
         if (command.Action == KittyGraphicsAction.Query)
         {
-            // Support probe: validate and acknowledge without storing.
-            RespondKitty(imageId, "OK", command.Quiet, isError: false);
+            // Support probe: validate and acknowledge without mutating id counters or store.
+            RespondKitty(command.ImageId, "OK", command.Quiet, isError: false, command.ImageNumber);
             return;
         }
 
+        var imageId = command.ImageId != 0 ? command.ImageId : NextKittyImageId();
+        data.ImageNumber = command.ImageNumber;
+        data.CreatedOnAlternateBuffer = AlternateBufferActive;
         StoreKittyImage(imageId, data);
         if (command.Action == KittyGraphicsAction.TransmitAndDisplay)
         {
             CreateKittyPlacement(command, imageId, data, moveCursor: !command.NoCursorMove);
         }
 
-        RespondKitty(imageId, "OK", command.Quiet, isError: false);
+        RespondKitty(imageId, "OK", command.Quiet, isError: false, command.ImageNumber);
     }
 
     // Transmit-only images must survive until an explicit delete: clients transmit
@@ -1826,20 +1963,23 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         if (_kittyImages.TryGetValue(imageId, out var existing))
         {
             _kittyImageStoreBytes -= existing.EstimatedByteSize;
-        }
-        else
-        {
-            _kittyImageOrder.Add(imageId);
+            if (existing.StoreOrderNode is { } existingNode)
+            {
+                _kittyImageOrder.Remove(existingNode);
+                existing.StoreOrderNode = null;
+            }
         }
 
+        data.StoreOrderNode = _kittyImageOrder.AddLast(imageId);
         _kittyImages[imageId] = data;
         _kittyImageStoreBytes += data.EstimatedByteSize;
-        while (_kittyImageOrder.Count > 0 && _kittyImageStoreBytes > TerminalImageLimits.MaximumRetainedImageBytes)
+        while (_kittyImageOrder.First is { } oldestNode && _kittyImageStoreBytes > TerminalImageLimits.MaximumRetainedImageBytes)
         {
-            var oldest = _kittyImageOrder[0];
-            _kittyImageOrder.RemoveAt(0);
+            var oldest = oldestNode.Value;
+            _kittyImageOrder.RemoveFirst();
             if (_kittyImages.Remove(oldest, out var removed))
             {
+                removed.StoreOrderNode = null;
                 _kittyImageStoreBytes -= removed.EstimatedByteSize;
             }
         }
@@ -1850,58 +1990,159 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         if (_kittyImages.Remove(imageId, out var removed))
         {
             _kittyImageStoreBytes -= removed.EstimatedByteSize;
-            _kittyImageOrder.Remove(imageId);
+            if (removed.StoreOrderNode is { } node)
+            {
+                _kittyImageOrder.Remove(node);
+                removed.StoreOrderNode = null;
+            }
         }
+    }
+
+    private uint ResolveKittyImageId(uint imageId, uint imageNumber)
+    {
+        if (imageId != 0 || imageNumber == 0)
+        {
+            return imageId;
+        }
+
+        for (var node = _kittyImageOrder.Last; node is not null; node = node.Previous)
+        {
+            var candidateId = node.Value;
+            if (_kittyImages.TryGetValue(candidateId, out var data) && data.ImageNumber == imageNumber)
+            {
+                return candidateId;
+            }
+        }
+
+        return 0;
     }
 
     private void ExecuteKittyPut(KittyGraphicsCommand command)
     {
-        if (command.ImageId == 0 || !_kittyImages.TryGetValue(command.ImageId, out var data))
+        var imageId = ResolveKittyImageId(command.ImageId, command.ImageNumber);
+        if (imageId == 0 || !_kittyImages.TryGetValue(imageId, out var data))
         {
             ReportDiagnostic("image.kitty.rejected", "The kitty put referenced an unknown image id.");
-            RespondKitty(command.ImageId, "ENOENT: no image with that id", command.Quiet, isError: true);
+            RespondKitty(command.ImageId, "ENOENT: no image with that id", command.Quiet, isError: true, command.ImageNumber);
             return;
         }
 
         // Put leaves the cursor in place (kitty semantics).
-        CreateKittyPlacement(command, command.ImageId, data, moveCursor: false);
-        RespondKitty(command.ImageId, "OK", command.Quiet, isError: false);
+        CreateKittyPlacement(command, imageId, data, moveCursor: false);
+        RespondKitty(imageId, "OK", command.Quiet, isError: false, command.ImageNumber);
     }
 
     private void ExecuteKittyDelete(KittyGraphicsCommand command)
     {
+        PruneEvictedImages();
+        var targetImageId = ResolveKittyImageId(command.ImageId, command.ImageNumber);
         switch (command.DeleteWhat)
         {
             case 'a':
-                RemoveKittyOverlays(static _ => true);
+                RemoveKittyOverlays(activeBufferOnly: true);
                 break;
             case 'A':
-                RemoveKittyOverlays(static _ => true);
-                _kittyImages.Clear();
-                _kittyImageOrder.Clear();
-                _kittyImageStoreBytes = 0;
+                RemoveKittyOverlays(activeBufferOnly: true);
+                ReapUnplacedKittyImages();
                 break;
             case 'i':
-                RemoveKittyOverlays(kitty => kitty.ImageId == command.ImageId);
+                if (targetImageId != 0)
+                {
+                    RemoveKittyOverlays(
+                        activeBufferOnly: false,
+                        imageId: targetImageId,
+                        placementId: command.PlacementId,
+                        matchPlacementId: command.PlacementId != 0);
+                }
+
                 break;
             case 'I':
-                RemoveKittyOverlays(kitty => kitty.ImageId == command.ImageId);
-                RemoveKittyImage(command.ImageId);
+                if (targetImageId != 0)
+                {
+                    RemoveKittyOverlays(
+                        activeBufferOnly: false,
+                        imageId: targetImageId,
+                        placementId: command.PlacementId,
+                        matchPlacementId: command.PlacementId != 0);
+                    if (command.PlacementId == 0 || !HasAnyKittyPlacement(targetImageId))
+                    {
+                        RemoveKittyImage(targetImageId);
+                    }
+                }
+
                 break;
             case 'p':
+                if (targetImageId != 0)
+                {
+                    RemoveKittyOverlays(
+                        activeBufferOnly: false,
+                        imageId: targetImageId,
+                        placementId: command.PlacementId,
+                        matchPlacementId: true);
+                }
+
+                break;
             case 'P':
-                RemoveKittyOverlays(
-                    kitty => kitty.ImageId == command.ImageId && kitty.PlacementId == command.PlacementId);
+                if (targetImageId != 0)
+                {
+                    RemoveKittyOverlays(
+                        activeBufferOnly: false,
+                        imageId: targetImageId,
+                        placementId: command.PlacementId,
+                        matchPlacementId: true);
+                    if (!HasAnyKittyPlacement(targetImageId))
+                    {
+                        RemoveKittyImage(targetImageId);
+                    }
+                }
+
                 break;
             default:
-                // Cell/z-index/number-targeted deletes are not supported; deletes
-                // have no response, so this is a silent no-op.
                 break;
         }
+    }
 
-        // Lowercase deletes remove placements, not transmitted image data.
-        // Explicit uppercase deletes free data; retained unplaced images remain
-        // subject to the independent kitty store byte budget.
+    private bool HasAnyKittyPlacement(uint imageId)
+    {
+        for (var index = 0; index < _images.Count; index++)
+        {
+            if (_images[index].Kitty is { } kitty && kitty.ImageId == imageId)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void ReapUnplacedKittyImages(bool? onlyCreatedOnAlternateBuffer = null)
+    {
+        var count = _kittyImages.Count;
+        if (count == 0)
+        {
+            return;
+        }
+
+        Span<uint> stale = count <= 128 ? stackalloc uint[count] : new uint[count];
+        var staleCount = 0;
+        foreach (var pair in _kittyImages)
+        {
+            if (onlyCreatedOnAlternateBuffer is { } requiredBuffer &&
+                pair.Value.CreatedOnAlternateBuffer != requiredBuffer)
+            {
+                continue;
+            }
+
+            if (!HasAnyKittyPlacement(pair.Key))
+            {
+                stale[staleCount++] = pair.Key;
+            }
+        }
+
+        for (var i = 0; i < staleCount; i++)
+        {
+            RemoveKittyImage(stale[i]);
+        }
     }
 
     private void CreateKittyPlacement(
@@ -1910,10 +2151,24 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         KittyImageData data,
         bool moveCursor)
     {
+        if (moveCursor)
+        {
+            Buffer.ResolvePendingWrap(AutoWrap);
+        }
+
+        if (command.PlacementId != 0)
+        {
+            RemoveKittyOverlays(
+                activeBufferOnly: true,
+                imageId: imageId,
+                placementId: command.PlacementId,
+                matchPlacementId: true);
+        }
+
         var kitty = new KittyImage(imageId, command.PlacementId, data)
         {
-            Columns = Math.Clamp(command.Columns, 0, Buffer.Columns),
-            Rows = Math.Clamp(command.Rows, 0, Buffer.Rows),
+            Columns = Math.Clamp(command.Columns, 0, TerminalImageLimits.MaximumPixelDimension),
+            Rows = Math.Clamp(command.Rows, 0, TerminalImageLimits.MaximumPixelDimension),
             PixelOffsetX = Math.Max(0, command.PixelOffsetX),
             PixelOffsetY = Math.Max(0, command.PixelOffsetY),
             CropX = Math.Max(0, command.CropX),
@@ -1922,82 +2177,93 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
             CropHeight = Math.Max(0, command.CropHeight),
             ZIndex = command.ZIndex,
         };
+
+        var logicalAnchor = Buffer.CreateImageAnchor(Buffer.CursorX, Buffer.CursorY);
+        if (moveCursor)
+        {
+            // The cursor moves below the image (kitty semantics). Encoded payloads
+            // (f=100) have no Core-known pixel height; without an explicit r the
+            // cursor stays put — image clients always send c/r for those.
+            Buffer.AdvanceLines(ComputeKittyCursorRows(kitty, data));
+        }
+
+        if (!Buffer.TryResolveImageAnchor(logicalAnchor, out var resolvedRow, out var resolvedColumn))
+        {
+            return;
+        }
+
         AddImage(new TerminalImageOverlay(
             ++_nextImageId,
             TerminalImageProtocol.KittyGraphics,
             AlternateBufferActive,
-            Buffer.CursorX,
-            Buffer.ViewportStart + Buffer.CursorY,
+            resolvedColumn,
+            resolvedRow,
             null,
             null)
         {
             Kitty = kitty,
-            LogicalAnchor = Buffer.CreateImageAnchor(Buffer.CursorX, Buffer.CursorY),
+            LogicalAnchor = logicalAnchor,
             CellGeometry = new TerminalImageCellGeometry(_cellWidth, _cellHeight),
         });
-
-        if (!moveCursor)
-        {
-            return;
-        }
-
-        // The cursor moves below the image (kitty semantics). Encoded payloads
-        // (f=100) have no Core-known pixel height; without an explicit r the
-        // cursor stays put — image clients always send c/r for those.
-        var rows = kitty.Rows > 0
-            ? kitty.Rows
-            : data.Height > 0
-                ? (int)Math.Ceiling((kitty.CropHeight > 0 ? kitty.CropHeight : data.Height) / _cellHeight)
-                : 0;
-        for (var row = 0; row < rows; row++)
-        {
-            Buffer.LineFeed();
-        }
     }
 
-    private void RemoveKittyOverlays(Func<KittyImage, bool> predicate)
+    private int ComputeKittyCursorRows(KittyImage kitty, KittyImageData data)
     {
+        if (kitty.Rows > 0)
+        {
+            return kitty.Rows;
+        }
+
+        if (data.Width <= 0 || data.Height <= 0 || kitty.CropX >= data.Width || kitty.CropY >= data.Height)
+        {
+            return 0;
+        }
+
+        var srcWidth = kitty.CropWidth > 0
+            ? Math.Min(kitty.CropWidth, data.Width - kitty.CropX)
+            : data.Width - kitty.CropX;
+        var srcHeight = kitty.CropHeight > 0
+            ? Math.Min(kitty.CropHeight, data.Height - kitty.CropY)
+            : data.Height - kitty.CropY;
+        var displayHeightPx = kitty.Columns > 0
+            ? srcHeight * ((kitty.Columns * _cellWidth) / Math.Max(1.0, srcWidth))
+            : srcHeight;
+        var clampedOffsetY = Math.Min(kitty.PixelOffsetY, Math.Max(0, (int)Math.Ceiling(_cellHeight) - 1));
+        return (int)Math.Ceiling((clampedOffsetY + displayHeightPx) / _cellHeight);
+    }
+
+    private void RemoveKittyOverlays(
+        bool activeBufferOnly,
+        uint imageId = 0,
+        uint placementId = 0,
+        bool matchPlacementId = false)
+    {
+        var activeAlt = AlternateBufferActive;
         for (var index = _images.Count - 1; index >= 0; index--)
         {
             var image = _images[index];
-            if (image.Kitty is null || !predicate(image.Kitty))
+            if (image.Kitty is not { } kitty)
             {
                 continue;
             }
 
-            _retainedImageBytes -= ImageByteSize(image);
+            if (activeBufferOnly && image.AlternateBuffer != activeAlt)
+            {
+                continue;
+            }
+
+            if (imageId != 0 && kitty.ImageId != imageId)
+            {
+                continue;
+            }
+
+            if (matchPlacementId && kitty.PlacementId != placementId)
+            {
+                continue;
+            }
+
+            ReleaseOverlayBytes(image);
             _images.RemoveAt(index);
-        }
-    }
-
-    private void ReapKittyImageStore()
-    {
-        if (_kittyImages.Count == 0)
-        {
-            return;
-        }
-
-        var live = new HashSet<uint>();
-        foreach (var image in _images)
-        {
-            if (image.Kitty is { } kitty)
-            {
-                live.Add(kitty.ImageId);
-            }
-        }
-
-        var stale = new List<uint>();
-        foreach (var id in _kittyImages.Keys)
-        {
-            if (!live.Contains(id))
-            {
-                stale.Add(id);
-            }
-        }
-
-        foreach (var id in stale)
-        {
-            RemoveKittyImage(id);
         }
     }
 
@@ -2013,14 +2279,30 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         return _nextKittyImageIdValue;
     }
 
-    private void RespondKitty(uint imageId, string message, int quiet, bool isError)
+    private void RespondKitty(uint imageId, string message, int quiet, bool isError, uint imageNumber = 0)
     {
-        if (isError ? quiet >= 2 : quiet >= 1)
+        if ((isError ? quiet >= 2 : quiet >= 1) || ResponseReady is not { } handler)
         {
             return;
         }
 
-        Respond($"\u001b_Gi={imageId};{message}\u001b\\");
+        Span<byte> buffer = stackalloc byte[160];
+        var written = imageNumber != 0
+            ? Utf8.TryWrite(buffer, $"\u001b_Gi={imageId},I={imageNumber};{message}\u001b\\", out var lenWithNum)
+                ? lenWithNum
+                : -1
+            : Utf8.TryWrite(buffer, $"\u001b_Gi={imageId};{message}\u001b\\", out var len)
+                ? len
+                : -1;
+        if (written >= 0)
+        {
+            handler.Invoke(this, buffer[..written].ToArray());
+            return;
+        }
+
+        Respond(imageNumber != 0
+            ? $"\u001b_Gi={imageId},I={imageNumber};{message}\u001b\\"
+            : $"\u001b_Gi={imageId};{message}\u001b\\");
     }
 
     private static TerminalImageDimension ParseInlineDimension(ReadOnlySpan<char> value)
@@ -2055,24 +2337,91 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
 
     private void AddImage(TerminalImageOverlay image)
     {
-        var imageBytes = ImageByteSize(image);
-        if (imageBytes > TerminalImageLimits.MaximumRetainedImageBytes)
+        var singleImageBytes = ImageByteSize(image);
+        if (singleImageBytes > TerminalImageLimits.MaximumRetainedImageBytes)
         {
             return;
         }
 
-        while (_images.Count > 0 &&
-               (_images.Count >= TerminalImageLimits.MaximumRetainedImages ||
-                _retainedImageBytes + imageBytes > TerminalImageLimits.MaximumRetainedImageBytes))
+        while (_images.Count > 0)
         {
+            var incrementalBytes = IncrementalImageByteSize(image);
+            if (_images.Count < TerminalImageLimits.MaximumRetainedImages &&
+                _retainedImageBytes + incrementalBytes <= TerminalImageLimits.MaximumRetainedImageBytes)
+            {
+                break;
+            }
+
             var removed = _images[0];
-            _retainedImageBytes -= ImageByteSize(removed);
+            ReleaseOverlayBytes(removed);
             _images.RemoveAt(0);
         }
 
+        var addedBytes = IncrementalImageByteSize(image);
+        if (image.Kitty is { Data: var kittyData })
+        {
+            kittyData.OverlayReferenceCount++;
+        }
+
         _images.Add(image);
-        _retainedImageBytes += imageBytes;
+        _retainedImageBytes += addedBytes;
+        _lastPrunedPrimaryLayoutVersion = -1;
+        _lastPrunedAlternateLayoutVersion = -1;
         ImageAdded?.Invoke(this, image);
+    }
+
+    private IReadOnlyList<TerminalImageAnchor>? ExtractBufferAnchors(bool alternateBuffer)
+    {
+        var count = 0;
+        for (var i = 0; i < _images.Count; i++)
+        {
+            if (_images[i].AlternateBuffer == alternateBuffer)
+            {
+                count++;
+            }
+        }
+
+        if (count == 0)
+        {
+            return null;
+        }
+
+        var anchors = new TerminalImageAnchor[count];
+        var writeIndex = 0;
+        for (var i = 0; i < _images.Count; i++)
+        {
+            var image = _images[i];
+            if (image.AlternateBuffer == alternateBuffer)
+            {
+                anchors[writeIndex++] = image.LogicalAnchor;
+            }
+        }
+
+        return anchors;
+    }
+
+    private static long IncrementalImageByteSize(TerminalImageOverlay image) =>
+        image.Kitty is { Data: var kittyData }
+            ? (kittyData.OverlayReferenceCount == 0 ? kittyData.EstimatedByteSize : 0)
+            : ImageByteSize(image);
+
+    private void ReleaseOverlayBytes(TerminalImageOverlay image)
+    {
+        if (image.Kitty is { Data: var kittyData })
+        {
+            if (kittyData.OverlayReferenceCount > 0)
+            {
+                kittyData.OverlayReferenceCount--;
+                if (kittyData.OverlayReferenceCount == 0)
+                {
+                    _retainedImageBytes -= kittyData.EstimatedByteSize;
+                }
+            }
+
+            return;
+        }
+
+        _retainedImageBytes -= ImageByteSize(image);
     }
 
     private TerminalImageOverlay[] CreateSnapshotImages(bool includeHistory)
@@ -2082,28 +2431,35 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
             return [];
         }
 
-        var result = new List<TerminalImageOverlay>(_images.Count);
-        foreach (var image in _images)
+        var result = new TerminalImageOverlay[_images.Count];
+        for (var i = 0; i < _images.Count; i++)
         {
+            var image = _images[i];
             var buffer = image.AlternateBuffer ? _alternate : _primary;
-            if (!buffer.TryResolveImageAnchor(image.LogicalAnchor, out var absoluteRow, out var column))
-            {
-                continue;
-            }
-
             var firstRow = includeHistory ? 0 : buffer.ViewportStart - buffer.ScrollOffset;
-            result.Add(image with
-            {
-                AnchorColumn = column,
-                AnchorRow = absoluteRow - firstRow,
-            });
+            result[i] = firstRow == 0
+                ? image
+                : image with { AnchorRow = image.AnchorRow - firstRow };
         }
 
-        return result.ToArray();
+        return result;
     }
 
     private void PruneEvictedImages()
     {
+        if (_images.Count == 0)
+        {
+            return;
+        }
+
+        var primaryVersion = _primary.ImageAnchorLayoutVersion;
+        var alternateVersion = _alternate.ImageAnchorLayoutVersion;
+        if (_lastPrunedPrimaryLayoutVersion == primaryVersion &&
+            _lastPrunedAlternateLayoutVersion == alternateVersion)
+        {
+            return;
+        }
+
         for (var index = _images.Count - 1; index >= 0; index--)
         {
             var image = _images[index];
@@ -2124,9 +2480,12 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
                 continue;
             }
 
-            _retainedImageBytes -= ImageByteSize(image);
+            ReleaseOverlayBytes(image);
             _images.RemoveAt(index);
         }
+
+        _lastPrunedPrimaryLayoutVersion = primaryVersion;
+        _lastPrunedAlternateLayoutVersion = alternateVersion;
     }
 
     private static long ImageByteSize(TerminalImageOverlay image) =>
@@ -2340,7 +2699,7 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
             {
                 if (privateMarker == (byte)'?')
                 {
-                    Respond("\u001b[?0u");
+                    ResponseReady?.Invoke(this, (byte[])KittyKeyboardQueryResponses[0].Clone());
                 }
 
                 return privateMarker is (byte)'?' or (byte)'>' or (byte)'<' or (byte)'=';
@@ -2354,32 +2713,58 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
             switch (privateMarker)
             {
                 case (byte)'?':
-                    Respond($"\u001b[?{(int)_kittyKeyboardFlags}u");
-                    return true;
-                case (byte)'>':
-                    if (_kittyKeyboardStack.Count < 16)
+                    var flagIndex = (int)ActiveKittyKeyboardFlags;
+                    if ((uint)flagIndex < (uint)KittyKeyboardQueryResponses.Length)
                     {
-                        _kittyKeyboardStack.Push(_kittyKeyboardFlags);
+                        ResponseReady?.Invoke(this, (byte[])KittyKeyboardQueryResponses[flagIndex].Clone());
+                    }
+                    else
+                    {
+                        Respond($"\u001b[?{flagIndex}u");
                     }
 
-                    _kittyKeyboardFlags = (KittyKeyboardFlags)Param(parameters, 0, 0) & supported;
+                    return true;
+                case (byte)'>':
+                    var pushStack = ActiveKittyKeyboardStack;
+                    if (pushStack.Count == 16)
+                    {
+                        pushStack.RemoveAt(0);
+                    }
+
+                    pushStack.Add(ActiveKittyKeyboardFlags);
+                    ActiveKittyKeyboardFlags = (KittyKeyboardFlags)Param(parameters, 0, 0) & supported;
                     return true;
                 case (byte)'<':
+                    var popStack = ActiveKittyKeyboardStack;
                     var count = Math.Max(1, Param(parameters, 0, 1));
-                    while (count-- > 0 && _kittyKeyboardStack.TryPop(out var restored))
+                    if (count > popStack.Count)
                     {
-                        _kittyKeyboardFlags = restored;
+                        popStack.Clear();
+                        ActiveKittyKeyboardFlags = KittyKeyboardFlags.None;
+                    }
+                    else
+                    {
+                        var newCount = popStack.Count - count;
+                        ActiveKittyKeyboardFlags = popStack[newCount];
+                        popStack.RemoveRange(newCount, count);
                     }
 
                     return true;
                 case (byte)'=':
                     var flags = (KittyKeyboardFlags)Param(parameters, 0, 0) & supported;
-                    _kittyKeyboardFlags = Param(parameters, 1, 1) switch
+                    switch (Param(parameters, 1, 1))
                     {
-                        2 => _kittyKeyboardFlags | flags,
-                        3 => _kittyKeyboardFlags & ~flags,
-                        _ => flags,
-                    };
+                        case 1:
+                            ActiveKittyKeyboardFlags = flags;
+                            break;
+                        case 2:
+                            ActiveKittyKeyboardFlags |= flags;
+                            break;
+                        case 3:
+                            ActiveKittyKeyboardFlags &= ~flags;
+                            break;
+                    }
+
                     return true;
                 default:
                     return false;
@@ -2520,12 +2905,67 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
             return;
         }
 
+        if (privateMarker == (byte)'?' && intermediate == 0 && final == 'S')
+        {
+            DispatchXtsmGraphics(parameters);
+            return;
+        }
+
         if (privateMarker != 0)
         {
             return;
         }
 
         DispatchPlainCsi(final, parameters, subparameters);
+    }
+
+    private void DispatchXtsmGraphics(ReadOnlySpan<int> parameters)
+    {
+        if (ResponseReady is not { } handler)
+        {
+            return;
+        }
+
+        var item = Param(parameters, 0, 0);
+        var action = Param(parameters, 1, 0);
+        Span<byte> buffer = stackalloc byte[48];
+        int written;
+        switch (item)
+        {
+            case 1:
+                written = action is >= 1 and <= 4
+                    ? CopyLiteral("\u001b[?1;0;256S"u8, buffer)
+                    : CopyLiteral("\u001b[?1;2S"u8, buffer);
+                break;
+            case 2:
+                if (action is >= 1 and <= 3)
+                {
+                    var width = Math.Clamp((int)Math.Round(_cellWidth * Columns), 1, TerminalImageLimits.MaximumPixelDimension);
+                    var height = Math.Clamp((int)Math.Round(_cellHeight * Rows), 1, TerminalImageLimits.MaximumPixelDimension);
+                    Utf8.TryWrite(buffer, $"\u001b[?2;0;{width};{height}S", out written);
+                }
+                else if (action == 4)
+                {
+                    Utf8.TryWrite(buffer, $"\u001b[?2;0;{TerminalImageLimits.MaximumPixelDimension};{TerminalImageLimits.MaximumPixelDimension}S", out written);
+                }
+                else
+                {
+                    written = CopyLiteral("\u001b[?2;2S"u8, buffer);
+                }
+
+                break;
+            default:
+                Utf8.TryWrite(buffer, $"\u001b[?{Math.Max(0, item)};1S", out written);
+                break;
+        }
+
+        handler.Invoke(this, buffer[..written].ToArray());
+
+        static int CopyLiteral(ReadOnlySpan<byte> literal, Span<byte> destination)
+        {
+            literal.CopyTo(destination);
+            return literal.Length;
+        }
     }
 
     // The sequences without a private marker. The ones with an intermediate that
@@ -2568,7 +3008,9 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
                 Buffer.Tab(Count(parameters));
                 break;
             case 'J':
-                Buffer.EraseInDisplay(Param(parameters, 0, 0));
+                var eraseMode = Param(parameters, 0, 0);
+                Buffer.EraseInDisplay(eraseMode);
+                RemoveErasedDisplayImages(eraseMode);
                 break;
             case 'K':
                 Buffer.EraseInLine(Param(parameters, 0, 0));
@@ -2859,6 +3301,12 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
                 case 1007:
                     _alternateScroll = enable;
                     break;
+                case 1070:
+                    _sixelPrivateColorRegisters = enable;
+                    break;
+                case 8452:
+                    _sixelScrollingLeavesCursorRight = enable;
+                    break;
                 case 2004:
                     BracketedPaste = enable;
                     break;
@@ -2900,6 +3348,8 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
             if (clearOnEnter)
             {
                 _alternate.Reset(keepHistory: false);
+                _alternateKittyKeyboardFlags = KittyKeyboardFlags.None;
+                _alternateKittyKeyboardStack.Clear();
                 RemoveImages(alternateBuffer: true);
             }
 
@@ -2931,11 +3381,59 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
             }
 
             var image = _images[index];
-            _retainedImageBytes -= ImageByteSize(image);
+            ReleaseOverlayBytes(image);
             _images.RemoveAt(index);
         }
 
-        ReapKittyImageStore();
+        ReapUnplacedKittyImages(onlyCreatedOnAlternateBuffer: alternateBuffer);
+    }
+
+    private void RemoveErasedDisplayImages(int eraseMode)
+    {
+        if (_images.Count == 0)
+        {
+            return;
+        }
+
+        PruneEvictedImages();
+        if (eraseMode is not (0 or 1 or 2))
+        {
+            return;
+        }
+
+        var activeAlt = AlternateBufferActive;
+        var viewportStart = Buffer.ViewportStart;
+        var rows = Buffer.Rows;
+        var cursorX = Buffer.CursorX;
+        var cursorY = Buffer.CursorY;
+        for (var index = _images.Count - 1; index >= 0; index--)
+        {
+            var image = _images[index];
+            if (image.AlternateBuffer != activeAlt)
+            {
+                continue;
+            }
+
+            var viewportRow = image.AnchorRow - viewportStart;
+            if (viewportRow < 0 || viewportRow >= rows)
+            {
+                continue;
+            }
+
+            var shouldRemove = eraseMode switch
+            {
+                2 => true,
+                1 => viewportRow < cursorY || (viewportRow == cursorY && image.AnchorColumn <= cursorX),
+                _ => viewportRow > cursorY || (viewportRow == cursorY && image.AnchorColumn >= cursorX),
+            };
+            if (!shouldRemove)
+            {
+                continue;
+            }
+
+            ReleaseOverlayBytes(image);
+            _images.RemoveAt(index);
+        }
     }
 
     private void RepeatLastCharacter(int count)
@@ -3164,8 +3662,7 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         NewLineMode = false;
         ReverseVideo = false;
         AnsiMode = true;
-        _kittyKeyboardFlags = KittyKeyboardFlags.None;
-        _kittyKeyboardStack.Clear();
+        ResetAllKittyKeyboardState();
         _modifyOtherKeys = 0;
         _win32InputMode = false;
         _cursorStyle = 0;
@@ -3173,6 +3670,9 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         _alternateScroll = false;
         _inBandResize = false;
         _sixelDisplayMode = false;
+        _sixelPrivateColorRegisters = false;
+        _sixelScrollingLeavesCursorRight = false;
+        ResetKittyChunkState();
         _vt52Graphics = false;
         _rectangularAttributeExtent = false;
         _sgr = CellAttributes.Default;
@@ -3304,6 +3804,8 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
             1004 => FocusTracking ? 1 : 2,
             1006 => SgrMouse ? 1 : 2,
             1007 => _alternateScroll ? 1 : 2,
+            1070 => _sixelPrivateColorRegisters ? 1 : 2,
+            8452 => _sixelScrollingLeavesCursorRight ? 1 : 2,
             2004 => BracketedPaste ? 1 : 2,
             2026 => _synchronizedOutputDepth > 0 ? 1 : 2,
             2048 => _inBandResize ? 1 : 2,

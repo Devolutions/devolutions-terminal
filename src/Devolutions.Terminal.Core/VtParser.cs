@@ -17,6 +17,15 @@ public sealed class VtParser
     private const int MaxDcsIntermediates = 2;
     private const int MaxEscIntermediates = 3;
 
+    private static readonly SearchValues<byte> StringControlBytes = SearchValues.Create(
+    [
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+        0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
+        0x7F,
+    ]);
+
     private enum State
     {
         Ground,
@@ -54,7 +63,9 @@ public sealed class VtParser
     private bool _nextIsSubparameter;
     private readonly List<byte> _osc = [];
     private readonly List<byte> _apc = [];
-    private readonly List<byte> _dcs = [];
+    private List<byte> _dcs = [];
+    private List<byte> _dcsDispatchScratch = [];
+    private int _dcsDispatchDepth;
     private readonly byte[] _dcsIntermediates = new byte[MaxDcsIntermediates];
     private readonly byte[] _escIntermediates = new byte[MaxEscIntermediates];
     private State _state;
@@ -68,9 +79,13 @@ public sealed class VtParser
     private bool _dcsEscapeCanDispatch;
     private byte _vt52Row;
     private bool _ansiMode = true;
+    private bool _stringIgnoreAllowsBel;
     private int _utf8Needed;
     private int _utf8Accumulator;
     private int _utf8Minimum;
+
+    internal bool IsInDcs =>
+        _state is State.DcsEntry or State.DcsParam or State.DcsIntermediate or State.DcsPassthrough or State.DcsIgnore;
 
     public VtParser(IVtDispatch dispatch)
     {
@@ -98,6 +113,58 @@ public sealed class VtParser
                 _dispatch.PrintAscii(data.Slice(index, run));
                 index += run;
                 continue;
+            }
+
+            if (_state == State.DcsPassthrough)
+            {
+                var remaining = data[index..];
+                var run = remaining.IndexOfAny(StringControlBytes);
+                if (run < 0)
+                {
+                    run = remaining.Length;
+                }
+
+                if (run > 0)
+                {
+                    if (_dcs.Count + run <= MaxDcsPayloadBytes)
+                    {
+                        _dcs.AddRange(remaining[..run]);
+                    }
+                    else
+                    {
+                        _dcs.Clear();
+                        _state = State.DcsIgnore;
+                    }
+
+                    index += run;
+                    continue;
+                }
+            }
+            else if (_state == State.ApcString)
+            {
+                var remaining = data[index..];
+                var run = remaining.IndexOfAny(StringControlBytes);
+                if (run < 0)
+                {
+                    run = remaining.Length;
+                }
+
+                if (run > 0)
+                {
+                    if (_apc.Count + run <= MaxStringBytes)
+                    {
+                        _apc.AddRange(remaining[..run]);
+                    }
+                    else
+                    {
+                        _apc.Clear();
+                        _stringIgnoreAllowsBel = false;
+                        _state = State.StringIgnore;
+                    }
+
+                    index += run;
+                    continue;
+                }
             }
 
             if (data[index] >= 0xC2 && _state == State.Ground && _utf8Needed == 0)
@@ -456,6 +523,7 @@ public sealed class VtParser
         ClearDcs();
         ResetUtf8();
         _ansiMode = true;
+        _stringIgnoreAllowsBel = false;
     }
 
     private void ProcessByte(byte value)
@@ -542,7 +610,7 @@ public sealed class VtParser
             {
                 _state = State.StringEscape;
             }
-            else if (value == 0x07)
+            else if (_stringIgnoreAllowsBel && value == 0x07)
             {
                 _state = State.Ground;
             }
@@ -557,9 +625,15 @@ public sealed class VtParser
                 _state = State.Ground;
                 _dispatch.ExecuteC0(value);
             }
+            else if (value == (byte)'\\')
+            {
+                _state = State.Ground;
+            }
             else
             {
-                _state = value == (byte)'\\' ? State.Ground : State.StringIgnore;
+                _state = State.Escape;
+                ClearSequence();
+                ProcessByte(value);
             }
 
             return;
@@ -701,6 +775,7 @@ public sealed class VtParser
 
         if (value is 0x98 or 0x9E)
         {
+            _stringIgnoreAllowsBel = false;
             _state = State.StringIgnore;
             return;
         }
@@ -767,6 +842,7 @@ public sealed class VtParser
                 break;
             case (byte)'X':
             case (byte)'^':
+                _stringIgnoreAllowsBel = false;
                 _state = State.StringIgnore;
                 break;
             case (byte)'_':
@@ -972,6 +1048,7 @@ public sealed class VtParser
         else
         {
             _osc.Clear();
+            _stringIgnoreAllowsBel = true;
             _state = State.StringIgnore;
         }
     }
@@ -1036,7 +1113,7 @@ public sealed class VtParser
         {
             _state = State.ApcEscape;
         }
-        else if (value >= 0x20 || value == 0x09)
+        else if (value is >= 0x20 and not 0x7F || value == 0x09)
         {
             AppendApc(value);
         }
@@ -1051,16 +1128,33 @@ public sealed class VtParser
         else
         {
             _apc.Clear();
+            _stringIgnoreAllowsBel = false;
             _state = State.StringIgnore;
         }
     }
 
     private void FinishApc()
     {
-        var text = Encoding.UTF8.GetString(_apc.ToArray());
+        var apcSpan = CollectionsMarshal.AsSpan(_apc);
+        if (apcSpan.IsEmpty)
+        {
+            _state = State.Ground;
+            _dispatch.ApcDispatch(ReadOnlySpan<char>.Empty);
+            return;
+        }
+
+        var rented = ArrayPool<char>.Shared.Rent(apcSpan.Length);
+        var charCount = Encoding.UTF8.GetChars(apcSpan, rented);
         _apc.Clear();
         _state = State.Ground;
-        _dispatch.ApcDispatch(text);
+        try
+        {
+            _dispatch.ApcDispatch(rented.AsSpan(0, charCount));
+        }
+        finally
+        {
+            ArrayPool<char>.Shared.Return(rented);
+        }
     }
 
     private void EnterDcs()
@@ -1254,12 +1348,64 @@ public sealed class VtParser
         }
 
         var final = (char)_dcsFinal;
-        var parameters = _parameters.AsSpan(0, _parameterCount).ToArray();
-        var intermediates = _dcsIntermediates.AsSpan(0, _dcsIntermediateCount).ToArray();
+        var parameterCount = _parameterCount;
+        Span<int> parameters = stackalloc int[MaxParameters];
+        _parameters.AsSpan(0, parameterCount).CopyTo(parameters);
+
+        var intermediateCount = _dcsIntermediateCount;
+        Span<byte> intermediates = stackalloc byte[MaxDcsIntermediates];
+        _dcsIntermediates.AsSpan(0, intermediateCount).CopyTo(intermediates);
+
         var privateMarker = _privateMarker;
-        var data = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_dcs).ToArray();
-        CancelDcs();
-        _dispatch.DcsDispatch(final, parameters, intermediates, privateMarker, data);
+        if (_dcsDispatchDepth == 0)
+        {
+            var payloadList = _dcs;
+            _dcs = _dcsDispatchScratch;
+            _dcsDispatchScratch = payloadList;
+            CancelDcs();
+            _dcsDispatchDepth++;
+            try
+            {
+                _dispatch.DcsDispatch(
+                    final,
+                    parameters[..parameterCount],
+                    intermediates[..intermediateCount],
+                    privateMarker,
+                    CollectionsMarshal.AsSpan(payloadList));
+            }
+            finally
+            {
+                _dcsDispatchDepth--;
+                payloadList.Clear();
+                if (payloadList.Capacity > 256 * 1024)
+                {
+                    payloadList.TrimExcess();
+                }
+            }
+        }
+        else
+        {
+            var dcsSpan = CollectionsMarshal.AsSpan(_dcs);
+            var dataLength = dcsSpan.Length;
+            var rented = ArrayPool<byte>.Shared.Rent(dataLength);
+            dcsSpan.CopyTo(rented);
+            CancelDcs();
+            _dcsDispatchDepth++;
+            try
+            {
+                _dispatch.DcsDispatch(
+                    final,
+                    parameters[..parameterCount],
+                    intermediates[..intermediateCount],
+                    privateMarker,
+                    rented.AsSpan(0, dataLength));
+            }
+            finally
+            {
+                _dcsDispatchDepth--;
+                ArrayPool<byte>.Shared.Return(rented);
+            }
+        }
     }
 
     private void CancelDcs()

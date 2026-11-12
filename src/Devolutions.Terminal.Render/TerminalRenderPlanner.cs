@@ -38,11 +38,52 @@ public static class TerminalRenderPlanner
         {
             CursorStyle = options.CursorStyle,
             CursorHeightPercentage = Math.Clamp(options.CursorHeightPercentage, 1, 100),
-            Images = snapshot.Images
-                .Where(image => image.AlternateBuffer == snapshot.AlternateBufferActive)
-                .ToArray(),
+            Images = FilterActiveBufferImages(snapshot.Images, snapshot.AlternateBufferActive),
             DrcsGlyphs = snapshot.DrcsGlyphs,
         };
+    }
+
+    private static IReadOnlyList<TerminalImageOverlay> FilterActiveBufferImages(
+        IReadOnlyList<TerminalImageOverlay> images,
+        bool alternateBufferActive)
+    {
+        var count = images.Count;
+        if (count == 0)
+        {
+            return [];
+        }
+
+        var matching = 0;
+        for (var i = 0; i < count; i++)
+        {
+            if (images[i].AlternateBuffer == alternateBufferActive)
+            {
+                matching++;
+            }
+        }
+
+        if (matching == 0)
+        {
+            return [];
+        }
+
+        if (matching == count)
+        {
+            return images;
+        }
+
+        var filtered = new TerminalImageOverlay[matching];
+        var writeIndex = 0;
+        for (var i = 0; i < count; i++)
+        {
+            var image = images[i];
+            if (image.AlternateBuffer == alternateBufferActive)
+            {
+                filtered[writeIndex++] = image;
+            }
+        }
+
+        return filtered;
     }
 
     public static ResolvedCellAttributes Resolve(

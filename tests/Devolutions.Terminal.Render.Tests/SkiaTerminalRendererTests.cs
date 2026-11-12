@@ -780,6 +780,191 @@ public sealed class SkiaTerminalRendererTests
         Assert.Equal(new SKColor(12, 12, 12), bitmap.GetPixel(9, 9));
     }
 
+    [Fact]
+    public void PartialKittyCropWithoutExplicitHeightAndOutOfBoundsCropBehavePerSpec()
+    {
+        var pixels = new byte[]
+        {
+            255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+        };
+        var engine = new TerminalEngine(16, 2);
+        // X=1,w=1 with h omitted (0) must crop to green pixel; X=10 out-of-bounds must draw nothing.
+        engine.Feed($"\u001b_Ga=T,f=32,s=4,v=1,i=1,X=1,w=1,c=1,r=1,C=1;{Convert.ToBase64String(pixels)}\u001b\\");
+        engine.Feed($"\u001b[3G\u001b_Ga=p,i=1,p=2,X=10,w=1,c=1,r=1\u001b\\");
+        var frame = TerminalRenderPlanner.Create(engine.CreateSnapshot(), engine.Scheme);
+        using var renderer = new SkiaTerminalRenderer();
+        using var bitmap = NewBitmap(renderer, frame);
+        using var canvas = new SKCanvas(bitmap);
+
+        DrawImageFrame(renderer, canvas, frame);
+
+        Assert.Equal(SKColors.Lime, bitmap.GetPixel(8 + ((int)renderer.CellSize.Width / 2), 8 + ((int)renderer.CellSize.Height / 2)));
+        Assert.Equal(new SKColor(12, 12, 12), bitmap.GetPixel(8 + (2 * (int)renderer.CellSize.Width) + 2, 8 + 2));
+    }
+
+    [Fact]
+    public void ImageExtendingPastViewportBottomClipsInsteadOfSquishing()
+    {
+        // Top half red (20px), bottom half blue (20px) -> 40px tall on a 1-row (~20px) viewport.
+        var pixels = new byte[4 * 40 * 4];
+        for (var y = 0; y < 40; y++)
+        {
+            for (var x = 0; x < 4; x++)
+            {
+                var offset = ((y * 4) + x) * 4;
+                pixels[offset] = y < 20 ? (byte)255 : (byte)0;
+                pixels[offset + 2] = y < 20 ? (byte)0 : (byte)255;
+                pixels[offset + 3] = 255;
+            }
+        }
+
+        var engine = new TerminalEngine(8, 1);
+        engine.Feed($"\u001b_Ga=T,f=32,s=4,v=40,i=1,C=1;{Convert.ToBase64String(pixels)}\u001b\\");
+        var frame = TerminalRenderPlanner.Create(engine.CreateSnapshot(), engine.Scheme);
+        using var renderer = new SkiaTerminalRenderer();
+        using var bitmap = NewBitmap(renderer, frame);
+        using var canvas = new SKCanvas(bitmap);
+
+        DrawImageFrame(renderer, canvas, frame);
+
+        // Bottom of row 0 is still within top 20px of image (red), not squished blue.
+        var nearBottom = bitmap.GetPixel(9, 8 + Math.Min(18, (int)renderer.CellSize.Height - 2));
+        Assert.True(nearBottom.Red > 200 && nearBottom.Blue < 30, $"expected red, got {nearBottom}");
+    }
+
+    [Fact]
+    public void NegativeZIndexKittyPlacementsSortLowestFirst()
+    {
+        var red = new byte[] { 255, 0, 0, 255 };
+        var blue = new byte[] { 0, 0, 255, 255 };
+        var engine = new TerminalEngine(8, 2);
+        // Added first with z=-1, added second with z=-10 -> z=-1 must remain on top of z=-10.
+        engine.Feed($"\u001b_Ga=T,f=32,s=1,v=1,i=1,z=-1,c=1,r=1,C=1;{Convert.ToBase64String(red)}\u001b\\");
+        engine.Feed($"\u001b_Ga=T,f=32,s=1,v=1,i=2,z=-10,c=1,r=1,C=1;{Convert.ToBase64String(blue)}\u001b\\");
+        var frame = TerminalRenderPlanner.Create(engine.CreateSnapshot(), engine.Scheme);
+        using var renderer = new SkiaTerminalRenderer();
+        using var bitmap = NewBitmap(renderer, frame);
+        using var canvas = new SKCanvas(bitmap);
+
+        DrawImageFrame(renderer, canvas, frame);
+
+        Assert.Equal(SKColors.Red, bitmap.GetPixel(9, 9));
+    }
+
+    [Fact]
+    public void KittyNaturalSizeConvertsPhysicalPixelsToDipsAndClampsCellOffsets()
+    {
+        var red = Enumerable.Repeat(new byte[] { 255, 0, 0, 255 }, 100).SelectMany(static b => b).ToArray();
+        var engine = new TerminalEngine(16, 4);
+        // 10x10 physical pixels at scale=2 -> 5x5 DIPs; huge x=9999 clamps inside cell 0.
+        engine.Feed($"\u001b_Ga=T,f=32,s=10,v=10,i=1,C=1;{Convert.ToBase64String(red)}\u001b\\");
+        engine.Feed($"\u001b[3G\u001b_Ga=p,i=1,p=2,x=9999\u001b\\");
+        var frame = TerminalRenderPlanner.Create(engine.CreateSnapshot(), engine.Scheme);
+        using var renderer = new SkiaTerminalRenderer();
+        renderer.Resize(new RenderViewport(frame.Columns, frame.Rows, 2));
+        using var bitmap = NewBitmap(renderer, frame);
+        using var canvas = new SKCanvas(bitmap);
+
+        renderer.Render(
+            canvas, frame, TerminalRenderOverlays.Empty,
+            new SKRect(0, 0, bitmap.Width, bitmap.Height), 8, drawCursor: false);
+
+        Assert.Equal(SKColors.Red, bitmap.GetPixel(8 + 2, 8 + 2));
+        Assert.Equal(new SKColor(12, 12, 12), bitmap.GetPixel(8 + 7, 8 + 2));
+        // Clamped x=9999 stays near right edge of cell 2 rather than disappearing off-screen.
+        var cell2Right = 8 + (int)Math.Floor(3 * renderer.CellSize.Width);
+        Assert.Equal(SKColors.Red, bitmap.GetPixel(cell2Right, 8 + 2));
+    }
+
+    [Fact]
+    public void InvalidateClearsCachedImageState()
+    {
+        // 1025 x 1025 x 4 = 4,202,500 bytes > 4 MiB minimum DecodedImageCacheByteCapacity.
+        var red = new byte[1025 * 1025 * 4];
+        for (var i = 0; i < red.Length; i += 4)
+        {
+            red[i] = 255;
+            red[i + 3] = 255;
+        }
+
+        var overlay = new TerminalImageOverlay(1, TerminalImageProtocol.KittyGraphics, false, 0, 0, null, null)
+        {
+            Kitty = new KittyImage(1, 1, new KittyImageData(1025, 1025, red)) { Columns = 1, Rows = 1 },
+        };
+        var engine = new TerminalEngine(8, 2);
+        var frame = TerminalRenderPlanner.Create(engine.CreateSnapshot(), engine.Scheme) with
+        {
+            Images = [overlay],
+        };
+
+        using var renderer = new SkiaTerminalRenderer(new TerminalRendererSettings { DecodedImageCacheByteCapacity = 4 * 1024 * 1024 });
+        using var bitmap = NewBitmap(renderer, frame);
+        using var canvas = new SKCanvas(bitmap);
+        DrawImageFrame(renderer, canvas, frame);
+        Assert.Equal(new SKColor(12, 12, 12), bitmap.GetPixel(9, 9));
+
+        renderer.Invalidate();
+        renderer.Configure(new TerminalRendererSettings { DecodedImageCacheByteCapacity = 8 * 1024 * 1024 });
+        DrawImageFrame(renderer, canvas, frame);
+        Assert.Equal(SKColors.Red, bitmap.GetPixel(9, 9));
+    }
+
+    [Fact]
+    public void SharedKittySpritesheetDecodesOnceAcrossMultiplePlacements()
+    {
+        // 1025x1025x4 = 4.2 MB; two placements fit inside 5 MB cache only if they share one decoded SKBitmap.
+        var green = new byte[1025 * 1025 * 4];
+        for (var i = 0; i < green.Length; i += 4)
+        {
+            green[i + 1] = 255;
+            green[i + 3] = 255;
+        }
+
+        var sharedData = new KittyImageData(1025, 1025, green);
+        var engine = new TerminalEngine(8, 2);
+        var frame = TerminalRenderPlanner.Create(engine.CreateSnapshot(), engine.Scheme) with
+        {
+            Images =
+            [
+                new TerminalImageOverlay(1, TerminalImageProtocol.KittyGraphics, false, 0, 0, null, null)
+                {
+                    Kitty = new KittyImage(1, 1, sharedData) { Columns = 1, Rows = 1 },
+                },
+                new TerminalImageOverlay(2, TerminalImageProtocol.KittyGraphics, false, 2, 0, null, null)
+                {
+                    Kitty = new KittyImage(1, 2, sharedData) { Columns = 1, Rows = 1 },
+                },
+            ],
+        };
+
+        using var renderer = new SkiaTerminalRenderer(new TerminalRendererSettings { DecodedImageCacheByteCapacity = 5 * 1024 * 1024 });
+        using var bitmap = NewBitmap(renderer, frame);
+        using var canvas = new SKCanvas(bitmap);
+        DrawImageFrame(renderer, canvas, frame);
+
+        Assert.Equal(SKColors.Lime, bitmap.GetPixel(9, 9));
+        Assert.Equal(SKColors.Lime, bitmap.GetPixel(8 + (2 * (int)renderer.CellSize.Width) + 1, 9));
+    }
+
+    [Fact]
+    public void RendersOpaqueJpegViaKittyEncodedFormat()
+    {
+        using var source = new SKBitmap(8, 8);
+        source.Erase(SKColors.Red);
+        using var jpeg = source.Encode(SKEncodedImageFormat.Jpeg, 100);
+        var engine = new TerminalEngine(16, 2);
+        engine.Feed($"\u001b_Ga=T,f=100,i=1,c=1,r=1,C=1;{Convert.ToBase64String(jpeg.ToArray())}\u001b\\");
+        var frame = TerminalRenderPlanner.Create(engine.CreateSnapshot(), engine.Scheme);
+        using var renderer = new SkiaTerminalRenderer();
+        using var bitmap = NewBitmap(renderer, frame);
+        using var canvas = new SKCanvas(bitmap);
+
+        DrawImageFrame(renderer, canvas, frame);
+
+        var pixel = bitmap.GetPixel(9, 9);
+        Assert.True(pixel.Red > 200 && pixel.Green < 40 && pixel.Blue < 40, $"expected red JPEG pixel, got {pixel}");
+    }
+
     private static void DrawImageFrame(
         SkiaTerminalRenderer renderer,
         SKCanvas canvas,

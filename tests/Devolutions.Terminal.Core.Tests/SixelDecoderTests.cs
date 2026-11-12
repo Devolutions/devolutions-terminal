@@ -179,4 +179,70 @@ public sealed class SixelDecoderTests
         Assert.True(decoder.TryDecode("#5~"u8, 7, 1, 0, out var after));
         Assert.Equal(0xFFFF0000u, after!.Palette.Span[5]);
     }
+
+    [Fact]
+    public void FormattedWhitespaceInsideRepeatAndParametersIsIgnored()
+    {
+        var decoder = new SixelDecoder();
+
+        Assert.True(decoder.TryDecode("#2;2;100;\r\n0;0!4\r\n ~"u8, 7, 1, 0, out var image));
+
+        Assert.NotNull(image);
+        Assert.Equal(4, image.Width);
+        Assert.Equal(0xFFFF0000u, image.Palette.Span[2]);
+    }
+
+    [Fact]
+    public void LeadingSemicolonInParametersDoesNotShiftIndices()
+    {
+        var decoder = new SixelDecoder();
+
+        Assert.True(decoder.TryDecode("\";;5;12#;2;0;100;0~"u8, 0, 1, 0, out var image));
+
+        Assert.NotNull(image);
+        Assert.Equal(5, image.Width);
+        Assert.Equal(12, image.Height);
+        Assert.Equal(2, image.PixelAspectRatio);
+        Assert.Equal(0xFF00FF00u, image.Palette.Span[0]);
+    }
+
+    [Fact]
+    public void RasterAttributesDefaultOmittedDenominatorAndIgnoreMidStreamChanges()
+    {
+        var decoder = new SixelDecoder();
+
+        Assert.True(decoder.TryDecode("\"3~\"1;1;10;10~"u8, 7, 1, 0, out var image));
+
+        Assert.NotNull(image);
+        Assert.Equal(2, image.Width);
+        Assert.Equal(18, image.Height);
+        Assert.Equal(3, image.PixelAspectRatio);
+    }
+
+    [Fact]
+    public void RejectsExcessiveEmptySixelRepeats()
+    {
+        var decoder = new SixelDecoder();
+        var command = "!4096?$"u8.ToArray();
+        var repetitions = (TerminalImageLimits.MaximumSixelPixelWrites / 4096) + 2;
+        var payload = new byte[command.Length * repetitions];
+        for (var offset = 0; offset < payload.Length; offset += command.Length)
+        {
+            command.CopyTo(payload, offset);
+        }
+
+        Assert.False(decoder.TryDecode(payload, 7, 1, 0, out _));
+    }
+
+    [Fact]
+    public void ColorRegisterIndexAndHlsHueWrapModuloRange()
+    {
+        var decoder = new SixelDecoder();
+
+        Assert.True(decoder.TryDecode("#258;1;480;50;100~"u8, 7, 1, 0, out var image));
+
+        Assert.NotNull(image);
+        Assert.Equal(0xFFFF0000u, image.Palette.Span[2]);
+        Assert.Equal((ushort)2, image.PixelIndices.Span[0]);
+    }
 }

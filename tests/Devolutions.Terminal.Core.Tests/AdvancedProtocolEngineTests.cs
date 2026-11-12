@@ -870,4 +870,123 @@ public sealed class AdvancedProtocolEngineTests
         Assert.Equal("\u001b[?69;1$y", responses[0]);
         Assert.Equal("\u001bP1$r5;20s\u001b\\", responses[1]);
     }
+
+    [Fact]
+    public void MultiLineFormattedSixelDoesNotExecuteC0LineFeedsDuringDcs()
+    {
+        var engine = new TerminalEngine(10, 4);
+        engine.Feed("\u001b[2;3H\u001b[?80l\u001bP7q#2;2;100;0;0\r\n!3~\r\n\u001b\\");
+
+        var overlay = Assert.Single(engine.Images);
+        Assert.Equal(2, overlay.AnchorColumn);
+        Assert.Equal(1, overlay.AnchorRow);
+        Assert.Equal(1, engine.CursorY);
+    }
+
+    [Fact]
+    public void SixelResolvesPendingWrapAndReportsPostScrollAnchorRow()
+    {
+        var engine = new TerminalEngine(4, 2, historySize: 1);
+        TerminalImageOverlay? added = null;
+        engine.ImageAdded += (_, image) => added = image;
+
+        engine.Feed("1234\r\nabcd");
+        Assert.True(engine.Buffer.WrapPending);
+
+        engine.Feed("\u001bP7q\"1;1;1;40~\u001b\\");
+
+        Assert.NotNull(added);
+        Assert.False(engine.Buffer.WrapPending);
+        Assert.Equal(0, added.AnchorColumn);
+        Assert.Equal(engine.Images[^1].AnchorRow, added.AnchorRow);
+    }
+
+    [Fact]
+    public void XtsmGraphicsReportsColorRegistersAndPixelGeometry()
+    {
+        var engine = new TerminalEngine(80, 24);
+        engine.Resize(80, 24, 10, 20);
+        var responses = new List<string>();
+        engine.ResponseReady += (_, bytes) => responses.Add(Encoding.ASCII.GetString(bytes));
+
+        engine.Feed("\u001b[?1;1;0S\u001b[?2;1;0S\u001b[?2;4;0S\u001b[?3;1;0S");
+
+        Assert.Equal(
+            ["\u001b[?1;0;256S", "\u001b[?2;0;800;480S", "\u001b[?2;0;4096;4096S", "\u001b[?3;1S"],
+            responses);
+    }
+
+    [Fact]
+    public void SixelPrivateColorRegistersAndCursorRightModesAndDecomOriginWork()
+    {
+        var engine = new TerminalEngine(20, 6);
+        var responses = new List<string>();
+        engine.ResponseReady += (_, bytes) => responses.Add(Encoding.ASCII.GetString(bytes));
+
+        engine.Feed("\u001b[?1070h\u001b[?8452h\u001b[?1070$p\u001b[?8452$p");
+        engine.Feed("\u001b[1;3H\u001bP7q#5;2;100;0;0!25~\u001b\\");
+        // 25px wide = 3 sixel cells -> CursorX moves from col 2 to col 5; private palette leaves next image default.
+        Assert.Equal(5, engine.CursorX);
+        engine.Feed("\u001bP7q#5~\u001b\\");
+        Assert.NotEqual(0xFFFF0000u, engine.Images[^1].Sixel!.Palette.Span[5]);
+        Assert.Equal(["\u001b[?1070;1$y", "\u001b[?8452;1$y"], responses);
+
+        // DECSDM + DECOM places Sixel at scroll-region home.
+        engine.Feed("\u001b[3;5r\u001b[?6h\u001b[?80h\u001bP7q~\u001b\\");
+        Assert.Equal(2, engine.Images[^1].AnchorRow);
+    }
+
+    [Fact]
+    public void EraseInDisplayClearsViewportImagesWhilePreservingScrollback()
+    {
+        var engine = new TerminalEngine(10, 2, historySize: 10);
+        engine.Feed("\u001bP7q~\u001b\\\r\none\r\ntwo");
+        // First image scrolled into history; place second image in live viewport.
+        engine.Feed("\u001bP7q~\u001b\\");
+        Assert.Equal(2, engine.Images.Count);
+
+        engine.Feed("\u001b[2J");
+        Assert.Single(engine.Images);
+
+        engine.Feed("\u001b[3J");
+        Assert.Empty(engine.Images);
+    }
+
+    [Fact]
+    public void AlternateBufferNarrowingClampsImageAnchorAndWideningRestoresColumn()
+    {
+        var engine = new TerminalEngine(20, 4);
+        engine.Feed("\u001b[?1049h\u001b[1;15H\u001bP7q~\u001b\\");
+        Assert.Equal(14, Assert.Single(engine.Images).AnchorColumn);
+
+        engine.Resize(8, 4);
+        Assert.Equal(7, Assert.Single(engine.Images).AnchorColumn);
+
+        engine.Resize(20, 4);
+        Assert.Equal(14, Assert.Single(engine.Images).AnchorColumn);
+    }
+
+    [Fact]
+    public void ImageAnchorOnUnwrappedOrClearedLineDoesNotSpillIntoFormerContinuationRow()
+    {
+        // Scenario 1: DECDWL wraps onto row 1, then row 0 returns to DECSWL and places an image at col 50.
+        var engine = new TerminalEngine(80, 6);
+        engine.Feed("\u001b#6" + new string('A', 45));
+        engine.Feed("\u001b[1;1H\u001b#5\u001b[1;51H\u001bP7q~\u001b\\");
+
+        var renditionAnchor = Assert.Single(engine.Images);
+        Assert.Equal(0, renditionAnchor.AnchorRow);
+        Assert.Equal(50, renditionAnchor.AnchorColumn);
+
+        // Scenario 2: Wrapped line cleared by CSI 2 J, widened via Resize, then image placed at col 90.
+        var resized = new TerminalEngine(80, 6);
+        resized.Feed(new string('B', 85));
+        resized.Feed("\u001b[2J");
+        resized.Resize(120, 6);
+        resized.Feed("\u001b[1;91H\u001bP7q~\u001b\\");
+
+        var clearedAnchor = Assert.Single(resized.Images);
+        Assert.Equal(0, clearedAnchor.AnchorRow);
+        Assert.Equal(90, clearedAnchor.AnchorColumn);
+    }
 }
