@@ -526,12 +526,30 @@ public sealed class TermControlOutputPumpTests
 
         public async ValueTask DisposeAsync()
         {
-            _listener.Close();
+            try
+            {
+                _listener.Stop();
+            }
+            catch (Exception)
+            {
+            }
+
             try
             {
                 await _messages.WaitAsync(TimeSpan.FromSeconds(5));
             }
             catch (Exception) when (!_messages.IsCompletedSuccessfully)
+            {
+            }
+
+            try
+            {
+                _listener.Close();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+            catch (HttpListenerException)
             {
             }
         }

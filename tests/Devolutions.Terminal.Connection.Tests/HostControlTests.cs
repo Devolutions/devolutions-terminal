@@ -292,6 +292,7 @@ public sealed class HostControlTests
         private readonly CancellationTokenSource _stop = new();
         private readonly HostSessionBroker _broker;
         private readonly Task _acceptLoop;
+        private readonly System.Collections.Concurrent.ConcurrentBag<Task> _handlers = [];
 
         private ControlServer(HttpListener listener, int port, HostSessionBroker broker)
         {
@@ -323,13 +324,35 @@ public sealed class HostControlTests
         public async ValueTask DisposeAsync()
         {
             await _stop.CancelAsync();
-            _listener.Close();
+            try
+            {
+                _listener.Stop();
+            }
+            catch (Exception)
+            {
+            }
+
             await _broker.DisposeAsync();
             try
             {
                 await _acceptLoop.WaitAsync(TimeSpan.FromSeconds(5));
+                await Task.WhenAll(_handlers).WaitAsync(TimeSpan.FromSeconds(5));
             }
             catch (Exception)
+            {
+            }
+
+            // Managed HttpListener on Unix flushes tracked HttpConnections on Close(),
+            // which throws ObjectDisposedException if an upgraded WebSocket already
+            // disposed the underlying NetworkStream.
+            try
+            {
+                _listener.Close();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+            catch (HttpListenerException)
             {
             }
         }
@@ -348,7 +371,7 @@ public sealed class HostControlTests
                     break;
                 }
 
-                _ = Task.Run(() => HandleAsync(context));
+                _handlers.Add(Task.Run(() => HandleAsync(context)));
             }
         }
 
