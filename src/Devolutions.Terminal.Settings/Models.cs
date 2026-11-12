@@ -361,7 +361,7 @@ public sealed class ProfileSettings
     public string AntialiasingMode { get; set; } = "grayscale";
     public BellStyle BellStyle { get; set; } = BellStyle.Audible;
     public List<MediaResource> BellSound { get; set; } = [];
-    public bool RightClickContextMenu { get; set; }
+    public bool RightClickContextMenu { get; set; } = OperatingSystem.IsMacOS();
     public bool Elevate { get; set; }
     public bool AutoMarkPrompts { get; set; } = true;
     public bool ShowMarksOnScrollbar { get; set; }

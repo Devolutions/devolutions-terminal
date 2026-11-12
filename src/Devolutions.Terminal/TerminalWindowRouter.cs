@@ -45,6 +45,21 @@ internal sealed class TerminalWindowRouter : IBrokerRequestHandler, IDisposable
     public MainWindow CreateInitial(CliInvocation invocation) =>
         CreateWindow(invocation, WindowNameForNewTarget(invocation.TargetWindow));
 
+    public MainWindow CreateNewWindow(ProfileSettings? profile = null)
+    {
+        var content = profile is null
+            ? new NewTerminalArgs()
+            : new NewTerminalArgs(Profile: profile.Guid ?? profile.Name);
+        var activation = new TerminalWindowActivation(
+            null,
+            null,
+            null,
+            null,
+            TerminalWindowLaunchMode.Default,
+            [new ActionAndArgs(ShortcutAction.NewTab, new NewTabArgs(content))]);
+        return CreateWindow(activation, string.Empty);
+    }
+
     public async ValueTask<BrokerDispatchResult> HandleAsync(
         string targetWindow,
         string payload,

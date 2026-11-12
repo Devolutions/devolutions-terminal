@@ -726,4 +726,16 @@ public sealed class SettingsParityTests
         Assert.True(environment.ContainsKey("REMOVE_ME"));
         Assert.Null(environment["REMOVE_ME"]);
     }
+
+    [Fact]
+    public void RightClickContextMenuDefaultsToMacOsAndRespectsExplicitOverride()
+    {
+        var defaultProfile = Assert.Single(SettingsLoader.Load(Defaults).Profiles);
+        Assert.Equal(OperatingSystem.IsMacOS(), defaultProfile.RightClickContextMenu);
+
+        var overriddenFalse = Assert.Single(SettingsLoader.Load(
+            Defaults,
+            """{ "profiles": { "defaults": { "rightClickContextMenu": false } } }""").Profiles);
+        Assert.False(overriddenFalse.RightClickContextMenu);
+    }
 }

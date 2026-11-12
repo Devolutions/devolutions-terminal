@@ -171,6 +171,7 @@ public sealed class HostPtyWebSocketTests
         private readonly Func<IRestartableTerminalConnection>? _connectionFactory;
         private readonly Func<int, int, TerminalLaunchOptions>? _launchOptions;
         private readonly Task _acceptLoop;
+        private readonly System.Collections.Concurrent.ConcurrentBag<Task> _handlers = [];
         private int _completedSessions;
 
         private LoopbackPtyServer(
@@ -204,12 +205,31 @@ public sealed class HostPtyWebSocketTests
         public async ValueTask DisposeAsync()
         {
             await _stop.CancelAsync();
-            _listener.Close();
+            try
+            {
+                _listener.Stop();
+            }
+            catch (Exception)
+            {
+            }
+
             try
             {
                 await _acceptLoop.WaitAsync(TimeSpan.FromSeconds(5));
+                await Task.WhenAll(_handlers).WaitAsync(TimeSpan.FromSeconds(5));
             }
             catch (Exception)
+            {
+            }
+
+            try
+            {
+                _listener.Close();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+            catch (HttpListenerException)
             {
             }
         }
@@ -228,7 +248,7 @@ public sealed class HostPtyWebSocketTests
                     break;
                 }
 
-                _ = Task.Run(() => HandleAsync(context));
+                _handlers.Add(Task.Run(() => HandleAsync(context)));
             }
         }
 

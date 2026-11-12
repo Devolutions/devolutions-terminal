@@ -151,12 +151,30 @@ public sealed class AsciicastWebSocketStreamerTests
 
         public async ValueTask DisposeAsync()
         {
-            _listener.Close();
+            try
+            {
+                _listener.Stop();
+            }
+            catch (Exception)
+            {
+            }
+
             try
             {
                 await _request.WaitAsync(TimeSpan.FromSeconds(5));
             }
             catch (Exception) when (!_request.IsCompletedSuccessfully)
+            {
+            }
+
+            try
+            {
+                _listener.Close();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+            catch (HttpListenerException)
             {
             }
         }

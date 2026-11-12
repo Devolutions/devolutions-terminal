@@ -30,6 +30,7 @@ public sealed class PowerShellIseTab : Decorator, IHostedTerminalContent
         Workbench = control = new WorkbenchControl(new WorkbenchOptions
         {
             Console = console,
+            ShowMenu = !OperatingSystem.IsMacOS(),
             ThemeProvider = dark => ResolveTheme(control?.SelectedThemePreset ?? themeName, dark),
             ThemeChoices = EditorThemePresets.OriginalBuiltIns().Concat(
                 new[] { EditorThemePresets.Classic(), EditorThemePresets.Dark(), EditorThemePresets.Light(),

@@ -551,7 +551,7 @@ public static class SettingsLoader
             AntialiasingMode = String(profile, "antialiasingMode") ?? "grayscale",
             BellStyle = BellStyleValue(profile["bellStyle"]),
             BellSound = Resources(profile["bellSound"]),
-            RightClickContextMenu = Bool(profile, "rightClickContextMenu"),
+            RightClickContextMenu = Bool(profile, "rightClickContextMenu", OperatingSystem.IsMacOS()),
             Elevate = Bool(profile, "elevate"),
             AutoMarkPrompts = Bool(profile, "autoMarkPrompts", true),
             ShowMarksOnScrollbar = Bool(profile, "showMarksOnScrollbar"),

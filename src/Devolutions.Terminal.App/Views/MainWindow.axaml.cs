@@ -36,7 +36,8 @@ public partial class MainWindow :
     Window,
     ITerminalWindowActivationTarget,
     IGlobalWindowActionTarget,
-    IWindowSummonOperations
+    IWindowSummonOperations,
+    IMacOsWindowMenuHost
 {
     private static readonly SemaphoreSlim JumpListRefreshGate = new(1, 1);
     private static readonly FontFamily TabTitleFontFamily = OperatingSystem.IsMacOS()
@@ -81,6 +82,7 @@ public partial class MainWindow :
     private readonly Func<GlobalSummonArgs, ValueTask<WindowActionResult>>? _summonRequested;
     private readonly Action<AppSettings>? _settingsChanged;
     private readonly ISystemMenuService _systemMenuService;
+    private Action? _macOsMenuRefresh;
     private readonly bool _isolated;
     private readonly TaskCompletionSource<TerminalWindowActivationResult> _initialActivationCompletion =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -212,13 +214,15 @@ public partial class MainWindow :
             ToolTip.SetTip(ExitFullscreenButton, "Exit full screen (⌃⌘F)");
             NativeMenu.SetMenu(
                 this,
-                MacOsNativeMenu.CreateWindowMenu(action =>
-                    DispatchActionAsync(new ActionAndArgs(action))));
+                MacOsNativeMenu.CreateWindowMenu(this, out _macOsMenuRefresh));
         }
     }
 
     public void DispatchMenuAction(ShortcutAction action) =>
         _ = DispatchActionAsync(new ActionAndArgs(action));
+
+    public void DispatchMenuAction(ActionAndArgs action) =>
+        _ = DispatchActionAsync(action);
 
     private MainWindow(ProfileSettings initialProfile) : this()
     {
@@ -438,7 +442,7 @@ public partial class MainWindow :
         {
             ItemsSource = BuildNewTabMenu(),
         };
-        menu.Open(sender as Control);
+        menu.Open(sender as Control ?? MenuButton);
     }
 
     internal List<MenuItem> BuildNewTabMenu()
@@ -531,15 +535,43 @@ public partial class MainWindow :
         return null;
     }
 
-    private static TextBlock FluentMenuIcon(string glyph) =>
-        new()
+    private static Control? FluentMenuIcon(string glyph)
+    {
+        if (OperatingSystem.IsWindows())
         {
-            Text = glyph,
-            FontFamily = new FontFamily("Segoe Fluent Icons"),
-            FontSize = 16,
-            Width = 20,
-            TextAlignment = TextAlignment.Center,
+            return new TextBlock
+            {
+                Text = glyph,
+                FontFamily = new FontFamily("Segoe Fluent Icons"),
+                FontSize = 16,
+                Width = 20,
+                TextAlignment = TextAlignment.Center,
+            };
+        }
+
+        var pathData = glyph switch
+        {
+            "\uE7C2" => "M 1,2 L 15,2 L 15,14 L 1,14 Z M 8,2 L 8,14",
+            "\uE713" => "M 2,4 L 14,4 M 2,8 L 14,8 M 2,12 L 14,12 M 5,2 L 5,6 M 11,6 L 11,10 M 6,10 L 6,14",
+            "\uE945" => "M 2,4 L 6,8 L 2,12 M 8,12 L 14,12",
+            "\uE897" => "M 8,1 A 7,7 0 1 1 7.99,1 Z M 8,7 L 8,12 M 8,4.5 L 8,5.2",
+            _ => null,
         };
+
+        return pathData is null
+            ? null
+            : new Avalonia.Controls.Shapes.Path
+            {
+                Data = Geometry.Parse(pathData),
+                Width = 14,
+                Height = 14,
+                Stretch = Stretch.Uniform,
+                Stroke = new SolidColorBrush(Color.Parse("#F2F2F2")),
+                StrokeThickness = 1.2,
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Center,
+            };
+    }
 
     private MenuItem CreateMenuItem(ResolvedNewTabMenuItem item)
     {
@@ -1037,6 +1069,21 @@ public partial class MainWindow :
             presentation);
         control.RecordingStateChanged += OnRecordingStateChanged;
         control.ReplayStateChanged += OnReplayStateChanged;
+        control.HyperlinkContextRequested += (_, args) =>
+        {
+            args.Handled = true;
+            ShowTerminalContextMenu(pane, args.Hyperlink);
+        };
+        control.ContextRequested += (_, args) =>
+        {
+            if (args.Handled)
+            {
+                return;
+            }
+
+            args.Handled = true;
+            ShowTerminalContextMenu(pane, hyperlink: null);
+        };
         pane.Presentation.IsAdministrator = OperatingSystem.IsWindows() && profile.Elevate;
         control.TitleChanged += (_, title) =>
         {
@@ -1212,6 +1259,7 @@ public partial class MainWindow :
         SynchronizeTitle(tab);
         RebuildTabs();
         RebuildTerminalHost();
+        _macOsMenuRefresh?.Invoke();
         if (tab.CustomContent is not null)
         {
             UpdateRecordingStateBar();
@@ -1640,6 +1688,7 @@ public partial class MainWindow :
         }
 
         ApplyWindowChrome();
+        _macOsMenuRefresh?.Invoke();
     }
 
     private double TabWidth()
@@ -1653,31 +1702,43 @@ public partial class MainWindow :
             240);
     }
 
+    private Bitmap? ResolveTabIconBitmap(string icon)
+    {
+        if (!TryResolveTabIcon(icon, out var key, out var uri, out var filePath))
+        {
+            return null;
+        }
+
+        if (_tabIconCache.TryGetValue(key, out var cached))
+        {
+            return cached;
+        }
+
+        try
+        {
+            using var stream = filePath is null
+                ? AssetLoader.Open(uri!)
+                : File.OpenRead(filePath);
+            var bitmap = new Bitmap(stream);
+            _tabIconCache.Add(key, bitmap);
+            return bitmap;
+        }
+        catch (Exception ex) when (ex is
+            IOException or
+            UnauthorizedAccessException or
+            ArgumentException or
+            InvalidOperationException)
+        {
+            return icon.Equals("ms-appx:///ProfileIcons/terminal.png", StringComparison.OrdinalIgnoreCase)
+                ? null
+                : ResolveTabIconBitmap("ms-appx:///ProfileIcons/terminal.png");
+        }
+    }
+
     private Control CreateTabIcon(string icon)
     {
-        if (TryResolveTabIcon(icon, out var key, out var uri, out var filePath))
+        if (ResolveTabIconBitmap(icon) is { } bitmap)
         {
-            if (!_tabIconCache.TryGetValue(key, out var bitmap))
-            {
-                try
-                {
-                    using var stream = filePath is null
-                        ? AssetLoader.Open(uri!)
-                        : File.OpenRead(filePath);
-                    bitmap = new Bitmap(stream);
-                }
-                catch (Exception ex) when (ex is
-                    IOException or
-                    UnauthorizedAccessException or
-                    ArgumentException or
-                    InvalidOperationException)
-                {
-                    return CreateTabIcon("ms-appx:///ProfileIcons/terminal.png");
-                }
-
-                _tabIconCache.Add(key, bitmap);
-            }
-
             return new Image
             {
                 Source = bitmap,
@@ -1755,6 +1816,143 @@ public partial class MainWindow :
         return false;
     }
 
+    private async Task DuplicateSpecificTabAsync(TerminalTab tab)
+    {
+        if (tab.IsSettingsTab)
+        {
+            return;
+        }
+
+        try { await RestoreTabAsync(CaptureTab(tab), regenerateIdentities: true).ConfigureAwait(true); }
+        catch (Exception error) { ReportHostedTabError("Unable to duplicate tab", error); }
+    }
+
+    private async Task RenameSpecificTabAsync(TerminalTab tab)
+    {
+        var title = await PromptForTextAsync(
+            "Rename tab",
+            "Tab title",
+            tab.CustomTitle ?? tab.Title).ConfigureAwait(true);
+        if (title is not null && !tab.IsClosing)
+        {
+            tab.CustomTitle = title;
+            SynchronizeTitle(tab);
+        }
+    }
+
+    private async Task PickSpecificTabColorAsync(TerminalTab tab)
+    {
+        var color = await PromptForTextAsync(
+            "Set tab color",
+            "Hex color, or blank to reset",
+            tab.Color ?? string.Empty).ConfigureAwait(true);
+        if (color is null || tab.IsClosing)
+        {
+            return;
+        }
+
+        if (color.Length == 0 || TryParseColor(color, out _))
+        {
+            tab.Color = color.Length == 0 ? null : color;
+            RebuildTabs();
+        }
+        else
+        {
+            ShowNotification(new TerminalNotification(
+                "Invalid tab color",
+                $"'{color}' is not a valid color."));
+        }
+    }
+
+    private void ShowTerminalContextMenu(
+        TerminalPane pane,
+        TerminalHyperlinkContext? hyperlink)
+    {
+        if (FindTab(pane) is { } owningTab)
+        {
+            if (!ReferenceEquals(_activeTab, owningTab))
+            {
+                ActivateTab(owningTab);
+            }
+
+            if (!ReferenceEquals(owningTab.Panes.ActiveContent, pane))
+            {
+                ActivatePane(owningTab, pane);
+            }
+        }
+
+        CreateTerminalContextMenu(pane, hyperlink).Open(pane.Control);
+    }
+
+    internal ContextMenu CreateTerminalContextMenu(
+        TerminalPane pane,
+        TerminalHyperlinkContext? hyperlink = null)
+    {
+        var items = new List<object>();
+        if (hyperlink is not null && !string.IsNullOrWhiteSpace(hyperlink.Uri))
+        {
+            var capturedLink = hyperlink;
+            var openLink = MenuCommand("Open Link", () => _ = pane.Control.OpenHyperlinkAsync(capturedLink));
+            openLink.IsEnabled = capturedLink.CanOpen;
+            items.Add(openLink);
+            items.Add(MenuCommand("Copy Link Address", () => _ = CopyTextToClipboardAsync(capturedLink.Uri)));
+            items.Add(new Separator());
+        }
+
+        var copyItem = MenuCommand("Copy", () => _ = DispatchActionAsync(new ActionAndArgs(ShortcutAction.CopyText)));
+        copyItem.IsEnabled = pane.Control.HasSelection;
+        copyItem.InputGesture = AvaloniaKeyChord.GetActionGesture(_settings.ActionMap, "Terminal.CopyToClipboard");
+        items.Add(copyItem);
+
+        var pasteItem = MenuCommand("Paste", () => _ = DispatchActionAsync(new ActionAndArgs(ShortcutAction.PasteText)));
+        pasteItem.IsEnabled = CanPaste();
+        pasteItem.InputGesture = AvaloniaKeyChord.GetActionGesture(_settings.ActionMap, "Terminal.PasteFromClipboard");
+        items.Add(pasteItem);
+
+        var selectAllItem = MenuCommand("Select All", () => pane.Control.SelectAll());
+        selectAllItem.InputGesture = AvaloniaKeyChord.GetActionGesture(_settings.ActionMap, "Terminal.SelectAll");
+        items.Add(selectAllItem);
+
+        if (pane.Control.BuildCopyPayload() is { Text.Length: > 0 } selectedPayload)
+        {
+            var preview = selectedPayload.Text.Trim();
+            if (preview.Length > 24)
+            {
+                preview = preview[..24] + "…";
+            }
+
+            items.Add(MenuCommand(
+                $"Search Web for \"{preview}\"",
+                () => _ = DispatchActionAsync(new ActionAndArgs(ShortcutAction.SearchForText))));
+        }
+
+        items.Add(new Separator());
+        items.Add(MenuCommand("Split Pane Right", () => _ = SplitActivePaneAsync(PaneSplitOrientation.Vertical)));
+        items.Add(MenuCommand("Split Pane Down", () => _ = SplitActivePaneAsync(PaneSplitOrientation.Horizontal)));
+        if (FindTab(pane) is { Panes.Count: > 1 } owningTab)
+        {
+            items.Add(MenuCommand("Close Pane", () => _ = ClosePaneAsync(owningTab, pane)));
+        }
+
+        items.Add(new Separator());
+        var findItem = MenuCommand("Find…", ShowFind);
+        findItem.InputGesture = AvaloniaKeyChord.GetActionGesture(_settings.ActionMap, "Terminal.FindText");
+        items.Add(findItem);
+
+        var clearItem = MenuCommand("Clear Scrollback", () => pane.Control.ClearBuffer());
+        clearItem.InputGesture = AvaloniaKeyChord.GetActionGesture(_settings.ActionMap, "Terminal.ClearBuffer");
+        items.Add(clearItem);
+        return new ContextMenu { ItemsSource = items };
+    }
+
+    private async Task CopyTextToClipboardAsync(string text)
+    {
+        if (TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard)
+        {
+            await clipboard.SetTextAsync(text).ConfigureAwait(true);
+        }
+    }
+
     private ContextMenu CreateTabContextMenu(TerminalTab tab) =>
         new()
         {
@@ -1762,17 +1960,21 @@ public partial class MainWindow :
             {
                 new MenuItem
                 {
+                    Header = "Rename tab…",
+                    Command = new RelayCommand(() => _ = RenameSpecificTabAsync(tab)),
+                },
+                new MenuItem
+                {
+                    Header = "Set tab color…",
+                    Command = new RelayCommand(() => _ = PickSpecificTabColorAsync(tab)),
+                },
+                new MenuItem
+                {
                     Header = "Duplicate",
                     IsEnabled = !tab.IsSettingsTab,
-                    Command = new RelayCommand(async () =>
-                    {
-                        if (!tab.IsSettingsTab)
-                        {
-                            try { await RestoreTabAsync(CaptureTab(tab), regenerateIdentities: true).ConfigureAwait(true); }
-                            catch (Exception error) { ReportHostedTabError("Unable to duplicate tab", error); }
-                        }
-                    }),
+                    Command = new RelayCommand(() => _ = DuplicateSpecificTabAsync(tab)),
                 },
+                new MenuItem { Header = "-" },
                 new MenuItem
                 {
                     Header = "Move left",
@@ -2574,7 +2776,14 @@ public partial class MainWindow :
             _ => ActiveControl is not null && _activeTab is not null,
             _ =>
             {
-                CreateTabContextMenu(_activeTab!).Open(ActiveControl);
+                if (_activeTab!.IsTerminalTab && _activeTab.Panes.ActiveContent is { } activePane)
+                {
+                    ShowTerminalContextMenu(activePane, hyperlink: null);
+                }
+                else
+                {
+                    CreateTabContextMenu(_activeTab).Open(ActiveControl);
+                }
                 return Task.CompletedTask;
             });
         Register(ShortcutAction.BreakIntoDebugger, ActionScope.Application, _ => true, _ =>
@@ -3729,6 +3938,7 @@ public partial class MainWindow :
         ExitFullscreenButton.IsVisible = isFullscreen && !Win32ParentWindow.IsRequested;
         ApplyTitleBarMargin();
         ApplyWindowChrome();
+        _macOsMenuRefresh?.Invoke();
     }
 
     private void ApplyTitleBarMargin() =>
@@ -3932,6 +4142,48 @@ public partial class MainWindow :
         };
         menu.Open(TitleBar);
     }
+
+    Window? IMacOsWindowMenuHost.Window => this;
+    AppSettings IMacOsWindowMenuHost.Settings => _settings;
+    bool IMacOsWindowMenuHost.IsFullScreen => WindowState == WindowState.FullScreen;
+    bool IMacOsWindowMenuHost.IsFocusMode => _focusMode;
+    bool IMacOsWindowMenuHost.HasActiveTerminal => ActiveControl is not null;
+    bool IMacOsWindowMenuHost.HasTerminalSelection => ActiveControl?.HasSelection == true;
+    bool IMacOsWindowMenuHost.CanPasteTerminal => CanPaste();
+    bool IMacOsWindowMenuHost.CanDuplicateTab =>
+        _activeTab is { IsSettingsTab: false } && _activeTab.Panes.ActiveContent is not null;
+    bool IMacOsWindowMenuHost.CanRestoreClosedTab => CanRestoreLastClosedTab;
+    bool IMacOsWindowMenuHost.CanFindMatch =>
+        ActiveControl is not null && !string.IsNullOrWhiteSpace(FindBox.Text);
+    int IMacOsWindowMenuHost.TabCount => _tabs.Count;
+    int IMacOsWindowMenuHost.ActiveTabIndex => _activeTab is null ? -1 : TabIndexOf(_activeTab);
+    int IMacOsWindowMenuHost.ActivePaneCount => _activeTab?.IsTerminalTab == true ? _activeTab.Panes.Count : 0;
+    bool IMacOsWindowMenuHost.IsPaneZoomed => _activeTab?.IsTerminalTab == true && _activeTab.Panes.ZoomedContent is not null;
+    bool IMacOsWindowMenuHost.IsBroadcastInput => _activeTab?.IsTerminalTab == true && _activeTab.BroadcastInput.IsEnabled;
+    bool IMacOsWindowMenuHost.IsPaneReadOnly =>
+        _activeTab?.IsTerminalTab == true && _activeTab.Panes.ActiveContent?.Presentation.IsReadOnly == true;
+    Menu? IMacOsWindowMenuHost.HostedWorkbenchMenu =>
+#if POWERSHELL_ISE
+        _activeTab?.CustomContent is PowerShellIseTab iseTab
+            ? iseTab.Workbench.FindControl<Menu>("WorkbenchMenu")
+            : null;
+#else
+        null;
+#endif
+    IReadOnlyList<MacOsTabMenuEntry> IMacOsWindowMenuHost.GetTabEntries() =>
+        _tabs.Select(tab => new MacOsTabMenuEntry(
+                string.IsNullOrWhiteSpace(tab.Title) ? "Terminal" : tab.Title,
+                ReferenceEquals(tab, _activeTab),
+                () => ActivateTab(tab)))
+            .ToArray();
+    Bitmap? IMacOsWindowMenuHost.ResolveProfileIcon(ProfileSettings profile) =>
+        ResolveTabIconBitmap(ProfileVisualDefaults.Icon(profile));
+    Task IMacOsWindowMenuHost.DispatchAsync(ActionAndArgs action) =>
+        DispatchActionAsync(action);
+    void IMacOsWindowMenuHost.LaunchProfile(ProfileSettings profile) =>
+        _ = LaunchProfileAsync(profile, KeyModifiers.None);
+    void IMacOsWindowMenuHost.OpenHelpUrl(string url) =>
+        OpenWithShell(url);
 
     private static MenuItem MenuCommand(string header, Action action)
     {
@@ -4685,6 +4937,12 @@ public partial class MainWindow :
 
     private void ShowAbout()
     {
+        if (OperatingSystem.IsMacOS())
+        {
+            AboutWindow.ShowOrActivate(this, OpenWithShell);
+            return;
+        }
+
         _aboutPreviousFocus = FocusManager?.GetFocusedElement();
         AboutVersion.Text =
             $"Version: {typeof(MainWindow).Assembly.GetName().Version?.ToString() ?? "Development build"}";
@@ -5065,6 +5323,7 @@ public partial class MainWindow :
         RefreshJumpList(_settings);
         PopulateCommandPalette();
         RebuildTabs();
+        _macOsMenuRefresh?.Invoke();
     }
 
     private void RefreshJumpList(AppSettings? settings = null)

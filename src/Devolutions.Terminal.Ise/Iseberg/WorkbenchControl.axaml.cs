@@ -1173,12 +1173,14 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
             item.Click += OnAction;
             menu.Items.Add(item);
         }
-        menu.Opening += (_, _) =>
+        void SyncEditorItems()
         {
             editTarget = editor;
             foreach (var item in menu.Items.OfType<MenuItem>())
                 item.IsEnabled = item.Tag is string action && CanEdit(action);
-        };
+        }
+        editor.AddHandler(Control.ContextRequestedEvent, (_, _) => SyncEditorItems(), RoutingStrategies.Tunnel, handledEventsToo: true);
+        menu.Opening += (_, _) => SyncEditorItems();
         return menu;
     }
 
@@ -1472,7 +1474,7 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
         ScriptEditorControl.CompletionAcceptsEnter = settings.ScriptCompletionOnEnter;
         if (!settings.ScriptIntelliSense) Completion?.Close();
         if (!settings.ConsoleIntelliSense && Completion?.TextArea == ConsoleEditor.TextArea) Completion.Close();
-        WorkbenchMenu.IsVisible = hostingOptions.ShowMenu;
+        WorkbenchMenu.IsVisible = hostingOptions.ShowMenu && !IsNativeWindowMenuActive;
         WorkbenchToolbar.IsVisible = hostingOptions.ShowToolbar && settings.ShowToolbar;
         WorkbenchStatusBar.IsVisible = hostingOptions.ShowStatusBar;
         SessionTabs.IsVisible = hostingOptions.ShowSessionTabs && Workbench.ShowSessionTabs;
@@ -1962,7 +1964,7 @@ public sealed partial class WorkbenchControl : UserControl, IAsyncDisposable
         if (await HandleIseShortcutAsync(e)) return;
         var ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Meta);
         var shift = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
-        if (e.Key == Key.F10 && hostingOptions.ShowMenu && displayedSession?.Engine.State != SessionState.Debugging)
+        if (e.Key == Key.F10 && WorkbenchMenu.IsVisible && displayedSession?.Engine.State != SessionState.Debugging)
         {
             WorkbenchMenu.SelectedIndex = 0;
             WorkbenchMenu.Items.OfType<MenuItem>().First().Focus(NavigationMethod.Tab);
