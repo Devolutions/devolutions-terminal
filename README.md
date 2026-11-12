@@ -76,6 +76,16 @@ sudo /opt/devolutions-terminal/linux/Install-LinuxDesktopIntegration.sh install
 
 ## MSIX packages
 
+Install the latest release with automatic updates by opening the App Installer
+feed for your architecture:
+[x64](https://github.com/Devolutions/devolutions-terminal/releases/latest/download/Devolutions.Terminal_x64.appinstaller)
+or
+[ARM64](https://github.com/Devolutions/devolutions-terminal/releases/latest/download/Devolutions.Terminal_arm64.appinstaller).
+Windows checks the feed on launch and in the background, then installs newer
+GitHub releases silently.
+
+Build locally:
+
 ```powershell
 .\src\Devolutions.Terminal.Package\Scripts\Build-Packages.ps1
 ```

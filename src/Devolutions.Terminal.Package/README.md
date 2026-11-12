@@ -81,6 +81,13 @@ For an external signing profile, pass its exact certificate subject through `Bui
 Do not modify a built MSIX manifest: that would invalidate its block map.
 Omitting these parameters retains the development identity and its validation.
 
+To build packages that update themselves from GitHub Releases, also pass
+`-UpdateRepository <owner/repo> -ReleaseTag <tag>`. The script writes
+`Devolutions.Terminal_<architecture>.appinstaller` feeds next to the MSIX files
+and embeds each one as `Update.appinstaller` with a `uap13:AutoUpdate`
+reference. Validate them with `Test-Packages.ps1 -UpdateRepository <owner/repo>`.
+See [MSIX automatic updates](../../docs/release.md#msix-automatic-updates).
+
 ## Development signing and installation
 
 Private keys and generated package artifacts live under `dotnet\artifacts`,

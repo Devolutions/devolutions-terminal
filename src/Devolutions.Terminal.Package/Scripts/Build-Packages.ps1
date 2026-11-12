@@ -21,11 +21,22 @@ param(
 
     [string] $CertificatePath,
 
-    [securestring] $CertificatePassword
+    [securestring] $CertificatePassword,
+
+    # GitHub owner/repository whose Releases host the packages. With -ReleaseTag, embeds an
+    # App Installer feed so installed packages update automatically from the latest release.
+    [string] $UpdateRepository,
+
+    [string] $ReleaseTag
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+$enableAutoUpdate = -not [string]::IsNullOrWhiteSpace($UpdateRepository)
+if ($enableAutoUpdate -ne (-not [string]::IsNullOrWhiteSpace($ReleaseTag))) {
+    throw "-UpdateRepository and -ReleaseTag must be specified together."
+}
 
 $packageRoot = Split-Path -Parent $PSScriptRoot
 $dotnetRoot = [IO.Path]::GetFullPath((Join-Path $packageRoot "..\.."))
@@ -95,6 +106,17 @@ function Write-VersionedManifest {
     $manifest.Package.Identity.Version = $Version
     if (-not [string]::IsNullOrWhiteSpace($Publisher)) {
         $manifest.Package.Identity.Publisher = $Publisher
+    }
+
+    if ($enableAutoUpdate) {
+        $uap13 = "http://schemas.microsoft.com/appx/manifest/uap/windows10/13"
+        $manifest.Package.SetAttribute("xmlns:uap13", $uap13)
+        $manifest.Package.SetAttribute("IgnorableNamespaces", "$($manifest.Package.IgnorableNamespaces) uap13")
+        $autoUpdate = $manifest.CreateElement("uap13", "AutoUpdate", $uap13)
+        $appInstaller = $manifest.CreateElement("uap13", "AppInstaller", $uap13)
+        $appInstaller.SetAttribute("File", "Update.appinstaller")
+        [void] $autoUpdate.AppendChild($appInstaller)
+        [void] $manifest.Package.Properties.AppendChild($autoUpdate)
     }
 
     $settings = [Xml.XmlWriterSettings]::new()
@@ -180,11 +202,23 @@ try {
             (Join-Path $layout "AppxManifest.xml"),
             (Join-Path $layout "resources.pri"),
             (Join-Path $layout "pri.resfiles"),
-            (Join-Path $layout "priconfig.xml")
+            (Join-Path $layout "priconfig.xml"),
+            (Join-Path $layout "Update.appinstaller")
         )) {
             if (Test-Path -LiteralPath $generatedPath) {
                 Remove-Item -Recurse -Force -LiteralPath $generatedPath
             }
+        }
+
+        if ($enableAutoUpdate) {
+            # The published feed and the embedded copy are byte-identical.
+            $feed = & (Join-Path $PSScriptRoot "New-AppInstaller.ps1") `
+                -ManifestPath $versionedManifest `
+                -Architecture $architecture `
+                -Repository $UpdateRepository `
+                -ReleaseTag $ReleaseTag `
+                -OutputPath (Join-Path $packageOutput "Devolutions.Terminal_$architecture.appinstaller")
+            Copy-Item -LiteralPath $feed.FullName -Destination (Join-Path $layout "Update.appinstaller")
         }
 
         Get-ChildItem -LiteralPath $layout -Filter "*.pdb" -File -Recurse |
@@ -214,5 +248,5 @@ finally {
 }
 
 Get-ChildItem -LiteralPath $packageOutput -File |
-    Where-Object Extension -eq ".msix" |
+    Where-Object Extension -in ".msix", ".appinstaller" |
     Sort-Object Name

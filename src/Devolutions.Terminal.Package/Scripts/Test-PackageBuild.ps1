@@ -19,6 +19,7 @@ $work = Join-Path ([IO.Path]::GetTempPath()) "terminal-msix-test-$([guid]::NewGu
 $productionPublisher = "CN=Devolutions Inc, O=Devolutions Inc, L=Lavaltrie, S=Qu$([char]0xE9)bec, C=CA"
 $password = ConvertTo-SecureString "ephemeral-fixture-password" -AsPlainText -Force
 $wrongPublisherPackage = Join-Path $work "wrong-publisher.msix"
+$updateRepository = "Devolutions/devolutions-terminal"
 
 function Assert-ExpectedFailure {
     param(
@@ -94,9 +95,10 @@ function New-PackageFixture {
 
 try {
     foreach ($case in @(
-        @{ Name = "Development"; Publisher = "CN=Devolutions Inc."; Override = $false },
-        @{ Name = "Production"; Publisher = $productionPublisher; Override = $true },
-        @{ Name = "XmlEscaping"; Publisher = "CN=Fixture & Company"; Override = $true }
+        @{ Name = "Development"; Publisher = "CN=Devolutions Inc."; Override = $false; AutoUpdate = $false },
+        @{ Name = "Production"; Publisher = $productionPublisher; Override = $true; AutoUpdate = $false },
+        @{ Name = "XmlEscaping"; Publisher = "CN=Fixture & Company"; Override = $true; AutoUpdate = $false },
+        @{ Name = "AutoUpdate"; Publisher = $productionPublisher; Override = $true; AutoUpdate = $true }
     )) {
         $output = Join-Path $work $case.Name
         New-PackageFixture -OutputDirectory $output
@@ -108,6 +110,10 @@ try {
         }
         if ($case.Override) {
             $buildArguments.Publisher = $case.Publisher
+        }
+        if ($case.AutoUpdate) {
+            $buildArguments.UpdateRepository = $updateRepository
+            $buildArguments.ReleaseTag = "v2026.3.0"
         }
         & (Join-Path $PSScriptRoot "Build-Packages.ps1") @buildArguments | Out-Host
         # First-run WinApp setup can write status messages to the success stream.
@@ -125,6 +131,9 @@ try {
         if ($case.Override) {
             $testArguments.ExpectedPublisher = $case.Publisher
         }
+        if ($case.AutoUpdate) {
+            $testArguments.UpdateRepository = $updateRepository
+        }
         $results = @(& (Join-Path $PSScriptRoot "Test-Packages.ps1") @testArguments)
         if ($results.Count -ne 2 -or
             ($results.Architecture | Sort-Object) -join "|" -cne "arm64|x64" -or
@@ -140,6 +149,41 @@ try {
                 }
         }
         if ($case.Name -eq "XmlEscaping") {
+            continue
+        }
+        if ($case.AutoUpdate) {
+            foreach ($architecture in @("x64", "arm64")) {
+                [xml] $feed = Get-Content -LiteralPath (Join-Path $output "packages\Devolutions.Terminal_$architecture.appinstaller") -Raw
+                if ($feed.AppInstaller.Uri -cne "https://github.com/$updateRepository/releases/latest/download/Devolutions.Terminal_$architecture.appinstaller" -or
+                    $feed.AppInstaller.MainPackage.Uri -cne "https://github.com/$updateRepository/releases/download/v2026.3.0/Devolutions.Terminal_2026.3.0.0_$architecture.msix" -or
+                    $feed.AppInstaller.MainPackage.Publisher -cne $case.Publisher -or
+                    $null -ne $feed.AppInstaller.UpdateSettings.SelectSingleNode("*[local-name()='ForceUpdateFromAnyVersion']")) {
+                    throw "AutoUpdate build did not publish the expected $architecture feed."
+                }
+            }
+            Write-Host "Build-Packages_AutoUpdateEmbedsAndPublishesFeeds passed."
+
+            Assert-ExpectedFailure -Name "Test-Packages_RejectsMissingUpdateFeed" -MessagePattern "uap13:AutoUpdate" -Action {
+                & (Join-Path $PSScriptRoot "Test-Packages.ps1") -PackagePath $wrongPublisherPackage -UpdateRepository $updateRepository
+            }
+            Assert-ExpectedFailure -Name "Test-Packages_RejectsWrongUpdateRepository" -MessagePattern "stable latest-release URL" -Action {
+                & (Join-Path $PSScriptRoot "Test-Packages.ps1") -PackagePath $packages[0].FullName `
+                    -ExpectedPublisher $case.Publisher -UpdateRepository "Devolutions/other"
+            }
+            Assert-ExpectedFailure -Name "Test-Packages_RejectsUnexpectedUpdateFeed" -MessagePattern "unexpectedly embeds" -Action {
+                & (Join-Path $PSScriptRoot "Test-Packages.ps1") -PackagePath $packages[0].FullName -ExpectedPublisher $case.Publisher
+            }
+            $feedPath = Join-Path $output "packages\Devolutions.Terminal_x64.appinstaller"
+            Add-Content -LiteralPath $feedPath -Value "<!-- tampered -->"
+            $x64Package = $packages | Where-Object Name -like "*_x64.msix"
+            Assert-ExpectedFailure -Name "Test-Packages_RejectsDivergentPublishedFeed" -MessagePattern "differs from" -Action {
+                & (Join-Path $PSScriptRoot "Test-Packages.ps1") -PackagePath $x64Package.FullName `
+                    -ExpectedPublisher $case.Publisher -UpdateRepository $updateRepository
+            }
+            Assert-ExpectedFailure -Name "Build-Packages_RequiresReleaseTagWithUpdateRepository" -MessagePattern "together" -Action {
+                & (Join-Path $PSScriptRoot "Build-Packages.ps1") -UpdateRepository $updateRepository `
+                    -OutputDirectory (Join-Path $work "invalid") -SkipPublish -SkipNativeBuild
+            }
             continue
         }
 
