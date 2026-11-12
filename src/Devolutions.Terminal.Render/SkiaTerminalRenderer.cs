@@ -1,3 +1,5 @@
+using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 using System.Text;
 using HarfBuzzBuffer = HarfBuzzSharp.Buffer;
 using Devolutions.Terminal.Core;
@@ -27,8 +29,13 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
     private BoundedResourceCache<GlyphKey, CachedGlyph> _glyphs;
     private BoundedResourceCache<RowPictureKey, SKPicture>? _rowPictures;
     private HashSet<RowPictureKey>? _rowPictureCandidates;
-    private readonly Dictionary<long, CachedImage> _images = [];
-    private readonly HashSet<long> _invalidImages = [];
+    private readonly Dictionary<object, CachedImage> _images = new(ReferenceEqualityComparer.Instance);
+    private readonly LinkedList<object> _imageOrder = new();
+    private readonly HashSet<object> _invalidImages = new(ReferenceEqualityComparer.Instance);
+    private readonly HashSet<object> _activeImageKeys = new(ReferenceEqualityComparer.Instance);
+    private readonly List<object> _staleImageKeys = [];
+    private readonly List<TerminalImageOverlay> _drawOrder = [];
+    private static readonly Comparison<TerminalImageOverlay> ImageDrawOrderComparison = CompareImageDrawOrder;
     private long _imageBytes;
     private readonly Func<GlyphKey, CachedGlyph> _shapeFactory;
     private readonly Func<RowPictureKey, SKPicture> _recordRowFactory;
@@ -129,6 +136,7 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
             _rowPictures?.Clear();
             _rowPictureCandidates?.Clear();
             _glyphs.Clear();
+            ClearImageCache();
             ResourceGeneration++;
         }
     }
@@ -372,40 +380,112 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
         {
             if (frame.Images.Count == 0)
             {
-                if (_images.Count > 0)
+                if (_images.Count > 0 || _invalidImages.Count > 0)
                 {
-                    foreach (var image in _images.Values)
-                    {
-                        image.Dispose();
-                    }
-
-                    _images.Clear();
-                    _imageBytes = 0;
+                    ClearImageCache();
                 }
 
                 return;
             }
 
-            var activeIds = frame.Images.Select(static image => image.Id).ToHashSet();
-            foreach (var staleId in _images.Keys.Where(id => !activeIds.Contains(id)).ToArray())
+            if (_images.Count > 0 || _invalidImages.Count > 0)
             {
-                _imageBytes -= _images[staleId].ByteSize;
-                _images[staleId].Dispose();
-                _images.Remove(staleId);
-            }
+                _activeImageKeys.Clear();
+                for (var i = 0; i < frame.Images.Count; i++)
+                {
+                    _activeImageKeys.Add(GetImageCacheKey(frame.Images[i]));
+                }
 
-            _invalidImages.RemoveWhere(id => !activeIds.Contains(id));
+                if (_images.Count > 0)
+                {
+                    _staleImageKeys.Clear();
+                    foreach (var key in _images.Keys)
+                    {
+                        if (!_activeImageKeys.Contains(key))
+                        {
+                            _staleImageKeys.Add(key);
+                        }
+                    }
+
+                    for (var i = 0; i < _staleImageKeys.Count; i++)
+                    {
+                        var staleKey = _staleImageKeys[i];
+                        var stale = _images[staleKey];
+                        _imageBytes -= stale.ByteSize;
+                        if (stale.OrderNode is { } staleNode)
+                        {
+                            _imageOrder.Remove(staleNode);
+                        }
+
+                        stale.Dispose();
+                        _images.Remove(staleKey);
+                    }
+
+                    _staleImageKeys.Clear();
+                }
+
+                if (_invalidImages.Count > 0)
+                {
+                    _staleImageKeys.Clear();
+                    foreach (var key in _invalidImages)
+                    {
+                        if (!_activeImageKeys.Contains(key))
+                        {
+                            _staleImageKeys.Add(key);
+                        }
+                    }
+
+                    for (var i = 0; i < _staleImageKeys.Count; i++)
+                    {
+                        _invalidImages.Remove(_staleImageKeys[i]);
+                    }
+
+                    _staleImageKeys.Clear();
+                }
+
+                _activeImageKeys.Clear();
+            }
         }
-        else if (frame.Images.Count == 0 || frame.Images.All(static image => image.Kitty is null))
+        else if (frame.Images.Count == 0)
         {
             return;
         }
 
-        // Under-text pass: everything except non-negative-z kitty placements.
-        // Over-text pass: kitty placements with z >= 0, in z order.
-        var ordered = overText
-            ? frame.Images.Where(static i => i.Kitty is { ZIndex: >= 0 }).OrderBy(static i => i.Kitty!.ZIndex)
-            : frame.Images.Where(static i => i.Kitty is null || i.Kitty.ZIndex < 0);
+        _drawOrder.Clear();
+        var needsSort = false;
+        var prevZ = int.MinValue;
+        var prevId = long.MinValue;
+        for (var i = 0; i < frame.Images.Count; i++)
+        {
+            var candidate = frame.Images[i];
+            var matchesPass = overText
+                ? candidate.Kitty is { ZIndex: >= 0 }
+                : candidate.Kitty is null || candidate.Kitty.ZIndex < 0;
+            if (!matchesPass)
+            {
+                continue;
+            }
+
+            var z = candidate.Kitty?.ZIndex ?? 0;
+            if (_drawOrder.Count > 0 && (z < prevZ || (z == prevZ && candidate.Id < prevId)))
+            {
+                needsSort = true;
+            }
+
+            prevZ = z;
+            prevId = candidate.Id;
+            _drawOrder.Add(candidate);
+        }
+
+        if (_drawOrder.Count == 0)
+        {
+            return;
+        }
+
+        if (needsSort)
+        {
+            _drawOrder.Sort(ImageDrawOrderComparison);
+        }
 
         var viewport = new SKRect(
             bounds.Left + padding,
@@ -415,9 +495,11 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
         canvas.Save();
         canvas.ClipRect(viewport);
         _paint.Color = SKColors.White;
-        foreach (var image in ordered)
+        for (var orderIndex = 0; orderIndex < _drawOrder.Count; orderIndex++)
         {
-            if (_invalidImages.Contains(image.Id))
+            var image = _drawOrder[orderIndex];
+            var cacheKey = GetImageCacheKey(image);
+            if (_invalidImages.Contains(cacheKey))
             {
                 continue;
             }
@@ -426,25 +508,27 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
                               frame.RowsData[image.AnchorRow].Rendition != LineRendition.SingleWidth
                 ? 2
                 : 1;
-            var left = padding + (image.AnchorColumn * columnScale * (float)CellSize.Width);
-            var top = padding + (image.AnchorRow * (float)CellSize.Height);
+            var cellWidthDip = columnScale * (float)CellSize.Width;
+            var cellHeightDip = (float)CellSize.Height;
+            var left = padding + (image.AnchorColumn * cellWidthDip);
+            var top = padding + (image.AnchorRow * cellHeightDip);
             if (image.Kitty is { } kittyPlacement)
             {
-                left += kittyPlacement.PixelOffsetX;
-                top += kittyPlacement.PixelOffsetY;
+                left += Math.Min(kittyPlacement.PixelOffsetX * PhysicalPixel, Math.Max(0f, cellWidthDip - PhysicalPixel));
+                top += Math.Min(kittyPlacement.PixelOffsetY * PhysicalPixel, Math.Max(0f, cellHeightDip - PhysicalPixel));
             }
 
-            if (left >= viewport.Right || top >= viewport.Bottom)
+            if (left >= viewport.Right || top >= viewport.Bottom || IsKnownCompletelyAboveOrLeftOfViewport(image, left, top, viewport))
             {
                 continue;
             }
 
-            if (!_images.TryGetValue(image.Id, out var cached))
+            if (!_images.TryGetValue(cacheKey, out var cached))
             {
                 var decoded = DecodeImage(image);
                 if (decoded is null)
                 {
-                    _invalidImages.Add(image.Id);
+                    _invalidImages.Add(cacheKey);
                     continue;
                 }
 
@@ -452,43 +536,192 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
                 if (byteSize > _settings.DecodedImageCacheByteCapacity)
                 {
                     decoded.Dispose();
-                    _invalidImages.Add(image.Id);
+                    _invalidImages.Add(cacheKey);
                     continue;
                 }
 
-                while (_images.Count > 0 &&
+                while (_imageOrder.First is { } oldestNode &&
                        _imageBytes + byteSize > _settings.DecodedImageCacheByteCapacity)
                 {
-                    var oldest = _images.First();
-                    oldest.Value.Dispose();
-                    _imageBytes -= oldest.Value.ByteSize;
-                    _images.Remove(oldest.Key);
+                    var oldestKey = oldestNode.Value;
+                    _imageOrder.RemoveFirst();
+                    if (_images.Remove(oldestKey, out var oldest))
+                    {
+                        oldest.OrderNode = null;
+                        oldest.Dispose();
+                        _imageBytes -= oldest.ByteSize;
+                    }
                 }
 
-                cached = new CachedImage(decoded, byteSize);
-                _images.Add(image.Id, cached);
+                var node = _imageOrder.AddLast(cacheKey);
+                cached = new CachedImage(decoded, byteSize) { OrderNode = node };
+                _images.Add(cacheKey, cached);
                 _imageBytes += byteSize;
+            }
+            else if (cached.OrderNode is { } existingNode && existingNode != _imageOrder.Last)
+            {
+                _imageOrder.Remove(existingNode);
+                _imageOrder.AddLast(existingNode);
+            }
+
+            if (image.Kitty is { } kitty)
+            {
+                if (!TryResolveKittySourceRect(kitty, cached.Bitmap.Width, cached.Bitmap.Height, out var sourceRect, out var isCropped))
+                {
+                    continue;
+                }
+
+                var kittyDestination = KittyDestination(kitty, sourceRect.Width, sourceRect.Height, left, top);
+                if (kittyDestination.Right <= viewport.Left || kittyDestination.Bottom <= viewport.Top)
+                {
+                    continue;
+                }
+
+                if (isCropped)
+                {
+                    canvas.DrawBitmap(cached.Bitmap, sourceRect, kittyDestination, _paint);
+                }
+                else
+                {
+                    canvas.DrawBitmap(cached.Bitmap, kittyDestination, _paint);
+                }
+
+                continue;
             }
 
             var destination = ImageDestination(image, cached.Bitmap, left, top, viewport);
-            if (image.Kitty is { CropWidth: > 0, CropHeight: > 0 } cropped)
+            if (destination.Right <= viewport.Left || destination.Bottom <= viewport.Top)
             {
-                var cropX = Math.Clamp(cropped.CropX, 0, cached.Bitmap.Width - 1);
-                var cropY = Math.Clamp(cropped.CropY, 0, cached.Bitmap.Height - 1);
-                var source = SKRect.Create(
-                    cropX,
-                    cropY,
-                    Math.Min(cropped.CropWidth, cached.Bitmap.Width - cropX),
-                    Math.Min(cropped.CropHeight, cached.Bitmap.Height - cropY));
-                canvas.DrawBitmap(cached.Bitmap, source, destination, _paint);
+                continue;
             }
-            else
+
+            canvas.DrawBitmap(cached.Bitmap, destination, _paint);
+        }
+
+        _drawOrder.Clear();
+        canvas.Restore();
+    }
+
+    private static object GetImageCacheKey(TerminalImageOverlay image) =>
+        (object?)image.Sixel ?? (object?)image.Kitty?.Data ?? (object?)image.InlineImage ?? image;
+
+    private static int CompareImageDrawOrder(TerminalImageOverlay left, TerminalImageOverlay right)
+    {
+        var leftZ = left.Kitty?.ZIndex ?? 0;
+        var rightZ = right.Kitty?.ZIndex ?? 0;
+        var zComparison = leftZ.CompareTo(rightZ);
+        return zComparison != 0 ? zComparison : left.Id.CompareTo(right.Id);
+    }
+
+    private bool IsKnownCompletelyAboveOrLeftOfViewport(
+        TerminalImageOverlay image,
+        float left,
+        float top,
+        SKRect viewport)
+    {
+        if (left >= viewport.Left && top >= viewport.Top)
+        {
+            return false;
+        }
+
+        if (image.Sixel is { } sixel)
+        {
+            var width = Math.Max(0.1f, sixel.Width * (float)(image.CellGeometry.CellWidth / 10) * PhysicalPixel);
+            var height = Math.Max(0.1f, sixel.Height * (float)(image.CellGeometry.CellHeight / 20) * PhysicalPixel);
+            return left + width <= viewport.Left || top + height <= viewport.Top;
+        }
+
+        if (image.Kitty is { } kitty)
+        {
+            if (kitty.Columns > 0 && kitty.Rows > 0)
             {
-                canvas.DrawBitmap(cached.Bitmap, destination, _paint);
+                var width = Math.Max(0.1f, kitty.Columns * (float)CellSize.Width);
+                var height = Math.Max(0.1f, kitty.Rows * (float)CellSize.Height);
+                return left + width <= viewport.Left || top + height <= viewport.Top;
+            }
+
+            if (kitty.Data.Width > 0 && kitty.Data.Height > 0)
+            {
+                if (!TryResolveKittySourceRect(kitty, kitty.Data.Width, kitty.Data.Height, out var src, out _))
+                {
+                    return true;
+                }
+
+                var dest = KittyDestination(kitty, src.Width, src.Height, left, top);
+                return dest.Right <= viewport.Left || dest.Bottom <= viewport.Top;
             }
         }
 
-        canvas.Restore();
+        return false;
+    }
+
+    private static bool TryResolveKittySourceRect(
+        KittyImage kitty,
+        int bitmapWidth,
+        int bitmapHeight,
+        out SKRect sourceRect,
+        out bool isCropped)
+    {
+        if (bitmapWidth <= 0 || bitmapHeight <= 0 ||
+            kitty.CropX >= bitmapWidth || kitty.CropY >= bitmapHeight)
+        {
+            sourceRect = default;
+            isCropped = false;
+            return false;
+        }
+
+        var hasCropParam = kitty.CropX > 0 || kitty.CropY > 0 || kitty.CropWidth > 0 || kitty.CropHeight > 0;
+        if (!hasCropParam)
+        {
+            sourceRect = SKRect.Create(0, 0, bitmapWidth, bitmapHeight);
+            isCropped = false;
+            return true;
+        }
+
+        var availableWidth = bitmapWidth - kitty.CropX;
+        var availableHeight = bitmapHeight - kitty.CropY;
+        var width = kitty.CropWidth > 0 ? Math.Min(kitty.CropWidth, availableWidth) : availableWidth;
+        var height = kitty.CropHeight > 0 ? Math.Min(kitty.CropHeight, availableHeight) : availableHeight;
+        sourceRect = SKRect.Create(kitty.CropX, kitty.CropY, width, height);
+        isCropped = kitty.CropX > 0 || kitty.CropY > 0 || width != bitmapWidth || height != bitmapHeight;
+        return true;
+    }
+
+    private SKRect KittyDestination(
+        KittyImage kitty,
+        float sourceWidth,
+        float sourceHeight,
+        float left,
+        float top)
+    {
+        float kittyWidth;
+        float kittyHeight;
+        if (kitty.Columns > 0 && kitty.Rows > 0)
+        {
+            kittyWidth = kitty.Columns * (float)CellSize.Width;
+            kittyHeight = kitty.Rows * (float)CellSize.Height;
+        }
+        else if (kitty.Columns > 0)
+        {
+            kittyWidth = kitty.Columns * (float)CellSize.Width;
+            kittyHeight = sourceHeight * (kittyWidth / Math.Max(0.1f, sourceWidth));
+        }
+        else if (kitty.Rows > 0)
+        {
+            kittyHeight = kitty.Rows * (float)CellSize.Height;
+            kittyWidth = sourceWidth * (kittyHeight / Math.Max(0.1f, sourceHeight));
+        }
+        else
+        {
+            kittyWidth = sourceWidth * PhysicalPixel;
+            kittyHeight = sourceHeight * PhysicalPixel;
+        }
+
+        return SKRect.Create(
+            left,
+            top,
+            Math.Max(0.1f, kittyWidth),
+            Math.Max(0.1f, kittyHeight));
     }
 
     private static SKBitmap? DecodeImage(TerminalImageOverlay image)
@@ -502,16 +735,28 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
                 SKAlphaType.Premul);
             var indices = sixel.PixelIndices.Span;
             var palette = sixel.Palette.Span;
-            var colors = new SKColor[indices.Length];
-            for (var index = 0; index < colors.Length; index++)
+            var dst = MemoryMarshal.Cast<byte, uint>(bitmap.GetPixelSpan());
+            if (BitConverter.IsLittleEndian)
             {
-                var colorIndex = indices[index];
-                colors[index] = colorIndex == SixelImage.TransparentColorIndex
-                    ? SKColors.Transparent
-                    : new SKColor(palette[colorIndex]);
+                for (var index = 0; index < indices.Length; index++)
+                {
+                    var colorIndex = indices[index];
+                    dst[index] = colorIndex == SixelImage.TransparentColorIndex
+                        ? 0u
+                        : palette[colorIndex];
+                }
+            }
+            else
+            {
+                for (var index = 0; index < indices.Length; index++)
+                {
+                    var colorIndex = indices[index];
+                    dst[index] = colorIndex == SixelImage.TransparentColorIndex
+                        ? 0u
+                        : BinaryPrimitives.ReverseEndianness((palette[colorIndex] << 8) | (palette[colorIndex] >> 24));
+                }
             }
 
-            bitmap.Pixels = colors;
             return bitmap;
         }
 
@@ -523,18 +768,7 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
                 raw.Height,
                 SKColorType.Rgba8888,
                 SKAlphaType.Unpremul);
-            var pixels = new SKColor[raw.Width * raw.Height];
-            for (var index = 0; index < pixels.Length; index++)
-            {
-                var offset = index * 4;
-                pixels[index] = new SKColor(
-                    rgbaPixels[offset],
-                    rgbaPixels[offset + 1],
-                    rgbaPixels[offset + 2],
-                    rgbaPixels[offset + 3]);
-            }
-
-            bitmap.Pixels = pixels;
+            rgbaPixels.AsSpan(0, raw.Width * raw.Height * 4).CopyTo(bitmap.GetPixelSpan());
             return bitmap;
         }
 
@@ -548,10 +782,10 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
             return null;
         }
 
-        return DecodeCodecImage(inline.Data.ToArray());
+        return DecodeCodecImage(inline.Data.Span);
     }
 
-    private static SKBitmap? DecodeCodecImage(byte[] encoded)
+    private static SKBitmap? DecodeCodecImage(ReadOnlySpan<byte> encoded)
     {
         using var data = SKData.CreateCopy(encoded);
         using var codec = SKCodec.Create(data);
@@ -591,48 +825,15 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
             return SKRect.Create(
                 left,
                 top,
-                Math.Min(Math.Max(0.1f, sixelWidth), bounds.Right - left),
-                Math.Min(Math.Max(0.1f, sixelHeight), bounds.Bottom - top));
+                Math.Max(0.1f, sixelWidth),
+                Math.Max(0.1f, sixelHeight));
         }
 
         if (image.Kitty is { } kitty)
         {
-            // Source extent after crop; display size from c/r cells when given,
-            // preserving aspect when only one axis is specified (kitty semantics).
-            var sourceWidth = kitty.CropWidth > 0 && kitty.CropHeight > 0
-                ? Math.Min(kitty.CropWidth, bitmap.Width - Math.Clamp(kitty.CropX, 0, bitmap.Width - 1))
-                : naturalWidth;
-            var sourceHeight = kitty.CropWidth > 0 && kitty.CropHeight > 0
-                ? Math.Min(kitty.CropHeight, bitmap.Height - Math.Clamp(kitty.CropY, 0, bitmap.Height - 1))
-                : naturalHeight;
-            float kittyWidth;
-            float kittyHeight;
-            if (kitty.Columns > 0 && kitty.Rows > 0)
-            {
-                kittyWidth = kitty.Columns * (float)CellSize.Width;
-                kittyHeight = kitty.Rows * (float)CellSize.Height;
-            }
-            else if (kitty.Columns > 0)
-            {
-                kittyWidth = kitty.Columns * (float)CellSize.Width;
-                kittyHeight = sourceHeight * (kittyWidth / Math.Max(0.1f, sourceWidth));
-            }
-            else if (kitty.Rows > 0)
-            {
-                kittyHeight = kitty.Rows * (float)CellSize.Height;
-                kittyWidth = sourceWidth * (kittyHeight / Math.Max(0.1f, sourceHeight));
-            }
-            else
-            {
-                kittyWidth = sourceWidth;
-                kittyHeight = sourceHeight;
-            }
-
-            return SKRect.Create(
-                left,
-                top,
-                Math.Min(Math.Max(0.1f, kittyWidth), bounds.Right - left),
-                Math.Min(Math.Max(0.1f, kittyHeight), bounds.Bottom - top));
+            return TryResolveKittySourceRect(kitty, bitmap.Width, bitmap.Height, out var src, out _)
+                ? KittyDestination(kitty, src.Width, src.Height, left, top)
+                : SKRect.Create(left, top, 0, 0);
         }
 
         if (image.InlineImage is not { } inline)
@@ -1309,12 +1510,18 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
         _rowPictureCandidates?.Clear();
         _glyphs.Dispose();
         _fonts.Dispose();
+        ClearImageCache();
+    }
+
+    private void ClearImageCache()
+    {
         foreach (var image in _images.Values)
         {
             image.Dispose();
         }
 
         _images.Clear();
+        _imageOrder.Clear();
         _imageBytes = 0;
         _invalidImages.Clear();
     }
@@ -1506,6 +1713,7 @@ public sealed class SkiaTerminalRenderer : ITerminalRenderer, IDisposable
     {
         public SKBitmap Bitmap { get; } = bitmap;
         public long ByteSize { get; } = byteSize;
+        public LinkedListNode<object>? OrderNode { get; set; }
         public void Dispose() => Bitmap.Dispose();
     }
 

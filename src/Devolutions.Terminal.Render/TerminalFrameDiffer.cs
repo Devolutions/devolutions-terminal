@@ -15,7 +15,13 @@ public static class TerminalFrameDiffer
             previous.Background != current.Background ||
             !ImagesEqual(previous.Images, current.Images))
         {
-            return Enumerable.Range(0, current.Rows).ToArray();
+            var allRows = new int[current.Rows];
+            for (var i = 0; i < allRows.Length; i++)
+            {
+                allRows[i] = i;
+            }
+
+            return allRows;
         }
 
         var dirty = new List<int>();
@@ -38,6 +44,11 @@ public static class TerminalFrameDiffer
         IReadOnlyList<TerminalImageOverlay> left,
         IReadOnlyList<TerminalImageOverlay> right)
     {
+        if (ReferenceEquals(left, right) || (left.Count == 0 && right.Count == 0))
+        {
+            return true;
+        }
+
         if (left.Count != right.Count)
         {
             return false;
@@ -51,13 +62,43 @@ public static class TerminalFrameDiffer
                 a.Protocol != b.Protocol ||
                 a.AlternateBuffer != b.AlternateBuffer ||
                 a.AnchorColumn != b.AnchorColumn ||
-                a.AnchorRow != b.AnchorRow)
+                a.AnchorRow != b.AnchorRow ||
+                a.CellGeometry != b.CellGeometry ||
+                !ReferenceEquals(a.Sixel, b.Sixel) ||
+                !ReferenceEquals(a.InlineImage, b.InlineImage) ||
+                !KittyEqual(a.Kitty, b.Kitty))
             {
                 return false;
             }
         }
 
         return true;
+    }
+
+    private static bool KittyEqual(KittyImage? left, KittyImage? right)
+    {
+        if (ReferenceEquals(left, right))
+        {
+            return true;
+        }
+
+        if (left is null || right is null)
+        {
+            return false;
+        }
+
+        return left.ImageId == right.ImageId &&
+               left.PlacementId == right.PlacementId &&
+               left.Columns == right.Columns &&
+               left.Rows == right.Rows &&
+               left.PixelOffsetX == right.PixelOffsetX &&
+               left.PixelOffsetY == right.PixelOffsetY &&
+               left.CropX == right.CropX &&
+               left.CropY == right.CropY &&
+               left.CropWidth == right.CropWidth &&
+               left.CropHeight == right.CropHeight &&
+               left.ZIndex == right.ZIndex &&
+               ReferenceEquals(left.Data, right.Data);
     }
 
     private static void AddCursorRow(

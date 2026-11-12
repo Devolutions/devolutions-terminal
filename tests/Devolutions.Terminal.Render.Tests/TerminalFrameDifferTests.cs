@@ -76,4 +76,33 @@ public sealed class TerminalFrameDifferTests
 
         Assert.Equal([0, 1], TerminalFrameDiffer.GetDirtyRows(before, after));
     }
+
+    [Fact]
+    public void KittyPlacementPropertyAndCellGeometryChangesInvalidateFullViewport()
+    {
+        var engine = new TerminalEngine(4, 2);
+        var data = new KittyImageData(1, 1, [255, 0, 0, 255]);
+        var baseFrame = TerminalRenderPlanner.Create(engine.CreateSnapshot(), engine.Scheme) with
+        {
+            Images =
+            [
+                new TerminalImageOverlay(1, TerminalImageProtocol.KittyGraphics, false, 0, 0, null, null)
+                {
+                    Kitty = new KittyImage(1, 1, data) { Columns = 1, Rows = 1, ZIndex = 0 },
+                },
+            ],
+        };
+        var changedZ = baseFrame with
+        {
+            Images =
+            [
+                baseFrame.Images[0] with
+                {
+                    Kitty = new KittyImage(1, 1, data) { Columns = 1, Rows = 1, ZIndex = 5 },
+                },
+            ],
+        };
+
+        Assert.Equal([0, 1], TerminalFrameDiffer.GetDirtyRows(baseFrame, changedZ));
+    }
 }
