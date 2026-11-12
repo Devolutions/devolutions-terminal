@@ -106,6 +106,7 @@ public sealed class TermControl : Avalonia.Controls.Control
     private double _replaySpeed = 1d;
     private double _replayPositionSeconds;
     private double _replayDurationSeconds;
+    private bool _suppressPointerContextRequest;
 
     // Throughput-harness diagnostics (Devolutions.Terminal.Bench): posts requested by
     // the engine-invalidated handler vs UI drains actually executed.
@@ -138,6 +139,7 @@ public sealed class TermControl : Avalonia.Controls.Control
         DragDrop.SetAllowDrop(this, true);
         AddHandler(DragDrop.DragOverEvent, OnDragOver);
         AddHandler(DragDrop.DropEvent, OnDrop);
+        ContextRequested += OnContextRequested;
         TextInputMethodClientRequested += OnTextInputMethodClientRequested;
         GotFocus += (_, _) => SendFocusChanged(focused: true);
         LostFocus += (_, _) =>
@@ -2130,6 +2132,7 @@ public sealed class TermControl : Avalonia.Controls.Control
     protected override void OnPointerPressed(PointerPressedEventArgs e)
     {
         Focus();
+        _suppressPointerContextRequest = false;
         var point = e.GetCurrentPoint(this);
         var (x, y) = HitTest(point.Position);
         if (e.Pointer.Type == PointerType.Touch)
@@ -2143,6 +2146,14 @@ public sealed class TermControl : Avalonia.Controls.Control
 
         if (Engine.MouseTracking && !BypassMouseTracking(e.KeyModifiers))
         {
+            if (point.Properties.IsRightButtonPressed ||
+                (OperatingSystem.IsMacOS() &&
+                 point.Properties.IsLeftButtonPressed &&
+                 e.KeyModifiers == KeyModifiers.Control))
+            {
+                _suppressPointerContextRequest = true;
+            }
+
             _pressedMouseButton = PointerButton(point);
             WriteMouseInput(button: _pressedMouseButton, x, y, released: false, e.KeyModifiers);
             e.Pointer.Capture(this);
@@ -2151,18 +2162,26 @@ public sealed class TermControl : Avalonia.Controls.Control
             return;
         }
 
+        var isControlSecondaryClick =
+            OperatingSystem.IsMacOS() &&
+            point.Properties.IsLeftButtonPressed &&
+            e.KeyModifiers == KeyModifiers.Control;
+        var isSecondaryClick = point.Properties.IsRightButtonPressed || isControlSecondaryClick;
+
         var hyperlink = HitTestHyperlink(x, y);
-        if (point.Properties.IsRightButtonPressed && hyperlink is not null)
+        if (isSecondaryClick && hyperlink is not null)
         {
+            _suppressPointerContextRequest = true;
             HyperlinkContextRequested?.Invoke(this, new TerminalHyperlinkEventArgs(hyperlink));
             e.Handled = true;
             base.OnPointerPressed(e);
             return;
         }
 
-        if (point.Properties.IsRightButtonPressed &&
+        if (isSecondaryClick &&
             Profile?.RightClickContextMenu != true)
         {
+            _suppressPointerContextRequest = true;
             if (_selection is null)
             {
                 ObserveInteractionAsync("paste", PasteAsync());
@@ -2173,6 +2192,15 @@ public sealed class TermControl : Avalonia.Controls.Control
                 ClearSelection();
             }
 
+            e.Handled = true;
+            base.OnPointerPressed(e);
+            return;
+        }
+
+        if (isControlSecondaryClick)
+        {
+            _suppressPointerContextRequest = true;
+            RaiseEvent(new ContextRequestedEventArgs(e));
             e.Handled = true;
             base.OnPointerPressed(e);
             return;
@@ -2294,6 +2322,19 @@ public sealed class TermControl : Avalonia.Controls.Control
         EndSelection();
         e.Pointer.Capture(null);
         base.OnPointerReleased(e);
+    }
+
+    private void OnContextRequested(object? sender, ContextRequestedEventArgs e)
+    {
+        if (e.TryGetPosition(this, out _) &&
+            (_suppressPointerContextRequest || Profile?.RightClickContextMenu != true))
+        {
+            _suppressPointerContextRequest = false;
+            e.Handled = true;
+            return;
+        }
+
+        _suppressPointerContextRequest = false;
     }
 
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e)

@@ -13,8 +13,9 @@ registration, and Homebrew remain out of scope.
 - Settings at `~/Library/Application Support/Devolutions/Terminal/`
 - Native Command-key defaults for clipboard, tabs, windows, search, settings,
   selection, font sizing, full screen, and quit actions
-- Native macOS application and window menus, Hide, and Dock reopen after the
-  last window is closed
+- Native macOS application menu (with Avalonia's Services, Hide, Hide Others,
+  Show All, and Quit items), dynamic window and `NativeDock` menus, Iseberg
+  `NativeMenu` menu-bar integration, and Dock reopen after the last window is closed
 - Login-shell commandlines (`/bin/zsh -l`) so Dock launches pick up `~/.zprofile`
   and Homebrew `PATH`
 - `TERM_PROGRAM=Devolutions.Terminal` and extra Homebrew/MacPorts `PATH` entries

@@ -412,4 +412,66 @@ public sealed class WindowActionRegistrationTests
             Directory.Delete(directory, recursive: true);
         }
     }
+
+    [AvaloniaFact]
+    public async Task MacOsNativeWindowMenuAndTabContextMenusExposeExpectedItems()
+    {
+        var window = new MainWindow(0, string.Empty, SettingsOnlyStartup);
+        await window.ActivateAsync(new TerminalWindowActivation(
+            null,
+            null,
+            null,
+            null,
+            TerminalWindowLaunchMode.Default,
+            [new ActionAndArgs(
+                ShortcutAction.OpenSettings,
+                new OpenSettingsArgs(SettingsTarget.SettingsUI))]));
+        Dispatcher.UIThread.RunJobs();
+
+        var newTabMenu = window.BuildNewTabMenu();
+        Assert.Contains(newTabMenu, static item => Equals(item.Header, "Split pane") && item.Icon is not null);
+        Assert.Contains(newTabMenu, static item => Equals(item.Header, "Settings") && item.Icon is not null);
+        Assert.Contains(newTabMenu, static item => Equals(item.Header, "Command palette") && item.Icon is not null);
+
+        if (OperatingSystem.IsMacOS())
+        {
+            var windowMenu = NativeMenu.GetMenu(window);
+            Assert.NotNull(windowMenu);
+            var visibleHeaders = windowMenu.Items
+                .OfType<NativeMenuItem>()
+                .Where(static item => item.IsVisible && item is not NativeMenuItemSeparator)
+                .Select(static item => item.Header ?? string.Empty)
+                .ToArray();
+            Assert.Equal(["File", "Edit", "View", "Window", "Help"], visibleHeaders);
+        }
+    }
+
+    [AvaloniaFact]
+    public void AboutWindowDisplaysDevolutionsTerminalBrandingAndOpensLinks()
+    {
+        string? opened = null;
+        var about = new AboutWindow(url => opened = url);
+        about.Show();
+        try
+        {
+            Assert.Equal("About Devolutions Terminal", about.Title);
+            var labels = about.GetVisualDescendants()
+                .OfType<TextBlock>()
+                .Select(static text => text.Text ?? string.Empty)
+                .ToArray();
+            Assert.Contains("Devolutions Terminal", labels);
+            Assert.Contains(labels, static text => text.StartsWith("Version ", StringComparison.Ordinal));
+            Assert.Contains(labels, static text => text.Contains("Devolutions Inc.", StringComparison.Ordinal));
+
+            var sourceButton = about.GetVisualDescendants()
+                .OfType<Button>()
+                .Single(static button => Equals(button.Content, "Source Code"));
+            sourceButton.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
+            Assert.Equal("https://github.com/Devolutions/devolutions-terminal", opened);
+        }
+        finally
+        {
+            about.Close();
+        }
+    }
 }

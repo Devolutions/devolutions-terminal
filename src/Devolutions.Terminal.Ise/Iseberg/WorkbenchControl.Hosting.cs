@@ -494,7 +494,105 @@ public sealed partial class WorkbenchControl
             window.PropertyChanged += OnHostPropertyChanged;
             window.PositionChanged += OnHostPositionChanged;
             if (hostingOptions.Preferences is not null) ApplyWindowGeometry();
+            if (OperatingSystem.IsMacOS() && hostingOptions.ShowMenu)
+            {
+                ExportNativeWindowMenu(window);
+            }
         }
+    }
+
+    private bool IsNativeWindowMenuActive =>
+        managesWindow && hostWindow is { } window && NativeMenu.GetIsNativeMenuExported(window);
+
+    private void ExportNativeWindowMenu(Window window)
+    {
+        var nativeRoot = new NativeMenu();
+        void SyncRoot()
+        {
+            UpdateMenuState();
+            nativeRoot.Items.Clear();
+            foreach (var top in WorkbenchMenu.Items.OfType<MenuItem>())
+            {
+                if (!top.IsVisible) continue;
+                var sub = BuildNativeSubmenu(top);
+                nativeRoot.Items.Add(new NativeMenuItem(StripMnemonic(top.Header?.ToString())) { Menu = sub });
+            }
+        }
+
+        nativeRoot.NeedsUpdate += (_, _) => SyncRoot();
+        SyncRoot();
+        NativeMenu.SetMenu(window, nativeRoot);
+        WorkbenchMenu.IsVisible = hostingOptions.ShowMenu && !NativeMenu.GetIsNativeMenuExported(window);
+        window.GetObservable(NativeMenu.IsNativeMenuExportedProperty).Subscribe(new ActionObserver<bool>(
+            exported => WorkbenchMenu.IsVisible = hostingOptions.ShowMenu && !exported));
+    }
+
+    private static NativeMenu BuildNativeSubmenu(MenuItem parent)
+    {
+        var menu = new NativeMenu();
+        void Populate()
+        {
+            parent.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.SubmenuOpenedEvent));
+            menu.Items.Clear();
+            foreach (var raw in parent.Items)
+            {
+                if (raw is Separator)
+                {
+                    if (menu.Items.Count > 0 && menu.Items[^1] is not NativeMenuItemSeparator)
+                        menu.Items.Add(new NativeMenuItemSeparator());
+                    continue;
+                }
+
+                if (raw is not MenuItem child || !child.IsVisible) continue;
+                var title = StripMnemonic(child.Header?.ToString());
+                if (title == "-")
+                {
+                    if (menu.Items.Count > 0 && menu.Items[^1] is not NativeMenuItemSeparator)
+                        menu.Items.Add(new NativeMenuItemSeparator());
+                    continue;
+                }
+
+                if (child.Items.Count > 0)
+                {
+                    var childMenu = BuildNativeSubmenu(child);
+                    menu.Items.Add(new NativeMenuItem(title) { Menu = childMenu, IsEnabled = child.IsEnabled });
+                    continue;
+                }
+
+                var captured = child;
+                var item = new NativeMenuItem(title)
+                {
+                    IsEnabled = child.IsEnabled,
+                    Gesture = child.InputGesture,
+                };
+                if (child.ToggleType != MenuItemToggleType.None)
+                {
+                    item.ToggleType = child.ToggleType;
+                    item.IsChecked = child.IsChecked;
+                }
+
+                item.Click += (_, _) => captured.RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(MenuItem.ClickEvent));
+                menu.Items.Add(item);
+            }
+        }
+
+        menu.NeedsUpdate += (_, _) => Populate();
+        Populate();
+        return menu;
+    }
+
+    private static string StripMnemonic(string? text) =>
+        string.IsNullOrEmpty(text)
+            ? string.Empty
+            : text.Replace("__", "\u0001", StringComparison.Ordinal)
+                  .Replace("_", string.Empty, StringComparison.Ordinal)
+                  .Replace("\u0001", "_", StringComparison.Ordinal);
+
+    private sealed class ActionObserver<T>(Action<T> onNext) : IObserver<T>
+    {
+        public void OnCompleted() { }
+        public void OnError(Exception error) { }
+        public void OnNext(T value) => onNext(value);
     }
 
     private void DetachHostWindow()

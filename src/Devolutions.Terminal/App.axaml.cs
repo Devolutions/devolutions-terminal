@@ -23,6 +23,24 @@ public partial class TerminalApp : Application
     public override void Initialize()
     {
         AvaloniaXamlLoader.Load(this);
+        if (OperatingSystem.IsMacOS())
+        {
+            // Attach before AppBuilder.AfterSetup runs SetupApplicationMenuExporter;
+            // otherwise Avalonia falls back to its built-in "About Avalonia" menu.
+            NativeMenu.SetMenu(
+                this,
+                MacOsNativeMenu.CreateApplicationMenu(
+                    about: () =>
+                    {
+                        (_desktop as IActivatableLifetime)?.TryLeaveBackground();
+                        var active = _desktop?.Windows.OfType<MainWindow>().LastOrDefault(static w => w.IsActive)
+                                     ?? _desktop?.Windows.OfType<MainWindow>().LastOrDefault();
+                        AboutWindow.ShowOrActivate(active);
+                    },
+                    settings: () => DispatchToActiveWindow(new ActionAndArgs(
+                        ShortcutAction.OpenSettings,
+                        new OpenSettingsArgs(SettingsTarget.SettingsUI)))));
+        }
     }
 
     public override void OnFrameworkInitializationCompleted()
@@ -39,13 +57,40 @@ public partial class TerminalApp : Application
             if (OperatingSystem.IsMacOS())
             {
                 desktop.ShutdownMode = ShutdownMode.OnExplicitShutdown;
-                NativeMenu.SetMenu(
+                desktop.ShutdownRequested += (_, e) =>
+                {
+                    if (desktop.Windows.OfType<MainWindow>().Any())
+                    {
+                        e.Cancel = true;
+                        _ = MainWindow.RequestApplicationCloseAsync(desktop);
+                    }
+                };
+                MacOsNativeMenu.InstallSecondaryWindowMenuHook();
+                NativeDock.SetMenu(
                     this,
-                    MacOsNativeMenu.CreateApplicationMenu(
-                        about: () => DispatchToActiveWindow(ShortcutAction.OpenAbout),
-                        settings: () => DispatchToActiveWindow(ShortcutAction.OpenSettings),
-                        hide: () => (desktop as IActivatableLifetime)?.TryEnterBackground(),
-                        quit: () => _ = MainWindow.RequestApplicationCloseAsync(desktop)));
+                    MacOsNativeMenu.CreateDockMenu(
+                        getWindows: () => desktop.Windows
+                            .OfType<MainWindow>()
+                            .Select((window, index) => new MacOsDockWindowEntry(
+                                !string.IsNullOrWhiteSpace(window.Title)
+                                    ? window.Title
+                                    : !string.IsNullOrWhiteSpace(window.WindowName)
+                                        ? window.WindowName
+                                        : $"Terminal {index + 1}",
+                                window.IsActive,
+                                () => ActivateWindowFromMenu(window)))
+                            .ToArray(),
+                        getProfiles: () =>
+                        {
+                            var activeSettings = (desktop.Windows.OfType<MainWindow>().FirstOrDefault() as IMacOsWindowMenuHost)?.Settings
+                                ?? SettingsService.LoadWithDynamicProfiles(DynamicProfileManager.CreateDefault());
+                            return activeSettings.Profiles
+                                .Where(static profile => !profile.Hidden && !profile.Orphaned)
+                                .ToArray();
+                        },
+                        newWindow: () => OpenNewWindowFromDock(profile: null),
+                        newTab: () => DispatchToActiveWindow(new ActionAndArgs(ShortcutAction.NewTab)),
+                        openProfileInNewWindow: OpenNewWindowFromDock));
             }
 
             desktop.MainWindow = _router.CreateInitial(
@@ -184,12 +229,63 @@ public partial class TerminalApp : Application
         (_desktop as IActivatableLifetime)?.TryLeaveBackground();
     }
 
-    private void DispatchToActiveWindow(ShortcutAction action)
+    private void DispatchToActiveWindow(ActionAndArgs action)
     {
-        var window = _desktop?.Windows.OfType<MainWindow>().LastOrDefault(static item => item.IsActive)
-            ?? _desktop?.Windows.OfType<MainWindow>().LastOrDefault()
-            ?? EnsureWindow();
-        window?.DispatchMenuAction(action);
+        var existing = _desktop?.Windows.OfType<MainWindow>().LastOrDefault(static item => item.IsActive)
+            ?? _desktop?.Windows.OfType<MainWindow>().LastOrDefault();
+        if (existing is not null)
+        {
+            ActivateWindowFromMenu(existing);
+            existing.DispatchMenuAction(action);
+            return;
+        }
+
+        var created = EnsureWindow();
+        if (created is not null)
+        {
+            _ = DispatchAfterInitialActivationAsync(created, action);
+        }
+    }
+
+    private static async Task DispatchAfterInitialActivationAsync(MainWindow window, ActionAndArgs action)
+    {
+        try
+        {
+            await window.InitialActivation.ConfigureAwait(true);
+        }
+        catch
+        {
+            return;
+        }
+
+        window.DispatchMenuAction(action);
+    }
+
+    private void ActivateWindowFromMenu(MainWindow window)
+    {
+        if (window.WindowState == WindowState.Minimized)
+        {
+            window.WindowState = _windowStates.GetValueOrDefault(window, WindowState.Normal);
+        }
+
+        window.ShowInTaskbar = true;
+        window.Show();
+        window.Activate();
+        (_desktop as IActivatableLifetime)?.TryLeaveBackground();
+    }
+
+    private void OpenNewWindowFromDock(ProfileSettings? profile)
+    {
+        if (_router is null || _desktop is null)
+        {
+            return;
+        }
+
+        var window = _router.CreateNewWindow(profile);
+        _desktop.MainWindow ??= window;
+        window.Show();
+        window.Activate();
+        (_desktop as IActivatableLifetime)?.TryLeaveBackground();
     }
 
     private MainWindow? EnsureWindow()
