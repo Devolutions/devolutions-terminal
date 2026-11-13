@@ -47,6 +47,10 @@ public interface IVtDispatch
     {
     }
     void OscDispatch(int command, ReadOnlySpan<char> data);
+    void OscDispatch(int command, ReadOnlySpan<char> data, int sequenceLength) =>
+        OscDispatch(command, data);
+    void OscDispatch(int command, ReadOnlySpan<byte> data, int sequenceLength) =>
+        OscDispatch(command, Encoding.UTF8.GetString(data), sequenceLength);
     void ApcDispatch(ReadOnlySpan<char> data)
     {
     }

@@ -1,3 +1,6 @@
+using System.Text.Json.Serialization;
+using Devolutions.Terminal.Core;
+
 namespace Devolutions.Terminal.App.Models;
 
 public enum TerminalProgressState
@@ -20,6 +23,8 @@ public sealed class PanePresentationState
     public bool IsReadOnly { get; set; }
     public bool HasBellIndicator { get; set; }
     public bool HasUnseenActivity { get; set; }
+    [JsonIgnore]
+    public TerminalProgramStatusSnapshot? ProgramStatus { get; set; }
 
     public void SetProgress(TerminalProgressState state, double value = 0)
     {

@@ -102,6 +102,7 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
     private bool _alternateScroll;
     private bool _inBandResize;
     private readonly Stack<string> _titleStack = new(16);
+    private readonly TerminalProgramStatusStore _programStatus = new();
 
     public TerminalEngine(int columns = 120, int rows = 30, int historySize = 9001)
     {
@@ -143,6 +144,7 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
 
     public string Title { get; private set; } = "Devolutions Terminal";
     public string? WorkingDirectory { get; private set; }
+    public TerminalProgramStatusSnapshot ProgramStatus => _programStatus.Snapshot;
     public bool AlternateBufferActive => ReferenceEquals(_active, _alternate);
     public bool CursorVisible { get; private set; }
     public bool CursorBlinking { get; private set; }
@@ -216,6 +218,7 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
     public event EventHandler<string>? TitleChanged;
     public event EventHandler<string?>? WorkingDirectoryChanged;
     public event EventHandler? ShellIntegrationChanged;
+    public event EventHandler<TerminalProgramStatusSnapshot>? ProgramStatusChanged;
     public event EventHandler<string>? ClipboardWriteRequested;
     public event EventHandler<TerminalNotification>? NotificationRequested;
     public event EventHandler<TerminalEngineDiagnostic>? Diagnostic;
@@ -270,6 +273,10 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
     public void Reset()
     {
         _parser.Reset();
+        if (_programStatus.Clear())
+        {
+            ProgramStatusChanged?.Invoke(this, ProgramStatus);
+        }
         _sgr = CellAttributes.Default;
         _active = _primary;
         CursorVisible = true;
@@ -334,6 +341,16 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         _primary.Reset(keepHistory: false);
         _alternate.Reset(keepHistory: false);
         Invalidated?.Invoke(this, EventArgs.Empty);
+    }
+
+    public void ProgramStatusProcessExited() => ClearTransientProgramStatus();
+
+    private void ClearTransientProgramStatus()
+    {
+        if (_programStatus.ProcessExited())
+        {
+            ProgramStatusChanged?.Invoke(this, ProgramStatus);
+        }
     }
 
     public void ConfigureOptionalFeatures(
@@ -768,6 +785,27 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
     }
 
     void IVtDispatch.OscDispatch(int command, ReadOnlySpan<char> data)
+        => DispatchOsc(command, data, int.MaxValue);
+
+    void IVtDispatch.OscDispatch(int command, ReadOnlySpan<char> data, int sequenceLength)
+        => DispatchOsc(command, data, sequenceLength);
+
+    void IVtDispatch.OscDispatch(int command, ReadOnlySpan<byte> data, int sequenceLength)
+    {
+        if (command == 7501 && sequenceLength <= 4096)
+        {
+            if (data.SequenceEqual("?"u8))
+            {
+                RespondOsc("7501;?");
+            }
+            else if (_programStatus.Apply(data))
+            {
+                ProgramStatusChanged?.Invoke(this, ProgramStatus);
+            }
+        }
+    }
+
+    private void DispatchOsc(int command, ReadOnlySpan<char> data, int sequenceLength)
     {
         switch (command)
         {
@@ -2632,6 +2670,10 @@ public sealed class TerminalEngine : ITerminalEngine, IVtDispatch
         switch (data[0])
         {
             case 'A':
+                if (_programStatus.BeginPrompt())
+                {
+                    ProgramStatusChanged?.Invoke(this, ProgramStatus);
+                }
                 Buffer.StartPrompt();
                 break;
             case 'B':
