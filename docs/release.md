@@ -258,8 +258,8 @@ credentials are unavailable.
 
 The release workflow in `.github/workflows/build-terminal.yml` publishes signed Windows packages and the corresponding platform archives directly to GitHub Releases without staging them in OneDrive.
 It builds unsigned per-architecture MSIX and MSI packages for Windows x64 and ARM64.
-MSIX uses WinApp CLI's native `az-sign` command and Windows SDK verification on the Windows packaging runner.
-MSI containers and their application binaries use Devolutions `psign-tool` with Azure Artifact Signing (Trusted Signing).
+MSIX packages, MSI containers, and their application binaries use Devolutions `psign-tool` 0.8.4 with Azure Artifact Signing (Trusted Signing).
+MSIX packages and Windows application binaries are verified with the Windows SDK on the Windows packaging runners.
 The production private key never lands on the runner.
 Signed Windows packages are uploaded alongside Linux and macOS archives.
 The workflow is intended for tag-based releases and for manual dispatch.
@@ -274,7 +274,7 @@ Manual dispatch provides these inputs:
   updating a GitHub Release. The combined release assets are uploaded as a
   workflow artifact.
 - `sign_dry_run` — with `dry_run`, sign Windows packages using the selected signing environment when all signing secrets are available.
-  This validates the real WinApp CLI, `psign-tool`, and Azure Artifact Signing paths without publishing.
+  This validates the real `psign-tool` and Azure Artifact Signing paths without publishing.
   Without this option, dry-run assets remain unsigned.
 - `github-env` — selects the GitHub Environment containing signing credentials:
   `test`, `prod`, or `auto`. `auto` selects `publish-prod` for `master` and tag
