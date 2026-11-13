@@ -45,6 +45,9 @@ param(
     [Parameter(ParameterSetName = "ArtifactSigningAccessToken", Mandatory)]
     [string] $ArtifactSigningAccessToken,
 
+    [Parameter(ParameterSetName = "ArtifactSigningAccessToken")]
+    [switch] $TrustTestSigningRoot,
+
     [Parameter(ParameterSetName = "ArtifactSigningClientSecret")]
     [Parameter(ParameterSetName = "ArtifactSigningAccessToken")]
     [string] $TimestampServer = "http://timestamp.acs.microsoft.com/",
@@ -64,6 +67,12 @@ if (-not [string]::IsNullOrWhiteSpace($PackageDirectory)) {
 }
 
 $useArtifactSigning = $PSCmdlet.ParameterSetName -in @("ArtifactSigningClientSecret", "ArtifactSigningAccessToken")
+
+if ($TrustTestSigningRoot -and (
+    -not $IsWindows -or $env:GITHUB_ACTIONS -ne "true" -or $env:RUNNER_ENVIRONMENT -ne "github-hosted"
+)) {
+    throw "-TrustTestSigningRoot is restricted to GitHub-hosted Windows runners."
+}
 
 function Get-BinaryFiles {
     param(
@@ -247,6 +256,27 @@ $pointer = $null
 $plainTextPassword = $null
 try {
     if ($useArtifactSigning) {
+        if ($TrustTestSigningRoot) {
+            $rootPath = Join-Path ([IO.Path]::GetTempPath()) ("artifact-signing-root-" + [guid]::NewGuid().ToString("N") + ".cer")
+            try {
+                & $PsignTool portable artifact-signing-root `
+                    --endpoint $ArtifactSigningEndpoint `
+                    --account-name $ArtifactSigningAccountName `
+                    --profile-name $ArtifactSigningProfileName `
+                    --access-token $ArtifactSigningAccessToken `
+                    --output $rootPath
+                if ($LASTEXITCODE -ne 0) {
+                    throw "Retrieving the test Artifact Signing profile root failed with exit code $LASTEXITCODE."
+                }
+
+                $root = Import-Certificate -FilePath $rootPath -CertStoreLocation Cert:\LocalMachine\Root -ErrorAction Stop
+                Write-Host "Trusted test profile root '$($root.Thumbprint)' on this ephemeral Windows runner."
+            }
+            finally {
+                Remove-Item -LiteralPath $rootPath -ErrorAction SilentlyContinue
+            }
+        }
+
         $filesToSign = @()
         if ($msixPackages.Count -gt 0) {
             $filesToSign += @($msixPackages.FullName)

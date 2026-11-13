@@ -1019,6 +1019,7 @@ jobs:
           TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.TRUSTED_SIGNING_ACCOUNT_NAME }}
           TRUSTED_SIGNING_PROFILE_NAME: ${{ secrets.TRUSTED_SIGNING_PROFILE_NAME }}
           TRUSTED_SIGNING_TIMESTAMP_SERVER: ${{ vars.TRUSTED_SIGNING_TIMESTAMP_SERVER }}
+          TRUST_TEST_SIGNING_ROOT: ${{ needs.release-metadata.outputs.dry_run == 'true' && needs.release-metadata.outputs.publish_environment == 'publish-test' }}
         run: |
           $timestampServer = $env:TRUSTED_SIGNING_TIMESTAMP_SERVER
           if ([string]::IsNullOrWhiteSpace($timestampServer)) {
@@ -1040,6 +1041,7 @@ jobs:
             -ArtifactSigningAccountName $env:TRUSTED_SIGNING_ACCOUNT_NAME `
             -ArtifactSigningProfileName $env:TRUSTED_SIGNING_PROFILE_NAME `
             -ArtifactSigningAccessToken $accessToken `
+            -TrustTestSigningRoot:($env:TRUST_TEST_SIGNING_ROOT -eq 'true') `
             -TimestampServer $timestampServer
 
       - name: Validate package structure
@@ -1397,6 +1399,7 @@ jobs:
           TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.TRUSTED_SIGNING_ACCOUNT_NAME }}
           TRUSTED_SIGNING_PROFILE_NAME: ${{ secrets.TRUSTED_SIGNING_PROFILE_NAME }}
           TRUSTED_SIGNING_TIMESTAMP_SERVER: ${{ vars.TRUSTED_SIGNING_TIMESTAMP_SERVER }}
+          TRUST_TEST_SIGNING_ROOT: ${{ needs.release-metadata.outputs.dry_run == 'true' && needs.release-metadata.outputs.publish_environment == 'publish-test' }}
         run: |
           $timestampServer = $env:TRUSTED_SIGNING_TIMESTAMP_SERVER
           if ([string]::IsNullOrWhiteSpace($timestampServer)) {
@@ -1418,6 +1421,7 @@ jobs:
             -ArtifactSigningAccountName $env:TRUSTED_SIGNING_ACCOUNT_NAME `
             -ArtifactSigningProfileName $env:TRUSTED_SIGNING_PROFILE_NAME `
             -ArtifactSigningAccessToken $accessToken `
+            -TrustTestSigningRoot:($env:TRUST_TEST_SIGNING_ROOT -eq 'true') `
             -TimestampServer $timestampServer
 
       - name: Verify signed Windows NuGet payloads

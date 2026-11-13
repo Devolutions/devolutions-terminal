@@ -18,12 +18,18 @@ $modulePath = Join-Path $testRoot "Devolutions.Iseberg.PowerShell.dll"
 $libraryPath = Join-Path $testRoot "third-party.dll"
 $hostPath = Join-Path $testRoot "runtimes\win-arm64\native\arm64\OpenConsole.exe"
 $expectedPublisher = "CN=Fixture Publisher"
+$originalGitHubActions = $env:GITHUB_ACTIONS
+$originalRunnerEnvironment = $env:RUNNER_ENVIRONMENT
 $testState = @{
     Publisher = $expectedPublisher
     SignatureOverrides = @{}
     SignaturePaths = [Collections.Generic.List[string]]::new()
     ToolCalls = [Collections.Generic.List[object]]::new()
     ToolExitCode = 0
+    SigningCalls = [Collections.Generic.List[object]]::new()
+    ImportedRoots = [Collections.Generic.List[object]]::new()
+    RootExitCode = 0
+    RootImportFails = $false
 }
 
 function Get-AuthenticodeSignature {
@@ -55,6 +61,19 @@ function winapp {
     "Simulated SignTool result."
 }
 
+function Import-Certificate {
+    param([string] $FilePath, [string] $CertStoreLocation, [string] $ErrorAction)
+
+    if ($testState.RootImportFails) {
+        throw "Simulated certificate import failure."
+    }
+    if ((Get-Content -LiteralPath $FilePath -Raw) -cne "fixture-root") {
+        throw "The retrieved profile root was not passed to certificate import."
+    }
+    $testState.ImportedRoots.Add(@{ Path = $FilePath; Store = $CertStoreLocation })
+    [pscustomobject]@{ Thumbprint = "fixture-root-thumbprint" }
+}
+
 function Assert-Rejected {
     param(
         [scriptblock] $Action,
@@ -83,6 +102,10 @@ function Test-Case {
     $testState.SignaturePaths.Clear()
     $testState.ToolCalls.Clear()
     $testState.ToolExitCode = 0
+    $testState.SigningCalls.Clear()
+    $testState.ImportedRoots.Clear()
+    $testState.RootExitCode = 0
+    $testState.RootImportFails = $false
     & $Action
     Write-Host "PASS: $Name"
 }
@@ -91,6 +114,32 @@ try {
     New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($hostPath)) -Force | Out-Null
     foreach ($path in @($appPath, $aliasPath, $modulePath, $libraryPath, $hostPath)) {
         [IO.File]::WriteAllBytes($path, [byte[]]@())
+    }
+    $rootToolPath = Join-Path $testRoot "psign-root-fixture.ps1"
+    @'
+$testState.SigningCalls.Add(@($args))
+if ($args[0] -eq 'portable' -and $args[1] -eq 'artifact-signing-root') {
+    if ($testState.RootExitCode -eq 0) {
+        $outputIndex = [Array]::IndexOf($args, '--output')
+        [IO.File]::WriteAllText($args[$outputIndex + 1], 'fixture-root')
+    }
+    Set-Variable -Name LASTEXITCODE -Value $testState.RootExitCode -Scope 1
+} else {
+    if ($testState.ImportedRoots.Count -ne 1) {
+        throw 'The authenticated test root must be imported before signing.'
+    }
+    Set-Variable -Name LASTEXITCODE -Value 0 -Scope 1
+}
+'@ | Set-Content -LiteralPath $rootToolPath -Encoding utf8
+    $rootSigningArguments = @{
+        BinaryDirectory = $testRoot
+        Version = "1.2.3.4"
+        ArtifactSigningEndpoint = "https://fixture.codesigning.azure.net"
+        ArtifactSigningAccountName = "fixture-account"
+        ArtifactSigningProfileName = "fixture-profile"
+        ArtifactSigningAccessToken = "fixture-token"
+        PsignTool = $rootToolPath
+        TrustTestSigningRoot = $true
     }
 
     Test-Case "TrustedTimestampedRecursivePayload" {
@@ -127,6 +176,65 @@ Set-Variable -Name LASTEXITCODE -Value 0 -Scope 1
         if ($signedPaths.Count -ne $expectedPaths.Count -or
             @(Compare-Object -ReferenceObject $expectedPaths -DifferenceObject $signedPaths).Count -ne 0) {
             throw "Release signing must include every payload binary, including the root Iseberg module."
+        }
+    }
+    foreach ($context in @(
+        @{ Name = "OutsideGitHubActions"; Actions = "false"; Runner = "github-hosted" },
+        @{ Name = "SelfHostedRunner"; Actions = "true"; Runner = "self-hosted" }
+    )) {
+        Test-Case "TestSigningRootRejected-$($context.Name)" {
+            $env:GITHUB_ACTIONS = $context.Actions
+            $env:RUNNER_ENVIRONMENT = $context.Runner
+            Assert-Rejected {
+                & (Join-Path $PSScriptRoot "Sign-Packages.ps1") @rootSigningArguments
+            } "restricted to GitHub-hosted Windows runners"
+            if ($testState.SigningCalls.Count -ne 0 -or $testState.ImportedRoots.Count -ne 0) {
+                throw "Root retrieval and trust must not run outside ephemeral hosted Windows runners."
+            }
+        }
+    }
+    $env:GITHUB_ACTIONS = "true"
+    $env:RUNNER_ENVIRONMENT = "github-hosted"
+    Test-Case "AuthenticatedTestRootImportedBeforeSigning" {
+        & (Join-Path $PSScriptRoot "Sign-Packages.ps1") @rootSigningArguments
+        if ($testState.SigningCalls.Count -ne 2 -or $testState.ImportedRoots.Count -ne 1) {
+            throw "Expected authenticated root retrieval, one trust import, and signing."
+        }
+        $rootCall = $testState.SigningCalls[0]
+        $rootPath = $rootCall[-1]
+        $expectedCall = @(
+            "portable", "artifact-signing-root",
+            "--endpoint", "https://fixture.codesigning.azure.net",
+            "--account-name", "fixture-account",
+            "--profile-name", "fixture-profile",
+            "--access-token", "fixture-token",
+            "--output", $rootPath
+        )
+        if (($rootCall -join "|") -cne ($expectedCall -join "|") -or
+            $testState.ImportedRoots[0].Path -cne $rootPath -or
+            $testState.ImportedRoots[0].Store -cne "Cert:\LocalMachine\Root" -or
+            $testState.SigningCalls[1][0] -cne "--mode" -or
+            (Test-Path -LiteralPath $rootPath)) {
+            throw "Signing must use the authenticated selected profile root and remove the temporary certificate."
+        }
+    }
+    Test-Case "TestRootRetrievalFailureStopsSigning" {
+        $testState.RootExitCode = 23
+        Assert-Rejected {
+            & (Join-Path $PSScriptRoot "Sign-Packages.ps1") @rootSigningArguments
+        } "profile root failed with exit code 23"
+        if ($testState.SigningCalls.Count -ne 1 -or $testState.ImportedRoots.Count -ne 0) {
+            throw "Failed root retrieval must not import trust or sign files."
+        }
+    }
+    Test-Case "TestRootImportFailureStopsSigning" {
+        $testState.RootImportFails = $true
+        Assert-Rejected {
+            & (Join-Path $PSScriptRoot "Sign-Packages.ps1") @rootSigningArguments
+        } "Simulated certificate import failure"
+        if ($testState.SigningCalls.Count -ne 1 -or
+            (Test-Path -LiteralPath $testState.SigningCalls[0][-1])) {
+            throw "Failed trust import must not sign files and must remove the temporary certificate."
         }
     }
     foreach ($path in @($appPath, $aliasPath, $modulePath, $hostPath)) {
@@ -203,8 +311,10 @@ Set-Variable -Name LASTEXITCODE -Value 0 -Scope 1
             [IO.File]::WriteAllBytes($modulePath, [byte[]]@())
         }
     }
-    Write-Host "All 17 Windows payload signature regression cases passed."
+    Write-Host "All 22 Windows payload signature regression cases passed."
 }
 finally {
+    $env:GITHUB_ACTIONS = $originalGitHubActions
+    $env:RUNNER_ENVIRONMENT = $originalRunnerEnvironment
     Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

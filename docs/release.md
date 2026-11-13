@@ -312,6 +312,9 @@ Optional GitHub Environment or repository configuration variables:
 - `TRUSTED_SIGNING_TIMESTAMP_SERVER` (defaults to `http://timestamp.acs.microsoft.com/`)
 - `TRUSTED_SIGNING_PUBLISHER` — full certificate subject for the selected signing profile.
   Defaults to `CN=Devolutions Inc, O=Devolutions Inc, L=Lavaltrie, S=Québec, C=CA`; override it if the profile has a different subject.
+  For the test profile, set this variable on `publish-test` to its exact subject, including `(TEST ONLY)` when present.
+  Signed dry runs using `publish-test` retrieve that authenticated profile's root certificate with `psign-tool` and trust it only on the ephemeral GitHub-hosted Windows runners.
+  Signature, timestamp, and exact-publisher verification remain required; production signing never enables this test-root import.
 
 The signed MSIX `Identity.Publisher` must exactly match the Artifact Signing certificate subject, including all DN fields, punctuation, and accents.
 The workflow resolves whether signing will occur before building the package and supplies this publisher to `Build-Packages.ps1`; unsigned CI/dry runs retain the checked-in development publisher.
