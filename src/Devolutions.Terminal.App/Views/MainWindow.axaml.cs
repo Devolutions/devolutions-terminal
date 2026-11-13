@@ -1085,6 +1085,14 @@ public partial class MainWindow :
             ShowTerminalContextMenu(pane, hyperlink: null);
         };
         pane.Presentation.IsAdministrator = OperatingSystem.IsWindows() && profile.Elevate;
+        control.ProgramStatusChanged += (_, snapshot) =>
+        {
+            pane.Presentation.ProgramStatus = snapshot;
+            if (FindTab(pane) is not null)
+            {
+                RebuildTabs();
+            }
+        };
         control.TitleChanged += (_, title) =>
         {
             pane.Title = ResolveTerminalTitle(profile, title);
@@ -1563,6 +1571,10 @@ public partial class MainWindow :
             content.Children.Add(title);
 
             var status = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+            if (CreateProgramStatusIndicator(tab) is { } programStatusIndicator)
+            {
+                status.Children.Add(programStatusIndicator);
+            }
             var recordingControl = tab.Panes.Leaves()
                 .Select(static pane => pane.Control)
                 .FirstOrDefault(static control => control.IsRecording || control.HasUnsavedRecording);
@@ -1689,6 +1701,58 @@ public partial class MainWindow :
 
         ApplyWindowChrome();
         _macOsMenuRefresh?.Invoke();
+    }
+
+    internal static TextBlock? CreateProgramStatusIndicator(TerminalTab tab)
+    {
+        var programStatus = tab.Panes.Leaves()
+            .SelectMany(static pane => pane.Presentation.ProgramStatus?.Records.Values
+                .Select(record => (Pane: pane, Record: record)) ?? [])
+            .OrderBy(static item => item.Record.State switch
+            {
+                TerminalProgramState.Blocked => 0,
+                TerminalProgramState.Error => 1,
+                TerminalProgramState.Done => 2,
+                TerminalProgramState.Working => 3,
+                _ => 4,
+            })
+            .FirstOrDefault();
+        if (programStatus.Record is not { } record) return null;
+
+        var symbol = record.State switch
+        {
+            TerminalProgramState.Blocked => "!",
+            TerminalProgramState.Error => "×",
+            TerminalProgramState.Done => "✓",
+            TerminalProgramState.Working => "⋯",
+            _ => "○",
+        };
+        var description = $"{SanitizeProgramStatusText(programStatus.Pane.Title)}: {record.State}";
+        if (record.Id.Length > 0) description += $" [{record.Id}]";
+        var app = programStatus.Pane.Presentation.ProgramStatus?.GetEffectiveApp(record.Id);
+        if (app is not null) description += $" ({app})";
+        if (record.Kind is { } kind) description += $" ({kind})";
+        if (record.Progress is { } progress) description += $" {progress}%";
+        if (!string.IsNullOrEmpty(record.Title)) description += $" — {SanitizeProgramStatusText(record.Title)}";
+        if (!string.IsNullOrEmpty(record.Message)) description += $": {SanitizeProgramStatusText(record.Message)}";
+        var indicator = new TextBlock { Text = symbol, VerticalAlignment = VerticalAlignment.Center };
+        AutomationProperties.SetName(indicator, description);
+        ToolTip.SetTip(indicator, description);
+        return indicator;
+    }
+
+    private static string SanitizeProgramStatusText(string text)
+    {
+        var result = new StringBuilder(text.Length);
+        foreach (var rune in text.EnumerateRunes())
+        {
+            if (Rune.GetUnicodeCategory(rune) is not (UnicodeCategory.Format or UnicodeCategory.Control))
+            {
+                result.Append(rune.ToString());
+            }
+        }
+
+        return result.ToString();
     }
 
     private double TabWidth()

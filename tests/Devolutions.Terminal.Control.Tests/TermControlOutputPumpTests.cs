@@ -14,6 +14,43 @@ namespace Devolutions.Terminal.Control.Tests;
 public sealed class TermControlOutputPumpTests
 {
     [AvaloniaFact]
+    public async Task ProgramStatusHandlesExitLateOutputAndRestart()
+    {
+        var connection = new FakePtyConnection();
+        var control = new TermControl { ConnectionFactory = _ => connection };
+        try
+        {
+            await control.StartAsync(new ProfileSettings { Commandline = "cmd.exe" }, 80, 24);
+            for (var index = 0; index < 256; index++)
+            {
+                control.Engine.Feed($"\u001b]7501;state=done:id=r{index}\u0007");
+            }
+            connection.Exit();
+            var beforeLateTransient = control.Engine.ProgramStatus;
+            var engineEvents = 0;
+            control.Engine.ProgramStatusChanged += (_, _) => engineEvents++;
+            connection.Emit("\u001b]7501;state=working:id=late\u0007");
+            Assert.Same(beforeLateTransient, control.Engine.ProgramStatus);
+            Assert.Equal(0, engineEvents);
+            Assert.Equal(256, control.Engine.ProgramStatus.Records.Count);
+            Assert.Contains("r0", control.Engine.ProgramStatus.Records.Keys);
+
+            connection.Emit("\u001b]7501;state=done:id=result\u0007");
+            Assert.Equal(TerminalProgramState.Done, control.Engine.ProgramStatus.Records["result"].State);
+            Assert.Equal(256, control.Engine.ProgramStatus.Records.Count);
+
+            await control.RestartAsync();
+            connection.Emit("\u001b]7501;state=working\u0007");
+            Dispatcher.UIThread.RunJobs();
+            Assert.Equal(TerminalProgramState.Working, control.Engine.ProgramStatus.Records[string.Empty].State);
+        }
+        finally
+        {
+            await control.CloseAsync();
+        }
+    }
+
+    [AvaloniaFact]
     public async Task OutputPumpKeepsFeedingWhenViewportListenersThrow()
     {
         var connection = new FakePtyConnection();
@@ -488,6 +525,10 @@ public sealed class TermControlOutputPumpTests
 
         public void Emit(ReadOnlyMemory<byte> data) =>
             OutputReceived?.Invoke(this, data);
+
+        public void Exit() => SessionExited?.Invoke(
+            this,
+            new TerminalExitInfo(null, 0, TerminalExitReason.ProcessExited, false, DateTimeOffset.UtcNow));
     }
 
     private sealed class RecordingWebSocketServer : IAsyncDisposable

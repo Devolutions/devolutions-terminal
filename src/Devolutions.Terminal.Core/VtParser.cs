@@ -62,6 +62,9 @@ public sealed class VtParser
     private int _printRunesDepth;
     private bool _nextIsSubparameter;
     private readonly List<byte> _osc = [];
+    private int _oscSequenceLength;
+    private bool _oscHasSeparator;
+    private bool _oscIsProgramStatus;
     private readonly List<byte> _apc = [];
     private List<byte> _dcs = [];
     private List<byte> _dcsDispatchScratch = [];
@@ -551,6 +554,7 @@ public sealed class VtParser
             }
             else if (value == (byte)'\\')
             {
+                _oscSequenceLength++;
                 FinishOsc();
             }
             else
@@ -757,7 +761,7 @@ public sealed class VtParser
 
         if (value is 0x9D)
         {
-            EnterOsc();
+            EnterOsc(1);
             return;
         }
 
@@ -835,7 +839,7 @@ public sealed class VtParser
                 EnterCsi();
                 break;
             case (byte)']':
-                EnterOsc();
+                EnterOsc(2);
                 break;
             case (byte)'P':
                 EnterDcs();
@@ -1019,6 +1023,7 @@ public sealed class VtParser
 
     private void ProcessOsc(byte value)
     {
+        _oscSequenceLength = Math.Min(_oscSequenceLength + 1, 4097);
         if (value is 0x18 or 0x1A)
         {
             _osc.Clear();
@@ -1033,6 +1038,12 @@ public sealed class VtParser
         {
             _state = State.OscEscape;
         }
+        else if (_oscIsProgramStatus && _oscSequenceLength >= 4096)
+        {
+            _osc.Clear();
+            _stringIgnoreAllowsBel = true;
+            _state = State.StringIgnore;
+        }
         else if (value >= 0x20 || value == 0x09)
         {
             AppendOsc(value);
@@ -1043,7 +1054,20 @@ public sealed class VtParser
     {
         if (_osc.Count < MaxOscStringBytes)
         {
+            if (value == ';' && !_oscHasSeparator)
+            {
+                _oscHasSeparator = true;
+                _oscIsProgramStatus = int.TryParse(
+                    Encoding.UTF8.GetString(CollectionsMarshal.AsSpan(_osc)),
+                    out var command) && command == 7501;
+            }
             _osc.Add(value);
+            if (_oscIsProgramStatus && _oscSequenceLength >= 4096)
+            {
+                _osc.Clear();
+                _stringIgnoreAllowsBel = true;
+                _state = State.StringIgnore;
+            }
         }
         else
         {
@@ -1055,18 +1079,28 @@ public sealed class VtParser
 
     private void FinishOsc()
     {
+        var osc = CollectionsMarshal.AsSpan(_osc);
+        var separator = osc.IndexOf((byte)';');
+        if (separator > 0 && osc[..separator].SequenceEqual("7501"u8))
+        {
+            _dispatch.OscDispatch(7501, osc[(separator + 1)..], _oscSequenceLength);
+            _osc.Clear();
+            _state = State.Ground;
+            return;
+        }
+
         var text = Encoding.UTF8.GetString(_osc.ToArray());
-        var separator = text.IndexOf(';');
+        var textSeparator = text.IndexOf(';');
         var command = -1;
         ReadOnlySpan<char> data = [];
-        if (separator >= 0)
+        if (textSeparator >= 0)
         {
-            if (int.TryParse(text.AsSpan(0, separator), out var parsed))
+            if (int.TryParse(text.AsSpan(0, textSeparator), out var parsed))
             {
                 command = parsed;
             }
 
-            data = text.AsSpan(separator + 1);
+            data = text.AsSpan(textSeparator + 1);
         }
         else if (int.TryParse(text, out var bare))
         {
@@ -1075,7 +1109,7 @@ public sealed class VtParser
 
         if (command >= 0)
         {
-            _dispatch.OscDispatch(command, data);
+            _dispatch.OscDispatch(command, data, _oscSequenceLength);
         }
 
         _osc.Clear();
@@ -1088,9 +1122,12 @@ public sealed class VtParser
         _state = State.CsiEntry;
     }
 
-    private void EnterOsc()
+    private void EnterOsc(int introducerLength)
     {
         _osc.Clear();
+        _oscSequenceLength = introducerLength;
+        _oscHasSeparator = false;
+        _oscIsProgramStatus = false;
         _state = State.OscString;
     }
 

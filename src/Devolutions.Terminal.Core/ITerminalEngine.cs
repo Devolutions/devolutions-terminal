@@ -45,6 +45,7 @@ public interface ITerminalEngine : IDisposable
     ColorScheme Scheme { get; set; }
     string Title { get; }
     string? WorkingDirectory { get; }
+    TerminalProgramStatusSnapshot ProgramStatus { get; }
     bool AlternateBufferActive { get; }
     bool CursorVisible { get; }
     bool CursorBlinking { get; }
@@ -70,6 +71,7 @@ public interface ITerminalEngine : IDisposable
     event EventHandler<string>? TitleChanged;
     event EventHandler<string?>? WorkingDirectoryChanged;
     event EventHandler? ShellIntegrationChanged;
+    event EventHandler<TerminalProgramStatusSnapshot>? ProgramStatusChanged;
     event EventHandler<string>? ClipboardWriteRequested;
     event EventHandler<TerminalNotification>? NotificationRequested;
     event EventHandler<TerminalEngineDiagnostic>? Diagnostic;
@@ -80,6 +82,7 @@ public interface ITerminalEngine : IDisposable
     void Feed(string text);
     void Resize(int columns, int rows, double cellWidth = 1, double cellHeight = 1);
     void Reset();
+    void ProgramStatusProcessExited();
     void SetScrollOffset(int offset);
     void ConfigureOptionalFeatures(
         bool allowClipboardWrite,

@@ -42,6 +42,9 @@ public sealed class TermControl : Avalonia.Controls.Control
     private readonly DispatcherTimer _blinkTimer;
     private readonly object _outputLock = new();
     private bool _acceptOutput;
+    private bool _programStatusProcessExited;
+    private bool _programStatusNotificationPending;
+    private TerminalProgramStatusSnapshot? _pendingProgramStatus;
     private readonly SkiaTerminalRenderer _renderer = new();
     private readonly TerminalSearchSession _search;
     private readonly Guid _terminalSessionId = Guid.NewGuid();
@@ -218,6 +221,21 @@ public sealed class TermControl : Avalonia.Controls.Control
             }
         };
         Engine.ResponseReady += (_, data) => TryWriteInput(data);
+        Engine.ProgramStatusChanged += (_, snapshot) =>
+        {
+            lock (_outputLock)
+            {
+                _pendingProgramStatus = snapshot;
+                if (_programStatusNotificationPending)
+                {
+                    return;
+                }
+
+                _programStatusNotificationPending = true;
+            }
+
+            Dispatcher.UIThread.Post(DrainProgramStatusChanged);
+        };
         Engine.ClipboardWriteRequested += (_, text) =>
             Dispatcher.UIThread.Post(() => SetClipboardFromTerminalObservedAsync(text));
         Engine.NotificationRequested += (_, notification) =>
@@ -288,6 +306,7 @@ public sealed class TermControl : Avalonia.Controls.Control
     }
 
     public event EventHandler<string>? TitleChanged;
+    public event EventHandler<TerminalProgramStatusSnapshot>? ProgramStatusChanged;
     public event EventHandler<int>? ProcessExited;
     public event EventHandler<TerminalExitInfo>? SessionExited;
     public event EventHandler? CloseRequested;
@@ -352,6 +371,7 @@ public sealed class TermControl : Avalonia.Controls.Control
         lock (_outputLock)
         {
             _acceptOutput = true;
+            _programStatusProcessExited = false;
         }
         try
         {
@@ -428,6 +448,10 @@ public sealed class TermControl : Avalonia.Controls.Control
         {
             await connection.CloseAsync(cancellationToken).ConfigureAwait(true);
             ResetTerminal();
+            lock (_outputLock)
+            {
+                _programStatusProcessExited = false;
+            }
             await connection.RestartAsync(cancellationToken: cancellationToken).ConfigureAwait(true);
         }
         catch
@@ -2511,6 +2535,10 @@ public sealed class TermControl : Avalonia.Controls.Control
                 // Feed on the PTY thread so cursor-position reports (CSI 6n) go
                 // back to zsh before PROMPT_SP prints a spurious '%'.
                 Engine.Feed(data.Span);
+                if (_programStatusProcessExited)
+                {
+                    Engine.ProgramStatusProcessExited();
+                }
                 AppendRecordingOutput(data.Span);
             }
             catch (Exception exception)
@@ -2561,8 +2589,34 @@ public sealed class TermControl : Avalonia.Controls.Control
     private void OnConnectionFaulted(object? sender, Exception exception) =>
         Dispatcher.UIThread.Post(() => ReportInteractionError("Terminal connection", exception));
 
+    private void DrainProgramStatusChanged()
+    {
+        TerminalProgramStatusSnapshot? snapshot;
+        lock (_outputLock)
+        {
+            snapshot = _pendingProgramStatus;
+            _pendingProgramStatus = null;
+            _programStatusNotificationPending = false;
+        }
+
+        if (snapshot is not null)
+        {
+            ProgramStatusChanged?.Invoke(this, snapshot);
+        }
+    }
+
     private void OnSessionExited(object? sender, TerminalExitInfo exit)
     {
+        lock (_outputLock)
+        {
+            if (!ReferenceEquals(sender, _connection))
+            {
+                return;
+            }
+
+            _programStatusProcessExited = true;
+            Engine.ProgramStatusProcessExited();
+        }
         Dispatcher.UIThread.Post(() =>
         {
             SessionExited?.Invoke(this, exit);

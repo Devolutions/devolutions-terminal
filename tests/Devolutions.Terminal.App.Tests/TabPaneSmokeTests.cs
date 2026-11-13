@@ -1,12 +1,40 @@
 using Devolutions.Terminal.Settings;
 using Devolutions.Terminal.App.Models;
 using Devolutions.Terminal.App.Panes;
+using Devolutions.Terminal.Core;
 using Xunit;
 
 namespace Devolutions.Terminal.App.Tests;
 
 public sealed class TabPaneSmokeTests
 {
+    [Fact]
+    public void ProgramStatusIsNotPersistedInPaneLayout()
+    {
+        using var engine = new TerminalEngine();
+        engine.Feed("\u001b]7501;state=done:app=cargo\u0007");
+        var session = Session("build");
+        var layout = new TerminalWindowLayoutDescriptor
+        {
+            Tabs =
+            [
+                new TabLayoutDescriptor
+                {
+                    ActiveSessionId = session.SessionId,
+                    Root = new()
+                    {
+                        Session = session,
+                        Presentation = new PanePresentationState { ProgramStatus = engine.ProgramStatus },
+                    },
+                },
+            ],
+        };
+
+        var serialized = TerminalLayoutSerializer.SerializeTabs(layout);
+        Assert.DoesNotContain("programStatus", serialized.ToJsonString(), StringComparison.OrdinalIgnoreCase);
+        Assert.NotNull(TerminalLayoutSerializer.DeserializeTabs(serialized));
+    }
+
     [Fact]
     public void PracticalMultiTabPaneWorkflowSmoke()
     {
