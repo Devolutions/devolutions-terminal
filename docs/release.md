@@ -250,9 +250,10 @@ application version remain `2026.3.0`.
 
 Never commit PFX files, passwords, certificate private keys, or signed internal
 artifacts. CI produces unsigned packages unless a protected release environment
-injects signing credentials. macOS release packaging likewise falls back to
-unsigned, unnotarized archives when its Apple signing or notarization
-credentials are unavailable.
+injects signing credentials. macOS Developer ID signing and notarization run
+only in signed `publish-prod` builds. Other environments produce ad-hoc-signed,
+unnotarized macOS archives; missing Apple credentials fail production releases
+instead of falling back to unsigned artifacts.
 
 ## GitHub Release automation
 
@@ -275,6 +276,7 @@ Manual dispatch provides these inputs:
   workflow artifact.
 - `sign_dry_run` — with `dry_run`, sign Windows packages using the selected signing environment when all signing secrets are available.
   This validates the real `psign-tool` and Azure Artifact Signing paths without publishing.
+  macOS Developer ID signing and notarization are included only when the selected environment is `publish-prod`; `publish-test` needs no Apple credentials.
   Without this option, dry-run assets remain unsigned.
 - `github-env` — selects the GitHub Environment containing signing credentials:
   `test`, `prod`, or `auto`. `auto` selects `publish-prod` for `master` and tag
@@ -315,6 +317,7 @@ Optional GitHub Environment or repository configuration variables:
   For the test profile, set this variable on `publish-test` to its exact subject, including `(TEST ONLY)` when present.
   Signed dry runs using `publish-test` retrieve that authenticated profile's root certificate with `psign-tool` and trust it only on the ephemeral GitHub-hosted Windows runners.
   Signature, timestamp, and exact-publisher verification remain required; production signing never enables this test-root import.
+  The authenticated public test root is passed to the downstream Windows NuGet validation runner as a same-run artifact so consumer verification uses the same trust anchor.
 
 The signed MSIX `Identity.Publisher` must exactly match the Artifact Signing certificate subject, including all DN fields, punctuation, and accents.
 The workflow resolves whether signing will occur before building the package and supplies this publisher to `Build-Packages.ps1`; unsigned CI/dry runs retain the checked-in development publisher.
@@ -346,8 +349,9 @@ that are not yet available. Splitting the NativeAOT payloads keeps each package
 below NuGet.org's 250 MB package-size limit while preserving the existing
 `PackageReference` and MSBuild import behavior.
 
-For signed releases and signed dry runs, the NuGet job waits for platform signing and consumes the verified Windows MSI native layouts and standalone Developer ID-signed macOS payloads.
-It never falls back to the original unsigned publish artifacts when signing fails or required credentials are missing.
+For signed releases and signed dry runs, the NuGet job waits for platform packaging and consumes the verified Windows MSI native layouts.
+Signed `publish-prod` builds require standalone Developer ID-signed macOS payloads, including timestamps and the expected Apple team; production signing failures or missing credentials never fall back to unsigned artifacts.
+Other environments use ad-hoc-signed macOS payloads, retaining native signature, Hardened Runtime, entitlement, and layout validation without requiring Developer ID or notarization credentials.
 The actual packaged Windows payloads are checked after consumer restore/build; both macOS `.nupkg` payloads are extracted and signature-verified on a native macOS runner before publication.
 The flat macOS NuGet contract is preserved by re-signing copied native code outside the signed `.app`, with Hardened Runtime, the application entitlements, and secure timestamps.
 This does not transfer the app bundle's notarization ticket; ZIP and DMG remain the notarized app distributions.

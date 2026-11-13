@@ -19,7 +19,7 @@ on:
         default: false
         type: boolean
       sign_dry_run:
-        description: Sign Windows and macOS packages during a dry run when signing credentials are available.
+        description: Sign Windows packages during a dry run; also sign and notarize macOS packages in publish-prod.
         required: false
         default: false
         type: boolean
@@ -50,10 +50,15 @@ jobs:
       dry_run: ${{ steps.resolve.outputs.dry_run }}
       sign_dry_run: ${{ steps.resolve.outputs.sign_dry_run }}
       sign_packages: ${{ steps.resolve.outputs.sign_packages }}
+      sign_macos: ${{ steps.resolve.outputs.sign_macos }}
       publish_environment: ${{ steps.resolve.outputs.publish_environment }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Test release signing policy
+        shell: pwsh
+        run: ./scripts/Test-ReleaseSigningPolicy.ps1
 
       - name: Resolve tag, versions, and signing environment
         id: resolve
@@ -115,6 +120,7 @@ jobs:
           $msixVersion = "$releaseVersion.0"
           $signPackages = if (($env:GITHUB_EVENT_NAME -eq "workflow_dispatch" -or $env:GITHUB_REF_TYPE -eq "tag") -and
               ($dryRun -eq "false" -or $signDryRun -eq "true")) { "true" } else { "false" }
+          $signMacOs = if ($signPackages -eq "true" -and $publishEnvironment -eq "publish-prod") { "true" } else { "false" }
           @(
             "release_tag=$tag"
             "release_version=$releaseVersion"
@@ -122,6 +128,7 @@ jobs:
             "dry_run=$dryRun"
             "sign_dry_run=$signDryRun"
             "sign_packages=$signPackages"
+            "sign_macos=$signMacOs"
             "publish_environment=$publishEnvironment"
           ) | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
@@ -568,26 +575,28 @@ jobs:
           APPLE_APP_DEV_ID_APP_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_APP_DEV_ID_APP_CERTIFICATE_PASSWORD }}
           APPLE_BOT_PASSWORD: ${{ secrets.APPLE_BOT_PASSWORD }}
         run: |
-          $dryRun = '${{ needs.release-metadata.outputs.dry_run }}'
-          $signDryRun = '${{ needs.release-metadata.outputs.sign_dry_run }}'
-          $required = @(
-            'APPLE_APP_DEV_ID_APP_CERTIFICATE',
-            'APPLE_APP_DEV_ID_APP_CERTIFICATE_PASSWORD',
-            'APPLE_BOT_PASSWORD'
-          )
-          $missing = @($required | Where-Object { [string]::IsNullOrEmpty([System.Environment]::GetEnvironmentVariable($_)) })
-
-          if ($dryRun -eq 'true' -and $signDryRun -ne 'true') {
+          $shouldSign = '${{ needs.release-metadata.outputs.sign_macos }}'
+          if ($shouldSign -eq 'false') {
             Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value 'should_sign=false'
-            Write-Host 'Dry run will not sign or notarize macOS packages.'
-            exit 0
+            Write-Host 'Skipping Developer ID signing and notarization outside signed publish-prod runs.'
           }
+          elseif ($shouldSign -eq 'true') {
+            $required = @(
+              'APPLE_APP_DEV_ID_APP_CERTIFICATE',
+              'APPLE_APP_DEV_ID_APP_CERTIFICATE_PASSWORD',
+              'APPLE_BOT_PASSWORD'
+            )
+            $missing = @($required | Where-Object { [string]::IsNullOrEmpty([System.Environment]::GetEnvironmentVariable($_)) })
 
-          if ($missing.Count -gt 0) {
-            throw "Missing Apple signing/notarization secrets: $($missing -join ', ')"
+            if ($missing.Count -gt 0) {
+              throw "Missing Apple signing/notarization secrets: $($missing -join ', ')"
+            }
+
+            Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value 'should_sign=true'
           }
-
-          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value 'should_sign=true'
+          else {
+            throw "Invalid macOS signing policy: '$shouldSign'."
+          }
 
       - name: Import Developer ID certificate
         if: steps.signing-mode.outputs.should_sign == 'true'
@@ -642,7 +651,7 @@ jobs:
           artifacts/macos-signed-packages
           "${{ steps.import_certificate.outputs.identity }}"
 
-      - name: Package without notarization (dry run / forked PR)
+      - name: Package without Developer ID signing or notarization
         if: steps.signing-mode.outputs.should_sign != 'true'
         env:
           SOURCE_DATE_EPOCH: "1704067200"
@@ -1136,6 +1145,23 @@ jobs:
         with:
           version: v0.6.1
 
+      - name: Download authenticated test-signing root
+        if: needs.release-metadata.outputs.sign_packages == 'true' && needs.release-metadata.outputs.dry_run == 'true' && needs.release-metadata.outputs.publish_environment == 'publish-test'
+        uses: actions/download-artifact@v4
+        with:
+          name: DevolutionsTerminal-test-signing-root
+          path: artifacts/test-signing-trust
+
+      - name: Trust test-signing root for NuGet verification
+        if: needs.release-metadata.outputs.sign_packages == 'true' && needs.release-metadata.outputs.dry_run == 'true' && needs.release-metadata.outputs.publish_environment == 'publish-test'
+        shell: pwsh
+        run: |
+          if (-not $IsWindows -or $env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') {
+            throw 'Test-signing trust is restricted to GitHub-hosted Windows runners.'
+          }
+          Import-Certificate -FilePath artifacts/test-signing-trust/root.cer `
+            -CertStoreLocation Cert:\LocalMachine\Root -ErrorAction Stop | Out-Null
+
       - name: Download Windows x64 NuGet payload
         uses: actions/download-artifact@v4
         with:
@@ -1253,7 +1279,7 @@ jobs:
       - name: Verify signatures in the actual NuGet package
         shell: pwsh
         env:
-          REQUIRE_SIGNATURE: ${{ needs.release-metadata.outputs.sign_packages }}
+          REQUIRE_SIGNATURE: ${{ needs.release-metadata.outputs.sign_macos }}
         run: |
           $package = Get-ChildItem artifacts/nuget-validation -Filter '*.nupkg' -File
           if (@($package).Count -ne 1) { throw 'Expected exactly one macOS runtime package.' }
@@ -1424,6 +1450,19 @@ jobs:
             -TrustTestSigningRoot:($env:TRUST_TEST_SIGNING_ROOT -eq 'true') `
             -TimestampServer $timestampServer
 
+          if ($env:TRUST_TEST_SIGNING_ROOT -eq 'true') {
+            New-Item -ItemType Directory -Force -Path artifacts/test-signing-trust | Out-Null
+            psign-tool portable artifact-signing-root `
+              --endpoint $env:TRUSTED_SIGNING_ENDPOINT `
+              --account-name $env:TRUSTED_SIGNING_ACCOUNT_NAME `
+              --profile-name $env:TRUSTED_SIGNING_PROFILE_NAME `
+              --access-token $accessToken `
+              --output artifacts/test-signing-trust/root.cer
+            if ($LASTEXITCODE -ne 0) {
+              throw "Retrieving the test root for downstream verification failed with exit code $LASTEXITCODE."
+            }
+          }
+
       - name: Verify signed Windows NuGet payloads
         if: steps.signing-mode.outputs.should_sign == 'true'
         shell: pwsh
@@ -1432,6 +1471,14 @@ jobs:
         run: |
           ./src/Devolutions.Terminal.Package/Scripts/Test-WindowsPayloadSignatures.ps1 -PayloadDirectory artifacts/msi/layout/win-x64 -RequireIsebergModule -ExpectedPublisher $env:EXPECTED_PUBLISHER
           ./src/Devolutions.Terminal.Package/Scripts/Test-WindowsPayloadSignatures.ps1 -PayloadDirectory artifacts/msi/layout/win-arm64 -RequireIsebergModule -ExpectedPublisher $env:EXPECTED_PUBLISHER
+
+      - name: Upload authenticated test-signing root
+        if: needs.release-metadata.outputs.sign_packages == 'true' && needs.release-metadata.outputs.dry_run == 'true' && needs.release-metadata.outputs.publish_environment == 'publish-test'
+        uses: actions/upload-artifact@v4
+        with:
+          name: DevolutionsTerminal-test-signing-root
+          path: artifacts/test-signing-trust/root.cer
+          if-no-files-found: error
 
       - name: Upload Windows x64 NuGet payload
         uses: actions/upload-artifact@v4
