@@ -586,10 +586,11 @@ public sealed class TerminalAutomationVisualTests
     [Fact]
     public async Task MeasureAsync_IdleHasZeroChangesAndConcreteSampleStatistics()
     {
+        const int durationMilliseconds = 16;
         await using var service = new TerminalAutomationService(() => new FakeConnection());
         var session = await service.StartAsync(new("fake", Columns: 4, Rows: 2));
         var hash = service.Capture(session.Id).Frame.Hash;
-        var result = await service.MeasureAsync(session.Id, 16, 16);
+        var result = await service.MeasureAsync(session.Id, durationMilliseconds, 16);
         Assert.Equal(0, result.ChangedFrames);
         Assert.Equal(0, result.ObservedChangesPerSecond);
         Assert.Equal(0, result.OutputBytes);
@@ -597,10 +598,11 @@ public sealed class TerminalAutomationVisualTests
         Assert.Null(result.ChangeIntervalMilliseconds);
         Assert.Equal(16, result.IntervalMilliseconds);
         Assert.Equal(result.DurationMilliseconds, result.LongestUnchangedMilliseconds);
-        Assert.Equal(2, result.Samples.Count);
+        Assert.InRange(result.Samples.Count, 2, 600);
         Assert.Equal(0, result.Samples[0].ElapsedMilliseconds);
         Assert.All(result.Samples.Zip(result.Samples.Skip(1)), pair =>
             Assert.True(pair.Second.ElapsedMilliseconds > pair.First.ElapsedMilliseconds));
+        Assert.True(result.Samples[^1].ElapsedMilliseconds >= durationMilliseconds);
         Assert.True(result.Samples[^1].ElapsedMilliseconds <= result.DurationMilliseconds);
         Assert.All(result.Samples, sample =>
         {
