@@ -198,7 +198,11 @@ public sealed class TermControl : Avalonia.Controls.Control
             // chunk, and each drain fires listener fan-out + InvalidateVisual.
             // Collapse queued invalidations into a single trailing drain (the
             // winterm-ghostty lesson: per-chunk UI work was the whole throughput
-            // gap). A drain re-queues itself if more output arrived mid-drain.
+            // gap). Output that arrives mid-drain queues the next drain.
+            //
+            // Input priority, not Render: Avalonia runs every job above Input before
+            // it reads window messages, so under a sustained flood a Render-priority
+            // drain is always ahead of the keyboard and Ctrl+C never gets through.
             Interlocked.Increment(ref _invalidationPosts);
             if (Dispatcher.UIThread.CheckAccess())
             {
@@ -206,7 +210,7 @@ public sealed class TermControl : Avalonia.Controls.Control
             }
             else if (Interlocked.Exchange(ref _invalidationPending, 1) == 0)
             {
-                Dispatcher.UIThread.Post(DrainEngineInvalidation, DispatcherPriority.Render);
+                Dispatcher.UIThread.Post(DrainEngineInvalidation, DispatcherPriority.Input);
             }
         };
         Engine.TitleChanged += (_, title) =>
@@ -2558,16 +2562,12 @@ public sealed class TermControl : Avalonia.Controls.Control
 
     private void DrainEngineInvalidation()
     {
-        // Trailing edge: clear the flag before handling so an invalidation that
-        // arrives during handling is observed by the loop check below. A producer
-        // that exchanges the flag from 0 to 1 posts its own drain; one that finds
-        // it already 1 relies on this loop's recheck.
-        do
-        {
-            Interlocked.Exchange(ref _invalidationPending, 0);
-            HandleEngineInvalidated();
-        }
-        while (Volatile.Read(ref _invalidationPending) != 0);
+        // Trailing edge: clear the flag before handling, so an invalidation that
+        // arrives during handling flips it from 0 to 1 and posts the next drain
+        // itself. No loop here: looping keeps the UI thread from returning to the
+        // dispatcher for as long as output keeps arriving.
+        Interlocked.Exchange(ref _invalidationPending, 0);
+        HandleEngineInvalidated();
     }
 
     private void HandleEngineInvalidated()
