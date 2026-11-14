@@ -25,6 +25,19 @@ public interface ITerminalConnection : IAsyncDisposable
     void ClearBuffer(bool keepCursorRow)
     {
     }
+
+    // Bytes the terminal sends on its own rather than because the user typed: replies to
+    // the program's queries (DA, DSR, DECRQM, OSC colour reports) and mode reports. A
+    // connection that shares one program between several viewers or forwards input to a
+    // host that tells the two apart (and may answer some queries itself) overrides this;
+    // everyone else writes them like any other input.
+    void WriteResponse(ReadOnlySpan<byte> data) => Write(data);
+
+    // Keyboard focus moved to or away from the terminal. A connection that carries focus
+    // itself (to a host that reports it to the program when the program asked for it)
+    // returns true, and the terminal then writes no CSI I / CSI O of its own. Called on
+    // every change, whether or not the program enabled focus reporting.
+    bool ReportFocus(bool focused) => false;
 }
 
 public interface IRestartableTerminalConnection : ITerminalConnection

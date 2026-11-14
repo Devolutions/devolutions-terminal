@@ -220,7 +220,7 @@ public sealed class TermControl : Avalonia.Controls.Control
                 Dispatcher.UIThread.Post(() => TitleChanged?.Invoke(this, title));
             }
         };
-        Engine.ResponseReady += (_, data) => TryWriteInput(data);
+        Engine.ResponseReady += (_, data) => TryWriteInput(data, response: true);
         Engine.ProgramStatusChanged += (_, snapshot) =>
         {
             lock (_outputLock)
@@ -695,7 +695,7 @@ public sealed class TermControl : Avalonia.Controls.Control
 
     private bool TryWriteInput(string input) => TryWriteInput(Encoding.UTF8.GetBytes(input));
 
-    private bool TryWriteInput(ReadOnlySpan<byte> input)
+    private bool TryWriteInput(ReadOnlySpan<byte> input, bool response = false)
     {
         if (_connection is null)
         {
@@ -704,7 +704,15 @@ public sealed class TermControl : Avalonia.Controls.Control
 
         try
         {
-            _connection.Write(input);
+            if (response)
+            {
+                _connection.WriteResponse(input);
+            }
+            else
+            {
+                _connection.Write(input);
+            }
+
             return true;
         }
         catch (Exception ex) when (ex is IOException or InvalidOperationException or ObjectDisposedException)
@@ -3219,6 +3227,11 @@ public sealed class TermControl : Avalonia.Controls.Control
 
     private void SendFocusChanged(bool focused)
     {
+        if (_connection?.ReportFocus(focused) == true)
+        {
+            return;
+        }
+
         if (Engine.FocusTracking)
         {
             TryWriteInput(focused ? "\u001b[I" : "\u001b[O");
