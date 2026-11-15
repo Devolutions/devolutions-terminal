@@ -735,6 +735,28 @@ public static class KeyMapper
         return keySymbol;
     }
 
+    // On Windows, Avalonia gives Alt+letter the key's uppercase letter ("X") whether
+    // or not Shift is held, so Alt+X would reach the program as Alt+Shift+X: ESC X,
+    // which vim reads as "X" (delete the letter before the cursor). Without Shift,
+    // the letter is lowercase.
+    public static string? NormalizeAltLetterSymbol(
+        Key key,
+        KeyModifiers modifiers,
+        string? keySymbol)
+    {
+        if (!modifiers.HasFlag(KeyModifiers.Alt) ||
+            modifiers.HasFlag(KeyModifiers.Control) ||
+            modifiers.HasFlag(KeyModifiers.Shift) ||
+            key is < Key.A or > Key.Z ||
+            keySymbol is not [var letter] ||
+            letter != (char)('A' + (key - Key.A)))
+        {
+            return keySymbol;
+        }
+
+        return char.ToLowerInvariant(letter).ToString();
+    }
+
     private static int KittyModifiers(KeyModifiers modifiers) =>
         1 +
         (modifiers.HasFlag(KeyModifiers.Shift) ? 1 : 0) +

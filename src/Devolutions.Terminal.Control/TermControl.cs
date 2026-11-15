@@ -69,6 +69,7 @@ public sealed class TermControl : Avalonia.Controls.Control
     private readonly HashSet<(Key Key, PhysicalKey PhysicalKey)> _pressedKeys = [];
     private string? _pendingEncodedTextInput;
     private bool _suppressEncodedKeyTextInput;
+    private (Key Key, KeyModifiers Modifiers, PhysicalKey PhysicalKey, TerminalKeyEventType EventType)? _win32KeyAwaitingText;
     private bool _suppressOptionTextInput;
     private TerminalCompositionOverlay? _composition;
     private readonly TerminalTextInputMethodClient _textInputMethodClient;
@@ -198,7 +199,11 @@ public sealed class TermControl : Avalonia.Controls.Control
             // chunk, and each drain fires listener fan-out + InvalidateVisual.
             // Collapse queued invalidations into a single trailing drain (the
             // winterm-ghostty lesson: per-chunk UI work was the whole throughput
-            // gap). A drain re-queues itself if more output arrived mid-drain.
+            // gap). Output that arrives mid-drain queues the next drain.
+            //
+            // Input priority, not Render: Avalonia runs every job above Input before
+            // it reads window messages, so under a sustained flood a Render-priority
+            // drain is always ahead of the keyboard and Ctrl+C never gets through.
             Interlocked.Increment(ref _invalidationPosts);
             if (Dispatcher.UIThread.CheckAccess())
             {
@@ -206,7 +211,7 @@ public sealed class TermControl : Avalonia.Controls.Control
             }
             else if (Interlocked.Exchange(ref _invalidationPending, 1) == 0)
             {
-                Dispatcher.UIThread.Post(DrainEngineInvalidation, DispatcherPriority.Render);
+                Dispatcher.UIThread.Post(DrainEngineInvalidation, DispatcherPriority.Input);
             }
         };
         Engine.TitleChanged += (_, title) =>
@@ -220,7 +225,7 @@ public sealed class TermControl : Avalonia.Controls.Control
                 Dispatcher.UIThread.Post(() => TitleChanged?.Invoke(this, title));
             }
         };
-        Engine.ResponseReady += (_, data) => TryWriteInput(data);
+        Engine.ResponseReady += (_, data) => TryWriteInput(data, response: true);
         Engine.ProgramStatusChanged += (_, snapshot) =>
         {
             lock (_outputLock)
@@ -695,7 +700,7 @@ public sealed class TermControl : Avalonia.Controls.Control
 
     private bool TryWriteInput(string input) => TryWriteInput(Encoding.UTF8.GetBytes(input));
 
-    private bool TryWriteInput(ReadOnlySpan<byte> input)
+    private bool TryWriteInput(ReadOnlySpan<byte> input, bool response = false)
     {
         if (_connection is null)
         {
@@ -704,7 +709,15 @@ public sealed class TermControl : Avalonia.Controls.Control
 
         try
         {
-            _connection.Write(input);
+            if (response)
+            {
+                _connection.WriteResponse(input);
+            }
+            else
+            {
+                _connection.Write(input);
+            }
+
             return true;
         }
         catch (Exception ex) when (ex is IOException or InvalidOperationException or ObjectDisposedException)
@@ -2077,7 +2090,7 @@ public sealed class TermControl : Avalonia.Controls.Control
             key,
             modifiers,
             physicalKey,
-            keySymbol,
+            KeyMapper.NormalizeAltLetterSymbol(key, modifiers, keySymbol),
             mode,
             TerminalKeyEventType.Release);
         if (vt is not null)
@@ -2110,6 +2123,23 @@ public sealed class TermControl : Avalonia.Controls.Control
                            mode.KittyFlags == KittyKeyboardFlags.None &&
                            !mode.Win32InputMode;
         keySymbol = KeyMapper.NormalizeOptionAsMetaSymbol(key, modifiers, keySymbol, optionAsMeta);
+        keySymbol = KeyMapper.NormalizeAltLetterSymbol(key, modifiers, keySymbol);
+        if (AwaitsTextInWin32Mode(key, modifiers, keySymbol, mode))
+        {
+            // Win32 input mode: a key that types text is sent when its text arrives
+            // (ProcessTextInput), with that text as its character. A dead key types
+            // nothing by itself: Windows composes it with the next key ("~" then "a"
+            // give "ã"), so sending its accent here would type "~a".
+            _win32KeyAwaitingText = (
+                key,
+                modifiers,
+                physicalKey,
+                _pressedKeys.Contains((key, physicalKey))
+                    ? TerminalKeyEventType.Repeat
+                    : TerminalKeyEventType.Press);
+            return null;
+        }
+
         var eventType = _pressedKeys.Add((key, physicalKey))
             ? TerminalKeyEventType.Press
             : TerminalKeyEventType.Repeat;
@@ -2174,9 +2204,19 @@ public sealed class TermControl : Avalonia.Controls.Control
 
         var pending = _pendingEncodedTextInput;
         _pendingEncodedTextInput = null;
+        var awaitingKey = _win32KeyAwaitingText;
+        _win32KeyAwaitingText = null;
         if (string.Equals(pending, text, StringComparison.Ordinal))
         {
             return null;
+        }
+
+        if (mode.Win32InputMode && mode.KittyFlags == KittyKeyboardFlags.None)
+        {
+            var encoded = EncodeWin32Text(text, awaitingKey, mode);
+            TryWriteInput(encoded);
+            SetScrollOffset(0);
+            return encoded;
         }
 
         var output = mode.KittyFlags.HasFlag(KittyKeyboardFlags.ReportAllKeysAsEscapeCodes)
@@ -2187,8 +2227,50 @@ public sealed class TermControl : Avalonia.Controls.Control
         return output;
     }
 
+    private static bool AwaitsTextInWin32Mode(
+        Key key,
+        KeyModifiers modifiers,
+        string? keySymbol,
+        TerminalInputMode mode) =>
+        mode.Win32InputMode &&
+        mode.KittyFlags == KittyKeyboardFlags.None &&
+        (modifiers & (KeyModifiers.Control | KeyModifiers.Alt | KeyModifiers.Meta)) == 0 &&
+        (key == Key.DeadCharProcessed || IsTextInputCandidate(keySymbol));
+
+    // Text in Win32 input mode goes as key records carrying the character, never as
+    // raw text: ConPTY reads raw input bytes in the console's code page, so raw
+    // non-ASCII text ("ã", an IME commit) can arrive as other characters.
+    private string EncodeWin32Text(
+        string text,
+        (Key Key, KeyModifiers Modifiers, PhysicalKey PhysicalKey, TerminalKeyEventType EventType)? awaitingKey,
+        TerminalInputMode mode)
+    {
+        if (awaitingKey is { } k && text.Length == 1)
+        {
+            // After a dead key Windows reports the composing key as DeadCharProcessed;
+            // its position still names the key, which its key-up will carry.
+            var key = k.Key == Key.DeadCharProcessed ? k.PhysicalKey.ToQwertyKey() : k.Key;
+            var vt = KeyMapper.ToVt(key, k.Modifiers, k.PhysicalKey, text, mode, k.EventType);
+            if (vt is not null)
+            {
+                _pressedKeys.Add((key, k.PhysicalKey));
+                return vt;
+            }
+        }
+
+        var builder = new StringBuilder(text.Length * 24);
+        foreach (var c in text)
+        {
+            builder.Append(CultureInfo.InvariantCulture, $"\u001b[0;0;{(int)c};1;0;1_");
+            builder.Append(CultureInfo.InvariantCulture, $"\u001b[0;0;{(int)c};0;0;1_");
+        }
+
+        return builder.ToString();
+    }
+
     private void ClearPendingKeyTextSuppression()
     {
+        _win32KeyAwaitingText = null;
         _pendingEncodedTextInput = null;
         _suppressEncodedKeyTextInput = false;
         _suppressOptionTextInput = false;
@@ -2550,16 +2632,12 @@ public sealed class TermControl : Avalonia.Controls.Control
 
     private void DrainEngineInvalidation()
     {
-        // Trailing edge: clear the flag before handling so an invalidation that
-        // arrives during handling is observed by the loop check below. A producer
-        // that exchanges the flag from 0 to 1 posts its own drain; one that finds
-        // it already 1 relies on this loop's recheck.
-        do
-        {
-            Interlocked.Exchange(ref _invalidationPending, 0);
-            HandleEngineInvalidated();
-        }
-        while (Volatile.Read(ref _invalidationPending) != 0);
+        // Trailing edge: clear the flag before handling, so an invalidation that
+        // arrives during handling flips it from 0 to 1 and posts the next drain
+        // itself. No loop here: looping keeps the UI thread from returning to the
+        // dispatcher for as long as output keeps arriving.
+        Interlocked.Exchange(ref _invalidationPending, 0);
+        HandleEngineInvalidated();
     }
 
     private void HandleEngineInvalidated()
@@ -3219,6 +3297,11 @@ public sealed class TermControl : Avalonia.Controls.Control
 
     private void SendFocusChanged(bool focused)
     {
+        if (_connection?.ReportFocus(focused) == true)
+        {
+            return;
+        }
+
         if (Engine.FocusTracking)
         {
             TryWriteInput(focused ? "\u001b[I" : "\u001b[O");
