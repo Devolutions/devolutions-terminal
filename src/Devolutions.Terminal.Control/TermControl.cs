@@ -2090,7 +2090,7 @@ public sealed class TermControl : Avalonia.Controls.Control
             key,
             modifiers,
             physicalKey,
-            keySymbol,
+            KeyMapper.NormalizeAltLetterSymbol(key, modifiers, keySymbol),
             mode,
             TerminalKeyEventType.Release);
         if (vt is not null)
@@ -2123,6 +2123,7 @@ public sealed class TermControl : Avalonia.Controls.Control
                            mode.KittyFlags == KittyKeyboardFlags.None &&
                            !mode.Win32InputMode;
         keySymbol = KeyMapper.NormalizeOptionAsMetaSymbol(key, modifiers, keySymbol, optionAsMeta);
+        keySymbol = KeyMapper.NormalizeAltLetterSymbol(key, modifiers, keySymbol);
         if (AwaitsTextInWin32Mode(key, modifiers, keySymbol, mode))
         {
             // Win32 input mode: a key that types text is sent when its text arrives

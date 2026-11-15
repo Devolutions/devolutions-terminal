@@ -95,6 +95,27 @@ public sealed class TermControlWin32TextInputTests
     }
 
     [Fact]
+    public void AltLetterIsSentLowercaseUnlessShiftIsHeld()
+    {
+        var control = new TermControl();
+
+        // Windows reports Alt+X with the symbol "X" even without Shift.
+        Assert.Equal("\u001b[88;0;120;1;2;1_", control.ProcessKeyDownInput(Key.X, KeyModifiers.Alt, PhysicalKey.X, "X", Win32));
+        Assert.Equal("\u001b[88;0;120;0;2;1_", control.ProcessKeyUpInput(Key.X, KeyModifiers.Alt, PhysicalKey.X, "X", Win32));
+        Assert.Equal("\u001b[88;0;88;1;18;1_", control.ProcessKeyDownInput(Key.X, KeyModifiers.Alt | KeyModifiers.Shift, PhysicalKey.X, "X", Win32));
+    }
+
+    [Fact]
+    public void AltLetterIsLowercaseOutsideWin32Mode()
+    {
+        var control = new TermControl();
+        var vt = new TerminalInputMode(true, false, false, KittyKeyboardFlags.None, 0, false);
+
+        Assert.Equal("\u001bx", control.ProcessKeyDownInput(Key.X, KeyModifiers.Alt, PhysicalKey.X, "X", vt));
+        Assert.Equal("\u001bX", control.ProcessKeyDownInput(Key.X, KeyModifiers.Alt | KeyModifiers.Shift, PhysicalKey.X, "X", vt));
+    }
+
+    [Fact]
     public void AKeyWhoseTextNeverCameIsNotSentByALaterText()
     {
         var control = new TermControl();
