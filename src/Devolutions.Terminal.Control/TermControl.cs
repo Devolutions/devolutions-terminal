@@ -69,6 +69,7 @@ public sealed class TermControl : Avalonia.Controls.Control
     private readonly HashSet<(Key Key, PhysicalKey PhysicalKey)> _pressedKeys = [];
     private string? _pendingEncodedTextInput;
     private bool _suppressEncodedKeyTextInput;
+    private (Key Key, KeyModifiers Modifiers, PhysicalKey PhysicalKey, TerminalKeyEventType EventType)? _win32KeyAwaitingText;
     private bool _suppressOptionTextInput;
     private TerminalCompositionOverlay? _composition;
     private readonly TerminalTextInputMethodClient _textInputMethodClient;
@@ -2122,6 +2123,22 @@ public sealed class TermControl : Avalonia.Controls.Control
                            mode.KittyFlags == KittyKeyboardFlags.None &&
                            !mode.Win32InputMode;
         keySymbol = KeyMapper.NormalizeOptionAsMetaSymbol(key, modifiers, keySymbol, optionAsMeta);
+        if (AwaitsTextInWin32Mode(key, modifiers, keySymbol, mode))
+        {
+            // Win32 input mode: a key that types text is sent when its text arrives
+            // (ProcessTextInput), with that text as its character. A dead key types
+            // nothing by itself: Windows composes it with the next key ("~" then "a"
+            // give "ã"), so sending its accent here would type "~a".
+            _win32KeyAwaitingText = (
+                key,
+                modifiers,
+                physicalKey,
+                _pressedKeys.Contains((key, physicalKey))
+                    ? TerminalKeyEventType.Repeat
+                    : TerminalKeyEventType.Press);
+            return null;
+        }
+
         var eventType = _pressedKeys.Add((key, physicalKey))
             ? TerminalKeyEventType.Press
             : TerminalKeyEventType.Repeat;
@@ -2186,9 +2203,19 @@ public sealed class TermControl : Avalonia.Controls.Control
 
         var pending = _pendingEncodedTextInput;
         _pendingEncodedTextInput = null;
+        var awaitingKey = _win32KeyAwaitingText;
+        _win32KeyAwaitingText = null;
         if (string.Equals(pending, text, StringComparison.Ordinal))
         {
             return null;
+        }
+
+        if (mode.Win32InputMode && mode.KittyFlags == KittyKeyboardFlags.None)
+        {
+            var encoded = EncodeWin32Text(text, awaitingKey, mode);
+            TryWriteInput(encoded);
+            SetScrollOffset(0);
+            return encoded;
         }
 
         var output = mode.KittyFlags.HasFlag(KittyKeyboardFlags.ReportAllKeysAsEscapeCodes)
@@ -2199,8 +2226,50 @@ public sealed class TermControl : Avalonia.Controls.Control
         return output;
     }
 
+    private static bool AwaitsTextInWin32Mode(
+        Key key,
+        KeyModifiers modifiers,
+        string? keySymbol,
+        TerminalInputMode mode) =>
+        mode.Win32InputMode &&
+        mode.KittyFlags == KittyKeyboardFlags.None &&
+        (modifiers & (KeyModifiers.Control | KeyModifiers.Alt | KeyModifiers.Meta)) == 0 &&
+        (key == Key.DeadCharProcessed || IsTextInputCandidate(keySymbol));
+
+    // Text in Win32 input mode goes as key records carrying the character, never as
+    // raw text: ConPTY reads raw input bytes in the console's code page, so raw
+    // non-ASCII text ("ã", an IME commit) can arrive as other characters.
+    private string EncodeWin32Text(
+        string text,
+        (Key Key, KeyModifiers Modifiers, PhysicalKey PhysicalKey, TerminalKeyEventType EventType)? awaitingKey,
+        TerminalInputMode mode)
+    {
+        if (awaitingKey is { } k && text.Length == 1)
+        {
+            // After a dead key Windows reports the composing key as DeadCharProcessed;
+            // its position still names the key, which its key-up will carry.
+            var key = k.Key == Key.DeadCharProcessed ? k.PhysicalKey.ToQwertyKey() : k.Key;
+            var vt = KeyMapper.ToVt(key, k.Modifiers, k.PhysicalKey, text, mode, k.EventType);
+            if (vt is not null)
+            {
+                _pressedKeys.Add((key, k.PhysicalKey));
+                return vt;
+            }
+        }
+
+        var builder = new StringBuilder(text.Length * 24);
+        foreach (var c in text)
+        {
+            builder.Append(CultureInfo.InvariantCulture, $"\u001b[0;0;{(int)c};1;0;1_");
+            builder.Append(CultureInfo.InvariantCulture, $"\u001b[0;0;{(int)c};0;0;1_");
+        }
+
+        return builder.ToString();
+    }
+
     private void ClearPendingKeyTextSuppression()
     {
+        _win32KeyAwaitingText = null;
         _pendingEncodedTextInput = null;
         _suppressEncodedKeyTextInput = false;
         _suppressOptionTextInput = false;
